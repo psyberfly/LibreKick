@@ -4,13 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/source_env.sh"
 
-MODE="${1:-single}"
-TARGET_NAME="${2:-${TARGET:-}}"
-
-if [[ "$MODE" != "single" && "$MODE" != "full" ]]; then
-  echo "Usage: $0 [single|full] [target]"
-  exit 1
-fi
+TARGET_NAME="${1:-${TARGET:-}}"
 
 if [[ -z "$TARGET_NAME" ]]; then
   echo "target is not set. Define TARGET in scripts/config.env (e.g. TARGET=linux)."
@@ -25,4 +19,4 @@ elif [[ ! -f "$BINARY_DST" ]] || [[ "$BINARY_SRC" -nt "$BINARY_DST" ]]; then
   "$SCRIPT_DIR/core/bundle.sh" "$TARGET_NAME"
 fi
 
-"$SCRIPT_DIR/core/start.sh" "$TARGET_NAME" "$MODE"
+"$SCRIPT_DIR/core/install.sh" "$TARGET_NAME"
