@@ -174,7 +174,7 @@ fn amplitude_db(value: f32) -> f32 {
 
 fn pitch_hz_from_normalized(value: f32) -> f32 {
     let min_hz = 20.0_f32;
-    let max_hz = 200.0_f32;
+    let max_hz = 20_000.0_f32;
     min_hz * (max_hz / min_hz).powf(value.clamp(0.0, 1.0))
 }
 
