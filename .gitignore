@@ -1,0 +1,25 @@
+target/
+
+# Build artifacts
+*.o
+*.so
+*.dll
+*.dylib
+*.a
+*.rlib
+
+# Generated plugin bundles
+*.vst3/
+
+# Rust / tooling
+Cargo.lock
+
+# Editor / system files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Local script config
+scripts/config.env
