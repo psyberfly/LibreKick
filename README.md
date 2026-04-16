@@ -1,7 +1,10 @@
 Open Source Kick Generator Plugin VST!
 
 # USAGE
-
+To run the plugin on Linux, go to `/scripts`:
+1. ./compile_linux.sh 
+2. ./bundle_linux_vst3.sh
+3. ./start_linux./sh (requires Carla to be installed on your machine) or, use install.sh to install the VST into your system VST location and use it via your DAW
 
 # PLAN
 
