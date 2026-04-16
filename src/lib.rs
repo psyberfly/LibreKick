@@ -7,6 +7,10 @@ mod audio;
 mod shared;
 mod ui;
 
+fn midi_note_to_hz(note: u8) -> f32 {
+    440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
+}
+
 struct KickPlugin {
     params: Arc<KickPluginParams>,
     engine: audio::KickEngine,
@@ -134,10 +138,12 @@ impl Plugin for KickPlugin {
     ) -> ProcessStatus {
         let mut midi_trigger = false;
         let mut midi_velocity = 1.0;
+        let mut midi_note_hz = None;
         while let Some(event) = context.next_event() {
-            if let NoteEvent::NoteOn { velocity, .. } = event {
+            if let NoteEvent::NoteOn { note, velocity, .. } = event {
                 midi_trigger = true;
                 midi_velocity = velocity;
+                midi_note_hz = Some(midi_note_to_hz(note));
             }
         }
 
@@ -149,6 +155,7 @@ impl Plugin for KickPlugin {
             trigger_active: self.params.trigger.value(),
             midi_trigger,
             midi_velocity,
+            midi_note_hz,
         };
 
         self.engine.process(buffer, dsp_params, &self.shared)

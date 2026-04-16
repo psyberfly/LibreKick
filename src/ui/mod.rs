@@ -11,11 +11,39 @@ use nih_plug_egui::{
 use crate::shared;
 
 const MIN_POINT_GAP_X: f32 = 0.01;
+const WAVEFORM_PREVIEW_STEPS: usize = 420;
+const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 0.65;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CurveKind {
     Amplitude,
     Pitch,
+}
+
+fn waveform_preview_points(
+    graph_rect: Rect,
+    amplitude_points: &[Pos2],
+    pitch_points: &[Pos2],
+    tuning_a4_hz: f32,
+) -> Vec<Pos2> {
+    let mut points = Vec::with_capacity(WAVEFORM_PREVIEW_STEPS + 1);
+    let dt = WAVEFORM_PREVIEW_DURATION_SECONDS / WAVEFORM_PREVIEW_STEPS as f32;
+    let tuning_scale = tuning_a4_hz / 440.0;
+    let mut phase = 0.0_f32;
+
+    for step in 0..=WAVEFORM_PREVIEW_STEPS {
+        let t = step as f32 / WAVEFORM_PREVIEW_STEPS as f32;
+        let amp = bezier_point(amplitude_points, t).y.clamp(0.0, 1.0);
+        let pitch = bezier_point(pitch_points, t).y;
+        let hz = (pitch_hz_from_normalized(pitch) * tuning_scale).max(20.0);
+        phase += std::f32::consts::TAU * hz * dt;
+
+        let sample = phase.sin() * amp;
+        let y = (0.5 + sample * 0.46).clamp(0.0, 1.0);
+        points.push(to_screen(Pos2::new(t, y), graph_rect));
+    }
+
+    points
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -402,6 +430,28 @@ pub fn create_testing_editor(
                 let pitch_lut = curve_lut(&state.pitch_curve.points);
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Amplitude, amplitude_lut);
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Pitch, pitch_lut);
+
+                let waveform_points = waveform_preview_points(
+                    graph_rect,
+                    &state.amplitude_curve.points,
+                    &state.pitch_curve.points,
+                    tuning_a4_hz,
+                );
+
+                if let (Some(first), Some(last)) = (waveform_points.first(), waveform_points.last()) {
+                    let mid_y = graph_rect.center().y;
+                    painter.line_segment(
+                        [Pos2::new(first.x, mid_y), Pos2::new(last.x, mid_y)],
+                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 128, 136, 45)),
+                    );
+                }
+
+                for line in waveform_points.windows(2) {
+                    painter.line_segment(
+                        [line[0], line[1]],
+                        Stroke::new(1.2, Color32::from_rgba_unmultiplied(180, 206, 232, 110)),
+                    );
+                }
 
                 let screen_points: Vec<Pos2> = active_points
                     .iter()

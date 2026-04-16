@@ -17,6 +17,7 @@ pub struct KickVoice {
     phase: f32,
     time_seconds: f32,
     hit_gain: f32,
+    hit_note_hz: Option<f32>,
 }
 
 impl Default for KickVoice {
@@ -27,6 +28,7 @@ impl Default for KickVoice {
             phase: 0.0,
             time_seconds: 0.0,
             hit_gain: 1.0,
+            hit_note_hz: None,
         }
     }
 }
@@ -45,6 +47,15 @@ impl KickVoice {
         self.phase = 0.0;
         self.time_seconds = 0.0;
         self.hit_gain = velocity.clamp(0.0, 1.0);
+        self.hit_note_hz = None;
+    }
+
+    pub fn trigger_with_note_velocity(&mut self, note_hz: f32, velocity: f32) {
+        self.active = true;
+        self.phase = 0.0;
+        self.time_seconds = 0.0;
+        self.hit_gain = velocity.clamp(0.0, 1.0);
+        self.hit_note_hz = Some(note_hz.max(20.0));
     }
 
     pub fn next_sample(
@@ -64,9 +75,10 @@ impl KickVoice {
 
         let amp_curve = amp_lut[lut_index].clamp(0.0, 1.0);
         let pitch_curve = pitch_lut[lut_index].clamp(0.0, 1.0);
+        let hit_base_freq_hz = self.hit_note_hz.unwrap_or(params.base_freq_hz);
 
         let amplitude = params.level.clamp(0.0, 1.0) * self.hit_gain * amp_curve;
-        let frequency = ((params.base_freq_hz + params.pitch_drop_hz * pitch_curve)
+        let frequency = ((hit_base_freq_hz + params.pitch_drop_hz * pitch_curve)
             * params.tuning_scale.max(0.5))
             .max(20.0);
 

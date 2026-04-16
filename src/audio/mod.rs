@@ -15,6 +15,7 @@ pub struct KickDspParams {
     pub trigger_active: bool,
     pub midi_trigger: bool,
     pub midi_velocity: f32,
+    pub midi_note_hz: Option<f32>,
 }
 
 pub struct KickEngine {
@@ -52,8 +53,15 @@ impl KickEngine {
         self.last_trigger_param = params.trigger_active;
 
         if params.midi_trigger {
-            self.voice
-                .trigger_with_velocity(params.midi_velocity.clamp(0.0, 1.0));
+            if let Some(note_hz) = params.midi_note_hz {
+                self.voice.trigger_with_note_velocity(
+                    note_hz,
+                    params.midi_velocity.clamp(0.0, 1.0),
+                );
+            } else {
+                self.voice
+                    .trigger_with_velocity(params.midi_velocity.clamp(0.0, 1.0));
+            }
         }
 
         if shared_snapshot.trigger_counter != self.last_shared_trigger_counter {
