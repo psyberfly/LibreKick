@@ -133,9 +133,11 @@ impl Plugin for KickPlugin {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
         let mut midi_trigger = false;
+        let mut midi_velocity = 1.0;
         while let Some(event) = context.next_event() {
-            if let NoteEvent::NoteOn { .. } = event {
+            if let NoteEvent::NoteOn { velocity, .. } = event {
                 midi_trigger = true;
+                midi_velocity = velocity;
             }
         }
 
@@ -146,6 +148,7 @@ impl Plugin for KickPlugin {
             level: self.params.level.value(),
             trigger_active: self.params.trigger.value(),
             midi_trigger,
+            midi_velocity,
         };
 
         self.engine.process(buffer, dsp_params, &self.shared)

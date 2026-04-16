@@ -8,6 +8,7 @@ pub struct VoiceParams {
     pub base_freq_hz: f32,
     pub pitch_drop_hz: f32,
     pub level: f32,
+    pub tuning_scale: f32,
 }
 
 pub struct KickVoice {
@@ -15,6 +16,7 @@ pub struct KickVoice {
     active: bool,
     phase: f32,
     time_seconds: f32,
+    hit_gain: f32,
 }
 
 impl Default for KickVoice {
@@ -24,6 +26,7 @@ impl Default for KickVoice {
             active: false,
             phase: 0.0,
             time_seconds: 0.0,
+            hit_gain: 1.0,
         }
     }
 }
@@ -34,9 +37,14 @@ impl KickVoice {
     }
 
     pub fn trigger(&mut self) {
+        self.trigger_with_velocity(1.0);
+    }
+
+    pub fn trigger_with_velocity(&mut self, velocity: f32) {
         self.active = true;
         self.phase = 0.0;
         self.time_seconds = 0.0;
+        self.hit_gain = velocity.clamp(0.0, 1.0);
     }
 
     pub fn next_sample(
@@ -57,8 +65,10 @@ impl KickVoice {
         let amp_curve = amp_lut[lut_index].clamp(0.0, 1.0);
         let pitch_curve = pitch_lut[lut_index].clamp(0.0, 1.0);
 
-        let amplitude = params.level.clamp(0.0, 1.0) * amp_curve;
-        let frequency = (params.base_freq_hz + params.pitch_drop_hz * pitch_curve).max(20.0);
+        let amplitude = params.level.clamp(0.0, 1.0) * self.hit_gain * amp_curve;
+        let frequency = ((params.base_freq_hz + params.pitch_drop_hz * pitch_curve)
+            * params.tuning_scale.max(0.5))
+            .max(20.0);
 
         self.phase += TAU * frequency / self.sample_rate;
         if self.phase >= TAU {

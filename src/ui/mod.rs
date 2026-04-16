@@ -18,6 +18,21 @@ enum CurveKind {
     Pitch,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TuningStandard {
+    A440,
+    A432,
+}
+
+impl TuningStandard {
+    fn a4_hz(self) -> f32 {
+        match self {
+            TuningStandard::A440 => 440.0,
+            TuningStandard::A432 => 432.0,
+        }
+    }
+}
+
 struct Curve {
     points: Vec<Pos2>,
 }
@@ -50,6 +65,7 @@ struct BezierUiState {
     amplitude_curve: Curve,
     pitch_curve: Curve,
     active_curve: CurveKind,
+    tuning_standard: TuningStandard,
     selected_point: Option<usize>,
 }
 
@@ -59,6 +75,7 @@ impl Default for BezierUiState {
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
+            tuning_standard: TuningStandard::A440,
             selected_point: Some(1),
         }
     }
@@ -122,6 +139,40 @@ fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
     lut
 }
 
+fn amplitude_db(value: f32) -> f32 {
+    let min_amp = 10.0_f32.powf(-60.0 / 20.0);
+    (20.0 * value.max(min_amp).log10()).clamp(-60.0, 0.0)
+}
+
+fn pitch_hz_from_normalized(value: f32) -> f32 {
+    let min_hz = 20.0_f32;
+    let max_hz = 200.0_f32;
+    min_hz * (max_hz / min_hz).powf(value.clamp(0.0, 1.0))
+}
+
+fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
+    const NOTE_NAMES: [&str; 12] = [
+        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+    ];
+
+    let midi_note = (69.0 + 12.0 * (hz / tuning_a4_hz.max(1.0)).log2()).round() as i32;
+    let octave = midi_note / 12 - 1;
+    let note_idx = midi_note.rem_euclid(12) as usize;
+
+    format!("{}{}", NOTE_NAMES[note_idx], octave)
+}
+
+fn point_value_label(kind: CurveKind, point: Pos2, tuning_a4_hz: f32) -> String {
+    match kind {
+        CurveKind::Amplitude => format!("{:.1} dB", amplitude_db(point.y)),
+        CurveKind::Pitch => {
+            let hz = pitch_hz_from_normalized(point.y) * (tuning_a4_hz / 440.0);
+            let note = note_name_from_hz(hz, tuning_a4_hz);
+            format!("{} {:.1}Hz", note, hz)
+        }
+    }
+}
+
 fn constrain_curve_points(points: &mut [Pos2]) {
     if points.len() < 2 {
         return;
@@ -162,6 +213,10 @@ pub fn create_testing_editor(
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
+                    ui.separator();
+                    ui.label("Tuning:");
+                    ui.selectable_value(&mut state.tuning_standard, TuningStandard::A440, "A=440");
+                    ui.selectable_value(&mut state.tuning_standard, TuningStandard::A432, "A=432");
                     ui.separator();
                     if ui.button("Trigger").clicked() {
                         shared::request_trigger(&shared_for_ui);
@@ -340,6 +395,8 @@ pub fn create_testing_editor(
 
                 state.selected_point = selected_point;
                 let active_points = state.active_curve().points.clone();
+                let tuning_a4_hz = state.tuning_standard.a4_hz();
+                shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
 
                 let amplitude_lut = curve_lut(&state.amplitude_curve.points);
                 let pitch_lut = curve_lut(&state.pitch_curve.points);
@@ -383,6 +440,36 @@ pub fn create_testing_editor(
                     };
                     painter.circle_filled(*point, 6.0, color);
                     painter.circle_stroke(*point, 7.0, Stroke::new(1.0, Color32::BLACK));
+
+                    if let Some(value_point) = active_points.get(i).copied() {
+                        let label = point_value_label(active_kind, value_point, tuning_a4_hz);
+                        let bubble_width = (label.len() as f32 * 7.0 + 14.0).max(56.0);
+                        let bubble_height = 20.0;
+                        let bubble_min = Pos2::new(point.x + 10.0, point.y - bubble_height * 0.5);
+                        let bubble_rect = Rect::from_min_size(
+                            bubble_min,
+                            Vec2::new(bubble_width, bubble_height),
+                        );
+
+                        painter.rect_filled(
+                            bubble_rect,
+                            bubble_height * 0.5,
+                            Color32::from_rgba_unmultiplied(24, 28, 33, 220),
+                        );
+                        painter.rect_stroke(
+                            bubble_rect,
+                            bubble_height * 0.5,
+                            Stroke::new(1.0, Color32::from_rgb(90, 95, 102)),
+                            egui::StrokeKind::Inside,
+                        );
+                        painter.text(
+                            bubble_rect.center(),
+                            Align2::CENTER_CENTER,
+                            label,
+                            FontId::proportional(11.0),
+                            Color32::from_rgb(224, 230, 238),
+                        );
+                    }
                 }
                 if let Some(selected) = selected_point {
                     if let Some(point) = active_points.get(selected) {

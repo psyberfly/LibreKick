@@ -14,6 +14,7 @@ pub struct KickDspParams {
     pub level: f32,
     pub trigger_active: bool,
     pub midi_trigger: bool,
+    pub midi_velocity: f32,
 }
 
 pub struct KickEngine {
@@ -51,7 +52,8 @@ impl KickEngine {
         self.last_trigger_param = params.trigger_active;
 
         if params.midi_trigger {
-            self.voice.trigger();
+            self.voice
+                .trigger_with_velocity(params.midi_velocity.clamp(0.0, 1.0));
         }
 
         if shared_snapshot.trigger_counter != self.last_shared_trigger_counter {
@@ -59,11 +61,14 @@ impl KickEngine {
             self.voice.trigger();
         }
 
+        let tuning_scale = (shared_snapshot.tuning_a4_hz / 440.0).clamp(0.9, 1.1);
+
         let voice_params = VoiceParams {
             decay_ms: params.decay_ms,
             base_freq_hz: params.base_freq_hz,
             pitch_drop_hz: params.pitch_drop_hz,
             level: params.level,
+            tuning_scale,
         };
 
         for mut channel_samples in buffer.iter_samples() {
@@ -72,9 +77,10 @@ impl KickEngine {
                 &shared_snapshot.amp_lut,
                 &shared_snapshot.pitch_lut,
             );
+            let limited_sample = sample.clamp(-1.0, 1.0);
 
             for output in channel_samples.iter_mut() {
-                *output = sample;
+                *output = limited_sample;
             }
         }
 
