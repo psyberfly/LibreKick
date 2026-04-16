@@ -4,6 +4,7 @@ use nih_plug::prelude::Editor;
 use nih_plug_egui::{
     create_egui_editor,
     egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2},
+    resizable_window::ResizableWindow,
     EguiState,
 };
 
@@ -48,7 +49,6 @@ struct BezierUiState {
     pitch_curve: Curve,
     active_curve: CurveKind,
     selected_point: Option<usize>,
-    ui_zoom: f32,
 }
 
 impl Default for BezierUiState {
@@ -58,7 +58,6 @@ impl Default for BezierUiState {
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
             selected_point: Some(1),
-            ui_zoom: 0.95,
         }
     }
 }
@@ -131,24 +130,21 @@ fn constrain_curve_points(points: &mut [Pos2]) {
 }
 
 pub fn create_testing_editor(editor_state: Arc<EguiState>) -> Option<Box<dyn Editor>> {
+    let resizable_state = editor_state.clone();
+
     create_egui_editor(
         editor_state,
         BezierUiState::default(),
         |_ctx, _state| {},
-        |_ctx, _setter, state| {
-            _ctx.set_zoom_factor(state.ui_zoom.clamp(0.6, 1.6));
-            egui::CentralPanel::default().show(_ctx, |ui| {
+        move |_ctx, _setter, state| {
+            ResizableWindow::new("kick-plugin-resize")
+                .min_size(Vec2::new(520.0, 320.0))
+                .show(_ctx, &resizable_state, |ui| {
                 ui.heading("Kick Curve Editor (Prototype)");
                 ui.horizontal(|ui| {
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
-                    ui.separator();
-                    ui.label("Zoom");
-                    ui.add(egui::Slider::new(&mut state.ui_zoom, 0.6..=1.6).step_by(0.05));
-                    if ui.button("Reset").clicked() {
-                        state.ui_zoom = 1.0;
-                    }
                 });
                 ui.add_space(8.0);
 
@@ -374,7 +370,7 @@ pub fn create_testing_editor(editor_state: Arc<EguiState>) -> Option<Box<dyn Edi
                 }
                 ui.label("Click/drag points to edit. Double-click graph to add point.");
                     });
-            });
+                });
         },
     )
 }
