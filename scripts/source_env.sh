@@ -22,6 +22,11 @@ set -a
 source "$CONFIG_ENV"
 set +a
 
+if [[ -z "${TARGET:-}" && -n "${OS:-}" ]]; then
+  TARGET="$OS"
+fi
+
+: "${TARGET:?TARGET must be set in config.env}"
 : "${PLUGIN_NAME:?PLUGIN_NAME must be set in config.env}"
 : "${PLUGIN_BINARY_NAME:?PLUGIN_BINARY_NAME must be set in config.env}"
 : "${TARGET_ARCH_DIR:?TARGET_ARCH_DIR must be set in config.env}"

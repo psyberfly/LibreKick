@@ -8,6 +8,8 @@ use nih_plug_egui::{
     EguiState,
 };
 
+use crate::shared;
+
 const MIN_POINT_GAP_X: f32 = 0.01;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -109,6 +111,17 @@ fn bezier_point(points: &[Pos2], t: f32) -> Pos2 {
     work[0]
 }
 
+fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
+    let mut lut = [0.0; shared::CURVE_LUT_SIZE];
+
+    for (i, value) in lut.iter_mut().enumerate() {
+        let t = i as f32 / (shared::CURVE_LUT_SIZE as f32 - 1.0);
+        *value = bezier_point(points, t).y.clamp(0.0, 1.0);
+    }
+
+    lut
+}
+
 fn constrain_curve_points(points: &mut [Pos2]) {
     if points.len() < 2 {
         return;
@@ -129,8 +142,12 @@ fn constrain_curve_points(points: &mut [Pos2]) {
     }
 }
 
-pub fn create_testing_editor(editor_state: Arc<EguiState>) -> Option<Box<dyn Editor>> {
+pub fn create_testing_editor(
+    editor_state: Arc<EguiState>,
+    shared_state: shared::SharedStateHandle,
+) -> Option<Box<dyn Editor>> {
     let resizable_state = editor_state.clone();
+    let shared_for_ui = shared_state.clone();
 
     create_egui_editor(
         editor_state,
@@ -145,6 +162,10 @@ pub fn create_testing_editor(editor_state: Arc<EguiState>) -> Option<Box<dyn Edi
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
+                    ui.separator();
+                    if ui.button("Trigger").clicked() {
+                        shared::request_trigger(&shared_for_ui);
+                    }
                 });
                 ui.add_space(8.0);
 
@@ -319,6 +340,11 @@ pub fn create_testing_editor(editor_state: Arc<EguiState>) -> Option<Box<dyn Edi
 
                 state.selected_point = selected_point;
                 let active_points = state.active_curve().points.clone();
+
+                let amplitude_lut = curve_lut(&state.amplitude_curve.points);
+                let pitch_lut = curve_lut(&state.pitch_curve.points);
+                shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Amplitude, amplitude_lut);
+                shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Pitch, pitch_lut);
 
                 let screen_points: Vec<Pos2> = active_points
                     .iter()

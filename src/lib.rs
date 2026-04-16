@@ -4,14 +4,32 @@ use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 
 mod audio;
+mod shared;
 mod ui;
 
 struct KickPlugin {
     params: Arc<KickPluginParams>,
+    engine: audio::KickEngine,
+    shared: shared::SharedStateHandle,
 }
 
 #[derive(Params)]
 struct KickPluginParams {
+    #[id = "trigger"]
+    trigger: BoolParam,
+
+    #[id = "decay_ms"]
+    decay_ms: FloatParam,
+
+    #[id = "base_freq_hz"]
+    base_freq_hz: FloatParam,
+
+    #[id = "pitch_drop_hz"]
+    pitch_drop_hz: FloatParam,
+
+    #[id = "level"]
+    level: FloatParam,
+
     #[persist = "editor-state"]
     editor_state: Arc<EguiState>,
 }
@@ -19,6 +37,36 @@ struct KickPluginParams {
 impl Default for KickPluginParams {
     fn default() -> Self {
         Self {
+            trigger: BoolParam::new("Trigger", false),
+            decay_ms: FloatParam::new(
+                "Decay (ms)",
+                220.0,
+                FloatRange::Linear {
+                    min: 20.0,
+                    max: 1000.0,
+                },
+            ),
+            base_freq_hz: FloatParam::new(
+                "Base Freq",
+                52.0,
+                FloatRange::Linear {
+                    min: 30.0,
+                    max: 120.0,
+                },
+            ),
+            pitch_drop_hz: FloatParam::new(
+                "Pitch Drop",
+                170.0,
+                FloatRange::Linear {
+                    min: 0.0,
+                    max: 400.0,
+                },
+            ),
+            level: FloatParam::new(
+                "Level",
+                0.8,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
             editor_state: EguiState::from_size(760, 420),
         }
     }
@@ -26,8 +74,12 @@ impl Default for KickPluginParams {
 
 impl Default for KickPlugin {
     fn default() -> Self {
+        let shared = shared::new_shared_state();
+
         Self {
             params: Arc::new(KickPluginParams::default()),
+            engine: audio::KickEngine::default(),
+            shared,
         }
     }
 }
@@ -48,7 +100,7 @@ impl Plugin for KickPlugin {
         names: PortNames::const_default(),
     }];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::None;
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
 
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
@@ -61,22 +113,49 @@ impl Plugin for KickPlugin {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        ui::create_testing_editor(self.params.editor_state.clone())
+        ui::create_testing_editor(self.params.editor_state.clone(), self.shared.clone())
+    }
+
+    fn initialize(
+        &mut self,
+        _audio_io_layout: &AudioIOLayout,
+        buffer_config: &BufferConfig,
+        _context: &mut impl InitContext<Self>,
+    ) -> bool {
+        self.engine.set_sample_rate(buffer_config.sample_rate);
+        true
     }
 
     fn process(
         &mut self,
         buffer: &mut Buffer,
         _aux: &mut AuxiliaryBuffers,
-        _context: &mut impl ProcessContext<Self>,
+        context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        audio::process_silence(buffer)
+        let mut midi_trigger = false;
+        while let Some(event) = context.next_event() {
+            if let NoteEvent::NoteOn { .. } = event {
+                midi_trigger = true;
+            }
+        }
+
+        let dsp_params = audio::KickDspParams {
+            decay_ms: self.params.decay_ms.value(),
+            base_freq_hz: self.params.base_freq_hz.value(),
+            pitch_drop_hz: self.params.pitch_drop_hz.value(),
+            level: self.params.level.value(),
+            trigger_active: self.params.trigger.value(),
+            midi_trigger,
+        };
+
+        self.engine.process(buffer, dsp_params, &self.shared)
     }
 }
 
 impl Vst3Plugin for KickPlugin {
     const VST3_CLASS_ID: [u8; 16] = *b"KickPlgTestLin01";
-    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[Vst3SubCategory::Fx];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
 nih_export_vst3!(KickPlugin);
