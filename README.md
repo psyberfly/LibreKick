@@ -1,7 +1,8 @@
+
+
 # Open Source Waveform Shaper Kick Synth
 
-<img width="1129" height="777" alt="image" src="https://github.com/user-attachments/assets/9f991b6e-a488-42d4-9846-dd4cde2e0d38" />
-
+<img width="1129" height="777" alt="image" src="https://github.com/user-attachments/assets/ecae543b-23e5-4d81-aaea-b0ac58061c17" />
 
 # USAGE
 Currently, only Linux VST 2.0 build is configured.
