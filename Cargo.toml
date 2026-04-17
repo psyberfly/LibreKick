@@ -2,6 +2,10 @@
 name = "librekick"
 version = "0.1.0"
 edition = "2021"
+authors = ["Anorak <travisbickle27@proton.me>"]
+description = "Open ource waveform shaper kick synth"
+repository = "https://github.com/psyberfly/LibreKick"
+
 
 [lib]
 crate-type = ["cdylib"]
