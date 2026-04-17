@@ -8,9 +8,8 @@ To run the plugin on Linux, go to `/scripts`:
 
 
 # TODO
-1. Fix rendered waveform: reduce the frequency of the waveform to make transients more readable; keep everything else the same. 
-2. Fix audio: sounds coming out of the plugin don't sound like kicks yet.
-3. Add undo, redo buttons 
+1. Improve rendered waveform: In pitch envp, frequency change is clamped to halfway point (632Hz).
+2. Explore logarithmic representation of y-axis for pitch envelope? Can log also be used to better render waveform?
 
 # Fix for TODO #2:
 
