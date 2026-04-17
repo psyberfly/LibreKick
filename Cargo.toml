@@ -9,6 +9,7 @@ crate-type = ["cdylib"]
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] } # Core plugin framework (VST3/CLAP)
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" } # Egui editor integration for plugin UI
+image = { version = "0.24.9", default-features = false, features = ["png"] } # Decode embedded PNG logo for UI header (Cargo 1.83 compatible)
 time = "=0.3.36" # Time crate pin for Cargo compatibility
 time-core = "=0.1.2" # Matching low-level time dependency pin
 time-macros = "=0.2.18" # Matching time macro dependency pin

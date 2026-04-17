@@ -11,12 +11,7 @@ if [[ -z "$TARGET_NAME" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$BINARY_SRC" ]]; then
-  echo "Release binary not found. Running full build first..."
-  "$SCRIPT_DIR/build.sh" "$TARGET_NAME"
-elif [[ ! -f "$BINARY_DST" ]] || [[ "$BINARY_SRC" -nt "$BINARY_DST" ]]; then
-  echo "Bundled plugin is missing or stale. Refreshing bundle first..."
-  "$SCRIPT_DIR/core/bundle.sh" "$TARGET_NAME"
-fi
+echo "Running build pipeline before install..."
+"$SCRIPT_DIR/build.sh" "$TARGET_NAME"
 
 "$SCRIPT_DIR/core/install.sh" "$TARGET_NAME"

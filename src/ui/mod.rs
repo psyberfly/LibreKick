@@ -3,7 +3,10 @@ use std::sync::Arc;
 use nih_plug::prelude::Editor;
 use nih_plug_egui::{
     create_egui_editor,
-    egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2},
+    egui::{
+        self, Align2, Color32, ColorImage, FontId, Pos2, Rect, RichText, Sense, Stroke,
+        TextureHandle, TextureOptions, Vec2,
+    },
     resizable_window::ResizableWindow,
     EguiState,
 };
@@ -32,6 +35,10 @@ const BASE_EDITOR_HEIGHT: f32 = 420.0;
 struct Theme;
 
 impl Theme {
+    fn app_font_family(self) -> egui::FontFamily {
+        egui::FontFamily::Name("Open Sans Adwaita Bold Italica".into())
+    }
+
     fn brand_orange(self) -> Color32 {
         Color32::from_rgb(242, 134, 52)
     }
@@ -93,11 +100,11 @@ impl Theme {
     }
 
     fn envelope_amplitude(self) -> Color32 {
-        Color32::from_rgb(242, 156, 77)
+        Color32::from_rgb(116, 195, 101)
     }
 
     fn envelope_pitch(self) -> Color32 {
-        Color32::from_rgb(249, 122, 122)
+        Color32::from_rgb(0, 220, 255)
     }
 
     fn endpoint_point(self) -> Color32 {
@@ -127,9 +134,25 @@ impl Theme {
     fn bubble_text(self) -> Color32 {
         Color32::from_rgb(224, 230, 238)
     }
+
+    fn active_button_bg(self) -> Color32 {
+        Color32::from_rgb(188, 54, 54)
+    }
+
+    fn active_button_hover(self) -> Color32 {
+        Color32::from_rgb(220, 72, 72)
+    }
+
+    fn active_button_border(self) -> Color32 {
+        Color32::from_rgb(96, 30, 30)
+    }
 }
 
 const APP_THEME: Theme = Theme;
+
+fn themed_font(size: f32) -> FontId {
+    FontId::new(size, APP_THEME.app_font_family())
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CurveKind {
@@ -146,19 +169,61 @@ fn ui_scale_from_size(size: Vec2) -> f32 {
 fn apply_ui_text_scale(ui: &mut egui::Ui, scale: f32) {
     let mut style = ui.style().as_ref().clone();
     style.text_styles = [
-        (egui::TextStyle::Heading, FontId::proportional(21.0 * scale)),
-        (egui::TextStyle::Body, FontId::proportional(14.0 * scale)),
+        (egui::TextStyle::Heading, themed_font(21.0 * scale)),
+        (egui::TextStyle::Body, themed_font(14.0 * scale)),
         (egui::TextStyle::Monospace, FontId::monospace(13.0 * scale)),
-        (egui::TextStyle::Button, FontId::proportional(14.0 * scale)),
-        (egui::TextStyle::Small, FontId::proportional(11.0 * scale)),
+        (egui::TextStyle::Button, themed_font(14.0 * scale)),
+        (egui::TextStyle::Small, themed_font(11.0 * scale)),
     ]
     .into();
     ui.ctx().set_style(style.clone());
     ui.set_style(style);
 }
 
+fn brand_logo_texture(ctx: &egui::Context) -> Option<TextureHandle> {
+    let image_bytes = include_bytes!("../media/logo.png");
+    let image = image::load_from_memory_with_format(image_bytes, image::ImageFormat::Png)
+        .ok()?
+        .to_rgba8();
+    let [width, height] = [image.width() as usize, image.height() as usize];
+    let pixels = image.into_raw();
+    let color_image = ColorImage::from_rgba_unmultiplied([width, height], &pixels);
+
+    Some(ctx.load_texture(
+        "librekick-brand-logo",
+        color_image,
+        TextureOptions::LINEAR,
+    ))
+}
+
+fn title_logo_size(ui: &egui::Ui, scale: f32) -> Vec2 {
+    let font = themed_font((26.0 * scale).max(18.0));
+    let text_size = ui.fonts(|fonts| {
+        fonts
+            .layout_no_wrap("LibreKick".to_owned(), font, APP_THEME.brand_orange())
+            .size()
+    });
+    text_size + Vec2::new(10.0 * scale, 6.0 * scale)
+}
+
+fn brand_title_logo(ui: &mut egui::Ui, logo: Option<&TextureHandle>, scale: f32) {
+    let target_size = title_logo_size(ui, scale);
+
+    if let Some(logo) = logo {
+        let image_size = logo.size_vec2();
+        if image_size.x > 0.0 && image_size.y > 0.0 {
+            let fit = (target_size.x / image_size.x).min(target_size.y / image_size.y);
+            let draw_size = image_size * fit;
+            ui.add(egui::Image::new(logo).fit_to_exact_size(draw_size));
+            return;
+        }
+    }
+
+    glowing_brand_label(ui, "LibreKick", scale);
+}
+
 fn glowing_brand_label(ui: &mut egui::Ui, text: &str, scale: f32) {
-    let font = FontId::proportional((26.0 * scale).max(18.0));
+    let font = themed_font((26.0 * scale).max(18.0));
     let text_size = ui.fonts(|fonts| {
         fonts
             .layout_no_wrap(text.to_owned(), font.clone(), APP_THEME.brand_orange())
@@ -463,6 +528,8 @@ struct BezierUiState {
     undo_stack: Vec<EditorSnapshot>,
     redo_stack: Vec<EditorSnapshot>,
     point_drag_snapshot: Option<EditorSnapshot>,
+    brand_logo: Option<TextureHandle>,
+    show_help_popup: bool,
 }
 
 impl Default for BezierUiState {
@@ -479,6 +546,8 @@ impl Default for BezierUiState {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             point_drag_snapshot: None,
+            brand_logo: None,
+            show_help_popup: false,
         }
     }
 }
@@ -682,7 +751,15 @@ pub fn create_testing_editor(
     create_egui_editor(
         editor_state,
         BezierUiState::default(),
-        |_ctx, _state| {},
+        |_ctx, state| {
+            let mut fonts = egui::FontDefinitions::default();
+            let app_family = APP_THEME.app_font_family();
+            if let Some(fallbacks) = fonts.families.get(&egui::FontFamily::Proportional).cloned() {
+                fonts.families.insert(app_family, fallbacks);
+            }
+            _ctx.set_fonts(fonts);
+            state.brand_logo = brand_logo_texture(_ctx);
+        },
         move |_ctx, _setter, state| {
             ResizableWindow::new("kick-plugin-resize")
                 .min_size(Vec2::new(520.0, 320.0))
@@ -714,19 +791,59 @@ pub fn create_testing_editor(
                         (RESIZE_SIDE_HIT_RADIUS * ui_scale).max(12.0);
                     style.visuals.resize_corner_size =
                         (RESIZE_CORNER_VISUAL_SIZE * ui_scale).max(16.0);
+                    style.visuals.selection.bg_fill = APP_THEME.active_button_bg();
+                    style.visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+                    style.visuals.widgets.active.bg_fill = APP_THEME.active_button_bg();
+                    style.visuals.widgets.active.weak_bg_fill = APP_THEME.active_button_bg();
+                    style.visuals.widgets.active.bg_stroke =
+                        Stroke::new(1.0, APP_THEME.active_button_border());
+                    style.visuals.widgets.active.fg_stroke.color = Color32::WHITE;
+                    style.visuals.widgets.hovered.bg_fill = APP_THEME.active_button_hover();
+                    style.visuals.widgets.hovered.weak_bg_fill = APP_THEME.active_button_hover();
+                    style.visuals.widgets.hovered.bg_stroke =
+                        Stroke::new(1.0, APP_THEME.active_button_border());
+                    style.visuals.widgets.hovered.fg_stroke.color = Color32::WHITE;
                 }
                 ui.scope(|ui| {
                 apply_ui_text_scale(ui, ui_scale);
                 ui.add_space(6.0 * ui_scale);
                 ui.horizontal(|ui| {
-                    glowing_brand_label(ui, "LibreKick", ui_scale);
+                    brand_title_logo(ui, state.brand_logo.as_ref(), ui_scale);
                     ui.add_space(6.0 * ui_scale);
                     ui.label(
-                        RichText::new("Curve Editor (Prototype)")
+                        RichText::new("Prototype")
                             .strong()
                             .color(APP_THEME.axis_title()),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(egui::Button::new("?").min_size(Vec2::new(18.0 * ui_scale, 18.0 * ui_scale)))
+                            .clicked()
+                        {
+                            state.show_help_popup = true;
+                        }
+                    });
                 });
+
+                if state.show_help_popup {
+                    egui::Window::new("Help")
+                        .anchor(Align2::RIGHT_TOP, Vec2::new(-10.0 * ui_scale, 10.0 * ui_scale))
+                        .collapsible(false)
+                        .resizable(false)
+                        .open(&mut state.show_help_popup)
+                        .show(ui.ctx(), |ui| {
+                            ui.label("Mouse controls:");
+                            ui.label("- Drag points to shape the selected envelope.");
+                            ui.label("- Double-click inside the graph to add a point.");
+                            ui.label("- Right-click a point to remove it.");
+                            ui.add_space(4.0 * ui_scale);
+                            ui.label("Envelope basics:");
+                            ui.label("- Amplitude envelope controls volume over time.");
+                            ui.label("- Pitch envelope controls pitch over time.");
+                        });
+                }
+
+                ui.add_space(8.0 * ui_scale);
                 ui.horizontal(|ui| {
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
@@ -808,7 +925,7 @@ pub fn create_testing_editor(
                 }
                 let left_axis_padding = (62.0 * ui_scale).clamp(52.0, 120.0);
                 let bottom_axis_padding = (52.0 * ui_scale).clamp(40.0, 110.0);
-                let top_axis_padding = (30.0 * ui_scale).clamp(22.0, 56.0);
+                let top_axis_padding = (50.0 * ui_scale).clamp(38.0, 88.0);
                 let right_axis_padding = (24.0 * ui_scale).clamp(18.0, 48.0);
                 let graph_rect = Rect::from_min_max(
                     Pos2::new(
@@ -900,7 +1017,7 @@ pub fn create_testing_editor(
                     Pos2::new(note_length_x, outer_rect.bottom() - bottom_axis_padding * 0.62),
                     Align2::CENTER_BOTTOM,
                     format!("{:.0}ms", note_length_ms),
-                    FontId::proportional(10.0 * ui_scale),
+                    themed_font(10.0 * ui_scale),
                     APP_THEME.note_length_fill(),
                 );
 
@@ -921,14 +1038,14 @@ pub fn create_testing_editor(
                         CurveKind::Amplitude => "Amount (dB)",
                         CurveKind::Pitch => "Pitch (Hz)",
                     },
-                    FontId::proportional(12.0 * ui_scale),
+                    themed_font(12.0 * ui_scale),
                     APP_THEME.axis_title(),
                 );
                 painter.text(
                     Pos2::new(graph_rect.right(), outer_rect.bottom() - bottom_axis_padding * 0.2),
                     Align2::RIGHT_TOP,
                     "Length",
-                    FontId::proportional(12.0 * ui_scale),
+                    themed_font(12.0 * ui_scale),
                     APP_THEME.axis_title(),
                 );
 
@@ -939,7 +1056,7 @@ pub fn create_testing_editor(
                         Pos2::new(x, graph_rect.bottom() + bottom_axis_padding * 0.08),
                         Align2::CENTER_TOP,
                         axis_x_label(f),
-                        FontId::proportional(10.0 * ui_scale),
+                        themed_font(10.0 * ui_scale),
                         APP_THEME.axis_tick(),
                     );
                 }
@@ -951,7 +1068,7 @@ pub fn create_testing_editor(
                         Pos2::new(graph_rect.left() - left_axis_padding * 0.12, y),
                         Align2::RIGHT_CENTER,
                         axis_y_label(state.active_curve, f),
-                        FontId::proportional(10.0 * ui_scale),
+                        themed_font(10.0 * ui_scale),
                         APP_THEME.axis_tick(),
                     );
                 }
@@ -1038,49 +1155,6 @@ pub fn create_testing_editor(
                         }
                     }
 
-                    ui.horizontal(|ui| {
-                        if ui.button("Add Point").clicked() {
-                            let (left, right, insert_index) = if let Some(selected) = selected_point {
-                                if selected + 1 < points.len() {
-                                    (points[selected], points[selected + 1], selected + 1)
-                                } else {
-                                    (points[selected - 1], points[selected], selected)
-                                }
-                            } else {
-                                (
-                                    points[0],
-                                    *points.last().unwrap_or(&Pos2::new(1.0, 0.0)),
-                                    points.len() - 1,
-                                )
-                            };
-
-                            let new_point =
-                                Pos2::new((left.x + right.x) * 0.5, (left.y + right.y) * 0.5);
-                            points.insert(insert_index, new_point);
-                            constrain_curve_points(points);
-                            selected_point = Some(insert_index);
-                        }
-
-                        let can_remove = matches!(
-                            selected_point,
-                            Some(index) if index > 0 && index + 1 < points.len()
-                        );
-                        if ui
-                            .add_enabled(can_remove, egui::Button::new("Remove Selected"))
-                            .clicked()
-                        {
-                            if let Some(selected) = selected_point {
-                                points.remove(selected);
-                                constrain_curve_points(points);
-                                selected_point = Some(
-                                    selected
-                                        .saturating_sub(1)
-                                        .min(points.len() - 2)
-                                        .max(1),
-                                );
-                            }
-                        }
-                    });
                 }
 
                 state.selected_point = selected_point;
@@ -1131,7 +1205,9 @@ pub fn create_testing_editor(
                         [line[0], line[1]],
                         Stroke::new(
                             2.0,
-                            if active_kind == CurveKind::Amplitude {
+                            if state.show_final_waveform {
+                                Color32::from_rgb(255, 255, 0)
+                            } else if active_kind == CurveKind::Amplitude {
                                 APP_THEME.envelope_amplitude()
                             } else {
                                 APP_THEME.envelope_pitch()
@@ -1178,7 +1254,7 @@ pub fn create_testing_editor(
                             bubble_rect.center(),
                             Align2::CENTER_CENTER,
                             label,
-                            FontId::proportional(11.0 * ui_scale),
+                            themed_font(11.0 * ui_scale),
                             APP_THEME.bubble_text(),
                         );
                     }
