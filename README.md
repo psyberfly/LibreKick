@@ -1,4 +1,4 @@
-Open Source Kick Generator Plugin VST!
+Open Source LibreKick Plugin VST!
 
 # USAGE
 To run the plugin on Linux, go to `/scripts`:

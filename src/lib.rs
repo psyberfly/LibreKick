@@ -11,14 +11,14 @@ fn midi_note_to_hz(note: u8) -> f32 {
     440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
 }
 
-struct KickPlugin {
-    params: Arc<KickPluginParams>,
+struct LibreKick {
+    params: Arc<LibreKickParams>,
     engine: audio::KickEngine,
     shared: shared::SharedStateHandle,
 }
 
 #[derive(Params)]
-struct KickPluginParams {
+struct LibreKickParams {
     #[id = "trigger"]
     trigger: BoolParam,
 
@@ -38,7 +38,7 @@ struct KickPluginParams {
     editor_state: Arc<EguiState>,
 }
 
-impl Default for KickPluginParams {
+impl Default for LibreKickParams {
     fn default() -> Self {
         Self {
             trigger: BoolParam::new("Trigger", false),
@@ -76,20 +76,20 @@ impl Default for KickPluginParams {
     }
 }
 
-impl Default for KickPlugin {
+impl Default for LibreKick {
     fn default() -> Self {
         let shared = shared::new_shared_state();
 
         Self {
-            params: Arc::new(KickPluginParams::default()),
+            params: Arc::new(LibreKickParams::default()),
             engine: audio::KickEngine::default(),
             shared,
         }
     }
 }
 
-impl Plugin for KickPlugin {
-    const NAME: &'static str = "Kick Plugin";
+impl Plugin for LibreKick {
+    const NAME: &'static str = "LibreKick";
     const VENDOR: &'static str = "Anorak";
     const URL: &'static str = "https://example.com";
     const EMAIL: &'static str = "anorak@example.com";
@@ -162,10 +162,10 @@ impl Plugin for KickPlugin {
     }
 }
 
-impl Vst3Plugin for KickPlugin {
-    const VST3_CLASS_ID: [u8; 16] = *b"KickPlgTestLin01";
+impl Vst3Plugin for LibreKick {
+    const VST3_CLASS_ID: [u8; 16] = *b"LibreKickLin0001";
     const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
-nih_export_vst3!(KickPlugin);
+nih_export_vst3!(LibreKick);

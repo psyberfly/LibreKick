@@ -1,5 +1,5 @@
 [package]
-name = "kick_plugin"
+name = "librekick"
 version = "0.1.0"
 edition = "2021"
 

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use nih_plug::prelude::Editor;
 use nih_plug_egui::{
     create_egui_editor,
-    egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2},
+    egui::{self, Align2, Color32, FontId, Pos2, Rect, RichText, Sense, Stroke, Vec2},
     resizable_window::ResizableWindow,
     EguiState,
 };
@@ -29,6 +29,108 @@ const AMP_DB_FLOOR: f32 = -30.0;
 const BASE_EDITOR_WIDTH: f32 = 760.0;
 const BASE_EDITOR_HEIGHT: f32 = 420.0;
 
+struct Theme;
+
+impl Theme {
+    fn brand_orange(self) -> Color32 {
+        Color32::from_rgb(242, 134, 52)
+    }
+
+    fn brand_hot_core(self) -> Color32 {
+        Color32::from_rgb(255, 104, 74)
+    }
+
+    fn brand_glow_inner(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(255, 138, 60, 96)
+    }
+
+    fn brand_glow_outer(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(255, 120, 42, 42)
+    }
+
+    fn panel_bg(self) -> Color32 {
+        Color32::from_rgb(10, 12, 14)
+    }
+
+    fn graph_bg(self) -> Color32 {
+        Color32::from_rgb(16, 19, 22)
+    }
+
+    fn post_length_tint(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(0, 0, 0, 78)
+    }
+
+    fn graph_border(self) -> Color32 {
+        Color32::from_rgb(90, 95, 102)
+    }
+
+    fn grid_line(self) -> Color32 {
+        Color32::from_rgb(34, 39, 45)
+    }
+
+    fn note_length_fill(self) -> Color32 {
+        Color32::from_rgb(220, 64, 64)
+    }
+
+    fn note_length_stroke(self) -> Color32 {
+        Color32::from_rgb(70, 18, 18)
+    }
+
+    fn axis_title(self) -> Color32 {
+        Color32::from_rgb(185, 191, 198)
+    }
+
+    fn axis_tick(self) -> Color32 {
+        Color32::from_rgb(165, 171, 178)
+    }
+
+    fn waveform_midline(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(120, 128, 136, 45)
+    }
+
+    fn waveform_trace(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(245, 170, 112, 125)
+    }
+
+    fn envelope_amplitude(self) -> Color32 {
+        Color32::from_rgb(242, 156, 77)
+    }
+
+    fn envelope_pitch(self) -> Color32 {
+        Color32::from_rgb(249, 122, 122)
+    }
+
+    fn endpoint_point(self) -> Color32 {
+        Color32::from_rgb(220, 64, 64)
+    }
+
+    fn selected_point(self) -> Color32 {
+        Color32::from_rgb(255, 214, 122)
+    }
+
+    fn control_point(self) -> Color32 {
+        Color32::from_rgb(245, 160, 88)
+    }
+
+    fn point_outline(self) -> Color32 {
+        Color32::BLACK
+    }
+
+    fn bubble_bg(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(24, 28, 33, 220)
+    }
+
+    fn bubble_border(self) -> Color32 {
+        Color32::from_rgb(90, 95, 102)
+    }
+
+    fn bubble_text(self) -> Color32 {
+        Color32::from_rgb(224, 230, 238)
+    }
+}
+
+const APP_THEME: Theme = Theme;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CurveKind {
     Amplitude,
@@ -53,6 +155,70 @@ fn apply_ui_text_scale(ui: &mut egui::Ui, scale: f32) {
     .into();
     ui.ctx().set_style(style.clone());
     ui.set_style(style);
+}
+
+fn glowing_brand_label(ui: &mut egui::Ui, text: &str, scale: f32) {
+    let font = FontId::proportional((26.0 * scale).max(18.0));
+    let text_size = ui.fonts(|fonts| {
+        fonts
+            .layout_no_wrap(text.to_owned(), font.clone(), APP_THEME.brand_orange())
+            .size()
+    });
+    let padding = Vec2::new(10.0 * scale, 6.0 * scale);
+    let (rect, _) = ui.allocate_exact_size(text_size + padding, Sense::hover());
+    let text_pos = Pos2::new(rect.left() + 4.0 * scale, rect.center().y - text_size.y * 0.5);
+    let painter = ui.painter();
+
+    let outer_offsets = [
+        Vec2::new(-3.0, 0.0),
+        Vec2::new(3.0, 0.0),
+        Vec2::new(0.0, -3.0),
+        Vec2::new(0.0, 3.0),
+        Vec2::new(-2.0, -2.0),
+        Vec2::new(2.0, -2.0),
+        Vec2::new(-2.0, 2.0),
+        Vec2::new(2.0, 2.0),
+    ];
+    for offset in outer_offsets {
+        painter.text(
+            text_pos + offset * scale,
+            Align2::LEFT_TOP,
+            text,
+            font.clone(),
+            APP_THEME.brand_glow_outer(),
+        );
+    }
+
+    let inner_offsets = [
+        Vec2::new(-1.2, 0.0),
+        Vec2::new(1.2, 0.0),
+        Vec2::new(0.0, -1.2),
+        Vec2::new(0.0, 1.2),
+    ];
+    for offset in inner_offsets {
+        painter.text(
+            text_pos + offset * scale,
+            Align2::LEFT_TOP,
+            text,
+            font.clone(),
+            APP_THEME.brand_glow_inner(),
+        );
+    }
+
+    painter.text(
+        text_pos,
+        Align2::LEFT_TOP,
+        text,
+        font.clone(),
+        APP_THEME.brand_hot_core(),
+    );
+    painter.text(
+        text_pos + Vec2::new(0.0, -0.2 * scale),
+        Align2::LEFT_TOP,
+        text,
+        font,
+        APP_THEME.brand_orange(),
+    );
 }
 
 fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
@@ -552,7 +718,15 @@ pub fn create_testing_editor(
                 ui.scope(|ui| {
                 apply_ui_text_scale(ui, ui_scale);
                 ui.add_space(6.0 * ui_scale);
-                ui.heading("Kick Curve Editor (Prototype)");
+                ui.horizontal(|ui| {
+                    glowing_brand_label(ui, "LibreKick", ui_scale);
+                    ui.add_space(6.0 * ui_scale);
+                    ui.label(
+                        RichText::new("Curve Editor (Prototype)")
+                            .strong()
+                            .color(APP_THEME.axis_title()),
+                    );
+                });
                 ui.horizontal(|ui| {
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
@@ -648,8 +822,8 @@ pub fn create_testing_editor(
                 );
 
                 let painter = ui.painter_at(outer_rect);
-                painter.rect_filled(outer_rect, 4.0, Color32::from_rgb(10, 12, 14));
-                painter.rect_filled(graph_rect, 4.0, Color32::from_rgb(16, 19, 22));
+                painter.rect_filled(outer_rect, 4.0, APP_THEME.panel_bg());
+                painter.rect_filled(graph_rect, 4.0, APP_THEME.graph_bg());
 
                 let mut note_length_ms = state.note_length_ms.clamp(0.0, NOTE_LENGTH_MAX_MS);
                 let mut note_length_norm = (note_length_ms / NOTE_LENGTH_MAX_MS).clamp(0.0, 1.0);
@@ -688,14 +862,14 @@ pub fn create_testing_editor(
                     painter.rect_filled(
                         shaded_rect,
                         0.0,
-                        Color32::from_rgba_unmultiplied(0, 0, 0, 78),
+                        APP_THEME.post_length_tint(),
                     );
                 }
 
                 painter.rect_stroke(
                     graph_rect,
                     4.0,
-                    Stroke::new(1.0, Color32::from_rgb(90, 95, 102)),
+                    Stroke::new(1.0, APP_THEME.graph_border()),
                     egui::StrokeKind::Inside,
                 );
 
@@ -705,7 +879,7 @@ pub fn create_testing_editor(
 
                     painter.line_segment(
                         [Pos2::new(x, graph_rect.top()), Pos2::new(x, graph_rect.bottom())],
-                        Stroke::new(1.0, Color32::from_rgb(34, 39, 45)),
+                        Stroke::new(1.0, APP_THEME.grid_line()),
                     );
                 }
 
@@ -719,15 +893,15 @@ pub fn create_testing_editor(
                 ];
                 painter.add(egui::Shape::convex_polygon(
                     triangle_points,
-                    Color32::from_rgb(220, 64, 64),
-                    Stroke::new(1.0, Color32::from_rgb(70, 18, 18)),
+                    APP_THEME.note_length_fill(),
+                    Stroke::new(1.0, APP_THEME.note_length_stroke()),
                 ));
                 painter.text(
                     Pos2::new(note_length_x, outer_rect.bottom() - bottom_axis_padding * 0.62),
                     Align2::CENTER_BOTTOM,
                     format!("{:.0}ms", note_length_ms),
                     FontId::proportional(10.0 * ui_scale),
-                    Color32::from_rgb(220, 64, 64),
+                    APP_THEME.note_length_fill(),
                 );
 
                 for i in 0..=AXIS_SUBDIVISIONS {
@@ -736,7 +910,7 @@ pub fn create_testing_editor(
 
                     painter.line_segment(
                         [Pos2::new(graph_rect.left(), y), Pos2::new(graph_rect.right(), y)],
-                        Stroke::new(1.0, Color32::from_rgb(34, 39, 45)),
+                        Stroke::new(1.0, APP_THEME.grid_line()),
                     );
                 }
 
@@ -748,14 +922,14 @@ pub fn create_testing_editor(
                         CurveKind::Pitch => "Pitch (Hz)",
                     },
                     FontId::proportional(12.0 * ui_scale),
-                    Color32::from_rgb(185, 191, 198),
+                    APP_THEME.axis_title(),
                 );
                 painter.text(
                     Pos2::new(graph_rect.right(), outer_rect.bottom() - bottom_axis_padding * 0.2),
                     Align2::RIGHT_TOP,
                     "Length",
                     FontId::proportional(12.0 * ui_scale),
-                    Color32::from_rgb(185, 191, 198),
+                    APP_THEME.axis_title(),
                 );
 
                 for i in 0..=AXIS_SUBDIVISIONS {
@@ -766,7 +940,7 @@ pub fn create_testing_editor(
                         Align2::CENTER_TOP,
                         axis_x_label(f),
                         FontId::proportional(10.0 * ui_scale),
-                        Color32::from_rgb(165, 171, 178),
+                        APP_THEME.axis_tick(),
                     );
                 }
 
@@ -778,7 +952,7 @@ pub fn create_testing_editor(
                         Align2::RIGHT_CENTER,
                         axis_y_label(state.active_curve, f),
                         FontId::proportional(10.0 * ui_scale),
-                        Color32::from_rgb(165, 171, 178),
+                        APP_THEME.axis_tick(),
                     );
                 }
 
@@ -936,14 +1110,14 @@ pub fn create_testing_editor(
                     let mid_y = graph_rect.center().y;
                     painter.line_segment(
                         [Pos2::new(first.x, mid_y), Pos2::new(last.x, mid_y)],
-                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 128, 136, 45)),
+                        Stroke::new(1.0, APP_THEME.waveform_midline()),
                     );
                 }
 
                 for line in waveform_points.windows(2) {
                     painter.line_segment(
                         [line[0], line[1]],
-                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(180, 206, 232, 110)),
+                        Stroke::new(1.0, APP_THEME.waveform_trace()),
                     );
                 }
 
@@ -958,9 +1132,9 @@ pub fn create_testing_editor(
                         Stroke::new(
                             2.0,
                             if active_kind == CurveKind::Amplitude {
-                                Color32::from_rgb(72, 210, 170)
+                                APP_THEME.envelope_amplitude()
                             } else {
-                                Color32::from_rgb(249, 122, 122)
+                                APP_THEME.envelope_pitch()
                             },
                         ),
                     );
@@ -968,14 +1142,14 @@ pub fn create_testing_editor(
 
                 for (i, point) in screen_points.iter().enumerate() {
                     let color = if i == 0 || i + 1 == screen_points.len() {
-                        Color32::from_rgb(220, 64, 64)
+                        APP_THEME.endpoint_point()
                     } else if Some(i) == state.selected_point {
-                        Color32::from_rgb(255, 234, 122)
+                        APP_THEME.selected_point()
                     } else {
-                        Color32::from_rgb(112, 182, 255)
+                        APP_THEME.control_point()
                     };
                     painter.circle_filled(*point, 6.0, color);
-                    painter.circle_stroke(*point, 7.0, Stroke::new(1.0, Color32::BLACK));
+                    painter.circle_stroke(*point, 7.0, Stroke::new(1.0, APP_THEME.point_outline()));
 
                     if let Some(value_point) = active_points.get(i).copied() {
                         let label = point_value_label(active_kind, value_point, tuning_a4_hz);
@@ -992,12 +1166,12 @@ pub fn create_testing_editor(
                         painter.rect_filled(
                             bubble_rect,
                             bubble_height * 0.5,
-                            Color32::from_rgba_unmultiplied(24, 28, 33, 220),
+                            APP_THEME.bubble_bg(),
                         );
                         painter.rect_stroke(
                             bubble_rect,
                             bubble_height * 0.5,
-                            Stroke::new(1.0, Color32::from_rgb(90, 95, 102)),
+                            Stroke::new(1.0, APP_THEME.bubble_border()),
                             egui::StrokeKind::Inside,
                         );
                         painter.text(
@@ -1005,7 +1179,7 @@ pub fn create_testing_editor(
                             Align2::CENTER_CENTER,
                             label,
                             FontId::proportional(11.0 * ui_scale),
-                            Color32::from_rgb(224, 230, 238),
+                            APP_THEME.bubble_text(),
                         );
                     }
                 }
