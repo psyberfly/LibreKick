@@ -77,6 +77,7 @@ impl KickEngine {
             pitch_drop_hz: params.pitch_drop_hz,
             level: params.level,
             tuning_scale,
+            note_length_ms: shared_snapshot.note_length_ms,
         };
 
         for mut channel_samples in buffer.iter_samples() {

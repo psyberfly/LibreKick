@@ -9,6 +9,7 @@ pub struct VoiceParams {
     pub pitch_drop_hz: f32,
     pub level: f32,
     pub tuning_scale: f32,
+    pub note_length_ms: f32,
 }
 
 pub struct KickVoice {
@@ -68,7 +69,14 @@ impl KickVoice {
             return 0.0;
         }
 
-        let duration_seconds = (params.decay_ms * 0.001).max(0.02);
+        let envelope_duration_seconds = (params.decay_ms * 0.001).max(0.02);
+        let note_length_seconds = (params.note_length_ms * 0.001).clamp(0.0, 1.0);
+        if note_length_seconds <= 0.0 {
+            self.active = false;
+            return 0.0;
+        }
+
+        let duration_seconds = envelope_duration_seconds.min(note_length_seconds).max(f32::EPSILON);
         let normalized_time = (self.time_seconds / duration_seconds).clamp(0.0, 1.0);
         let lut_index = ((normalized_time * (CURVE_LUT_SIZE as f32 - 1.0)).round() as usize)
             .min(CURVE_LUT_SIZE - 1);
@@ -90,7 +98,7 @@ impl KickVoice {
         let sample = self.phase.sin() * amplitude;
 
         self.time_seconds += 1.0 / self.sample_rate;
-        if normalized_time >= 1.0 || amplitude < 0.0005 {
+        if self.time_seconds >= note_length_seconds || normalized_time >= 1.0 || amplitude < 0.0005 {
             self.active = false;
         }
 

@@ -13,6 +13,7 @@ use crate::shared;
 const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
 const WAVEFORM_PREVIEW_OVERSAMPLE: usize = 8;
+const NOTE_LENGTH_MAX_MS: f32 = 1000.0;
 const AXIS_SUBDIVISIONS: usize = 10;
 const AMP_DB_FLOOR: f32 = -30.0;
 const BASE_EDITOR_WIDTH: f32 = 760.0;
@@ -74,18 +75,25 @@ fn waveform_preview_columns(
     amplitude_points: &[Pos2],
     pitch_points: &[Pos2],
     tuning_a4_hz: f32,
+    note_length_ms: f32,
 ) -> Vec<[Pos2; 2]> {
     let pixel_width = graph_rect.width().max(1.0) as usize;
-    let total_steps = pixel_width * WAVEFORM_PREVIEW_OVERSAMPLE;
+    let note_length_t = (note_length_ms / NOTE_LENGTH_MAX_MS).clamp(0.0, 1.0);
+    let active_pixel_width = ((pixel_width as f32 * note_length_t).round() as usize).min(pixel_width);
+    if active_pixel_width == 0 {
+        return Vec::new();
+    }
+
+    let total_steps = active_pixel_width * WAVEFORM_PREVIEW_OVERSAMPLE;
     let dt = WAVEFORM_PREVIEW_DURATION_SECONDS / total_steps as f32;
     let tuning_scale = tuning_a4_hz / 440.0;
     let mut phase = 0.0_f32;
 
-    let mut col_min = vec![f32::MAX; pixel_width];
-    let mut col_max = vec![f32::MIN; pixel_width];
+    let mut col_min = vec![f32::MAX; active_pixel_width];
+    let mut col_max = vec![f32::MIN; active_pixel_width];
 
     for step in 0..=total_steps {
-        let t = step as f32 / total_steps as f32;
+        let t = (step as f32 / total_steps as f32) * note_length_t;
         let amp = bezier_point(amplitude_points, t).y.clamp(0.0, 1.0);
         let pitch = bezier_point(pitch_points, t).y;
         let hz = (pitch_hz_from_normalized(pitch) * tuning_scale).clamp(20.0, 22050.0);
@@ -94,12 +102,12 @@ fn waveform_preview_columns(
         let sample = phase.sin() * amp;
         let y = (0.5 + sample * 0.46).clamp(0.0, 1.0);
 
-        let col = ((t * pixel_width as f32) as usize).min(pixel_width - 1);
+        let col = ((t * pixel_width as f32) as usize).min(active_pixel_width - 1);
         col_min[col] = col_min[col].min(y);
         col_max[col] = col_max[col].max(y);
     }
 
-    (0..pixel_width)
+    (0..active_pixel_width)
         .map(|col| {
             let y_min = if col_min[col] == f32::MAX { 0.5 } else { col_min[col] };
             let y_max = if col_max[col] == f32::MIN { 0.5 } else { col_max[col] };
@@ -160,6 +168,7 @@ struct BezierUiState {
     pitch_curve: Curve,
     active_curve: CurveKind,
     tuning_standard: TuningStandard,
+    note_length_ms: f32,
     selected_point: Option<usize>,
 }
 
@@ -170,6 +179,7 @@ impl Default for BezierUiState {
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A440,
+            note_length_ms: NOTE_LENGTH_MAX_MS,
             selected_point: Some(1),
         }
     }
@@ -198,8 +208,17 @@ fn to_screen(point: Pos2, rect: Rect) -> Pos2 {
     )
 }
 
-fn to_normalized(point: Pos2, rect: Rect) -> Pos2 {
-    let x = ((point.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+fn to_screen_with_note_length(point: Pos2, rect: Rect, note_length_t: f32) -> Pos2 {
+    let note_length_t = note_length_t.clamp(0.0, 1.0);
+    Pos2::new(
+        rect.left() + point.x * note_length_t * rect.width(),
+        rect.bottom() - point.y * rect.height(),
+    )
+}
+
+fn to_normalized_with_note_length(point: Pos2, rect: Rect, note_length_t: f32) -> Pos2 {
+    let note_length_t = note_length_t.clamp(0.0, 1.0).max(f32::EPSILON);
+    let x = ((point.x - rect.left()) / (rect.width() * note_length_t)).clamp(0.0, 1.0);
     let y = ((rect.bottom() - point.y) / rect.height()).clamp(0.0, 1.0);
     Pos2::new(x, y)
 }
@@ -350,6 +369,48 @@ pub fn create_testing_editor(
                 let painter = ui.painter_at(outer_rect);
                 painter.rect_filled(outer_rect, 4.0, Color32::from_rgb(10, 12, 14));
                 painter.rect_filled(graph_rect, 4.0, Color32::from_rgb(16, 19, 22));
+
+                let mut note_length_ms = state.note_length_ms.clamp(0.0, NOTE_LENGTH_MAX_MS);
+                let mut note_length_norm = (note_length_ms / NOTE_LENGTH_MAX_MS).clamp(0.0, 1.0);
+
+                let mut note_length_x = egui::lerp(graph_rect.left()..=graph_rect.right(), note_length_norm);
+                let length_handle_center = Pos2::new(
+                    note_length_x,
+                    graph_rect.bottom() + bottom_axis_padding * 0.34,
+                );
+                let length_handle_size = Vec2::new(18.0 * ui_scale, (bottom_axis_padding * 0.55).max(18.0));
+                let length_handle_rect = Rect::from_center_size(length_handle_center, length_handle_size);
+                let length_response = ui.interact(
+                    length_handle_rect,
+                    ui.make_persistent_id("note-length-handle"),
+                    Sense::click_and_drag(),
+                );
+
+                if length_response.hovered() || length_response.dragged() {
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+                }
+
+                if length_response.dragged() {
+                    if let Some(pointer_pos) = length_response.interact_pointer_pos() {
+                        note_length_x = pointer_pos.x.clamp(graph_rect.left(), graph_rect.right());
+                        note_length_norm =
+                            ((note_length_x - graph_rect.left()) / graph_rect.width()).clamp(0.0, 1.0);
+                        note_length_ms = note_length_norm * NOTE_LENGTH_MAX_MS;
+                    }
+                }
+
+                if note_length_x < graph_rect.right() {
+                    let shaded_rect = Rect::from_min_max(
+                        Pos2::new(note_length_x, graph_rect.top()),
+                        Pos2::new(graph_rect.right(), graph_rect.bottom()),
+                    );
+                    painter.rect_filled(
+                        shaded_rect,
+                        0.0,
+                        Color32::from_rgba_unmultiplied(0, 0, 0, 78),
+                    );
+                }
+
                 painter.rect_stroke(
                     graph_rect,
                     4.0,
@@ -366,6 +427,27 @@ pub fn create_testing_editor(
                         Stroke::new(1.0, Color32::from_rgb(34, 39, 45)),
                     );
                 }
+
+                let triangle_half_w = (8.0 * ui_scale).max(6.0);
+                let triangle_h = (10.0 * ui_scale).max(8.0);
+                let triangle_top_y = graph_rect.bottom() + 2.0 * ui_scale;
+                let triangle_points = vec![
+                    Pos2::new(note_length_x - triangle_half_w, triangle_top_y),
+                    Pos2::new(note_length_x + triangle_half_w, triangle_top_y),
+                    Pos2::new(note_length_x, triangle_top_y + triangle_h),
+                ];
+                painter.add(egui::Shape::convex_polygon(
+                    triangle_points,
+                    Color32::from_rgb(220, 64, 64),
+                    Stroke::new(1.0, Color32::from_rgb(70, 18, 18)),
+                ));
+                painter.text(
+                    Pos2::new(note_length_x, outer_rect.bottom() - bottom_axis_padding * 0.62),
+                    Align2::CENTER_BOTTOM,
+                    format!("{:.0}ms", note_length_ms),
+                    FontId::proportional(10.0 * ui_scale),
+                    Color32::from_rgb(220, 64, 64),
+                );
 
                 for i in 0..=AXIS_SUBDIVISIONS {
                     let f = i as f32 / AXIS_SUBDIVISIONS as f32;
@@ -428,7 +510,7 @@ pub fn create_testing_editor(
                     let mut remove_point_index: Option<usize> = None;
 
                     for i in 0..points.len() {
-                        let screen_point = to_screen(points[i], graph_rect);
+                        let screen_point = to_screen_with_note_length(points[i], graph_rect, note_length_norm);
                         let hit_rect = Rect::from_center_size(screen_point, Vec2::splat(18.0));
                         let response = ui.interact(
                             hit_rect,
@@ -458,7 +540,11 @@ pub fn create_testing_editor(
 
                         if response.dragged() {
                             if let Some(pointer_pos) = response.interact_pointer_pos() {
-                                points[i] = to_normalized(pointer_pos, graph_rect);
+                                points[i] = to_normalized_with_note_length(
+                                    pointer_pos,
+                                    graph_rect,
+                                    note_length_norm,
+                                );
                                 selected_point = Some(i);
                                 constrain_curve_points(points);
                             }
@@ -478,15 +564,21 @@ pub fn create_testing_editor(
 
                     if graph_response.double_clicked() {
                         if let Some(pointer_pos) = graph_response.interact_pointer_pos() {
-                            let new_point = to_normalized(pointer_pos, graph_rect);
-                            let insert_index = points
-                                .iter()
-                                .position(|p| p.x > new_point.x)
-                                .unwrap_or(points.len() - 1);
-                            let index = insert_index.max(1).min(points.len() - 1);
-                            points.insert(index, new_point);
-                            constrain_curve_points(points);
-                            selected_point = Some(index);
+                            if pointer_pos.x <= note_length_x {
+                                let new_point = to_normalized_with_note_length(
+                                    pointer_pos,
+                                    graph_rect,
+                                    note_length_norm,
+                                );
+                                let insert_index = points
+                                    .iter()
+                                    .position(|p| p.x > new_point.x)
+                                    .unwrap_or(points.len() - 1);
+                                let index = insert_index.max(1).min(points.len() - 1);
+                                points.insert(index, new_point);
+                                constrain_curve_points(points);
+                                selected_point = Some(index);
+                            }
                         }
                     }
 
@@ -539,6 +631,8 @@ pub fn create_testing_editor(
                 let active_points = state.active_curve().points.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
+                state.note_length_ms = note_length_ms.clamp(0.0, NOTE_LENGTH_MAX_MS);
+                shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
 
                 let amplitude_lut = curve_lut(&state.amplitude_curve.points);
                 let pitch_lut = curve_lut(&state.pitch_curve.points);
@@ -550,6 +644,7 @@ pub fn create_testing_editor(
                     &state.amplitude_curve.points,
                     &state.pitch_curve.points,
                     tuning_a4_hz,
+                    state.note_length_ms,
                 );
 
                 if let (Some(first), Some(last)) = (waveform_cols.first(), waveform_cols.last()) {
@@ -569,17 +664,22 @@ pub fn create_testing_editor(
 
                 let screen_points: Vec<Pos2> = active_points
                     .iter()
-                    .map(|point| to_screen(*point, graph_rect))
+                    .map(|point| to_screen_with_note_length(*point, graph_rect, note_length_norm))
                     .collect();
 
                 for line in screen_points.windows(2) {
                     painter.line_segment([line[0], line[1]], Stroke::new(1.0, Color32::from_rgb(90, 150, 190)));
                 }
 
-                let mut previous = to_screen(bezier_point(&active_points, 0.0), graph_rect);
+                let mut previous =
+                    to_screen_with_note_length(bezier_point(&active_points, 0.0), graph_rect, note_length_norm);
                 for step in 1..=220 {
                     let t = step as f32 / 220.0;
-                    let next = to_screen(bezier_point(&active_points, t), graph_rect);
+                    let next = to_screen_with_note_length(
+                        bezier_point(&active_points, t),
+                        graph_rect,
+                        note_length_norm,
+                    );
                     painter.line_segment(
                         [previous, next],
                         Stroke::new(

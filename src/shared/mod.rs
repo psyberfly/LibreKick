@@ -13,6 +13,7 @@ pub struct SharedSnapshot {
     pub amp_lut: [f32; CURVE_LUT_SIZE],
     pub pitch_lut: [f32; CURVE_LUT_SIZE],
     pub tuning_a4_hz: f32,
+    pub note_length_ms: f32,
     pub trigger_counter: u64,
 }
 
@@ -20,6 +21,7 @@ pub(crate) struct SharedState {
     amp_lut: [f32; CURVE_LUT_SIZE],
     pitch_lut: [f32; CURVE_LUT_SIZE],
     tuning_a4_hz: f32,
+    note_length_ms: f32,
     trigger_counter: u64,
 }
 
@@ -29,6 +31,7 @@ impl Default for SharedState {
             amp_lut: [0.0; CURVE_LUT_SIZE],
             pitch_lut: [0.0; CURVE_LUT_SIZE],
             tuning_a4_hz: 440.0,
+            note_length_ms: 1000.0,
             trigger_counter: 0,
         }
     }
@@ -69,12 +72,19 @@ pub fn set_tuning_a4_hz(shared: &SharedStateHandle, tuning_a4_hz: f32) {
     }
 }
 
+pub fn set_note_length_ms(shared: &SharedStateHandle, note_length_ms: f32) {
+    if let Ok(mut state) = shared.lock() {
+        state.note_length_ms = note_length_ms.clamp(0.0, 1000.0);
+    }
+}
+
 pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
     if let Ok(state) = shared.lock() {
         return SharedSnapshot {
             amp_lut: state.amp_lut,
             pitch_lut: state.pitch_lut,
             tuning_a4_hz: state.tuning_a4_hz,
+            note_length_ms: state.note_length_ms,
             trigger_counter: state.trigger_counter,
         };
     }
@@ -91,6 +101,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         amp_lut,
         pitch_lut,
         tuning_a4_hz: 440.0,
+        note_length_ms: 1000.0,
         trigger_counter: 0,
     }
 }
