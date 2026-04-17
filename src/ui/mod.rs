@@ -435,31 +435,9 @@ pub fn create_testing_editor(
                 let mut point_dragging_this_frame = false;
                 ui.scope(|ui| {
                 apply_ui_text_scale(ui, ui_scale);
+                ui.add_space(6.0 * ui_scale);
                 ui.heading("Kick Curve Editor (Prototype)");
                 ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let redo_clicked = ui
-                            .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">"))
-                            .on_hover_ui(|ui| {
-                                apply_ui_text_scale(ui, ui_scale);
-                                ui.label("Redo (Ctrl/Cmd + Y)");
-                            })
-                            .clicked();
-                        let undo_clicked = ui
-                            .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<"))
-                            .on_hover_ui(|ui| {
-                                apply_ui_text_scale(ui, ui_scale);
-                                ui.label("Undo (Ctrl/Cmd + Z)");
-                            })
-                            .clicked();
-                        if redo_clicked {
-                            history_action_applied |= state.redo();
-                        }
-                        if undo_clicked {
-                            history_action_applied |= state.undo();
-                        }
-                    });
-
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
@@ -483,6 +461,30 @@ pub fn create_testing_editor(
                             (state.waveform_zoom_percent + WAVEFORM_ZOOM_STEP_PERCENT)
                                 .clamp(WAVEFORM_ZOOM_MIN_PERCENT, WAVEFORM_ZOOM_MAX_PERCENT);
                     }
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(10.0 * ui_scale);
+                        let redo_clicked = ui
+                            .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">"))
+                            .on_hover_ui(|ui| {
+                                apply_ui_text_scale(ui, ui_scale);
+                                ui.label("Redo (Ctrl/Cmd + Y)");
+                            })
+                            .clicked();
+                        let undo_clicked = ui
+                            .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<"))
+                            .on_hover_ui(|ui| {
+                                apply_ui_text_scale(ui, ui_scale);
+                                ui.label("Undo (Ctrl/Cmd + Z)");
+                            })
+                            .clicked();
+                        if redo_clicked {
+                            history_action_applied |= state.redo();
+                        }
+                        if undo_clicked {
+                            history_action_applied |= state.undo();
+                        }
+                    });
                 });
                 ui.add_space(8.0);
 
