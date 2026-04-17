@@ -4,13 +4,17 @@
 
 
 # USAGE
-To run the plugin on Linux, go to `/scripts`:
-1. ./compile_linux.sh 
-2. ./bundle_linux_vst3.sh
-3. ./start_linux./sh (requires Carla to be installed on your machine) or, use install.sh to install the VST into your system VST location and use it via your DAW
+Currently, only Linux VST 2.0 build is configured.
 
+1. `cd /scripts`:
+2. `cp sample.env config.env` and update your `config.env` file to your local sys
+3. `./build.sh`
+4. `./install.sh` installs the VST into your configured system VST location; ready to use via your DAW.
 
-# TODO
+## Testing
+1. Use `./restart.sh` to hot-reload (compile changes and re-launch the VST using Carla; requires Carla locally installed on your machine).
+
+# TODOs
 1. Improve rendered waveform: In pitch envp, frequency change is clamped to halfway point (632Hz).
 
 # ARCHITECTURE
