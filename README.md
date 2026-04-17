@@ -6,13 +6,13 @@
 
 ## About
 This is an audio synthesiser plugin for usage in DAWs to generate Kick audio samples using visual waveshaping.   
+**This project is in early alpha state.**   
 
 <p align="center">
 <img alt="image" src="https://github.com/user-attachments/assets/f0d24eb8-763b-461a-baa6-b3fe109b8e03" width="80%" />
 </p>
 
 # USAGE
-**This project is in early dev state**   
 1. `cd /scripts`:
 2. `cp sample.env config.env` and update your `config.env` file to your local needs.
 3. `./build.sh`
