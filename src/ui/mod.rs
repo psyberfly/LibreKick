@@ -11,8 +11,8 @@ use nih_plug_egui::{
 use crate::shared;
 
 const MIN_POINT_GAP_X: f32 = 0.01;
-const WAVEFORM_PREVIEW_STEPS: usize = 420;
-const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 0.65;
+const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
+const WAVEFORM_PREVIEW_OVERSAMPLE: usize = 8;
 const AXIS_SUBDIVISIONS: usize = 10;
 const AMP_DB_FLOOR: f32 = -30.0;
 const BASE_EDITOR_WIDTH: f32 = 760.0;
@@ -69,30 +69,47 @@ fn axis_x_label(normalized: f32) -> String {
     }
 }
 
-fn waveform_preview_points(
+fn waveform_preview_columns(
     graph_rect: Rect,
     amplitude_points: &[Pos2],
     pitch_points: &[Pos2],
     tuning_a4_hz: f32,
-) -> Vec<Pos2> {
-    let mut points = Vec::with_capacity(WAVEFORM_PREVIEW_STEPS + 1);
-    let dt = WAVEFORM_PREVIEW_DURATION_SECONDS / WAVEFORM_PREVIEW_STEPS as f32;
+) -> Vec<[Pos2; 2]> {
+    let pixel_width = graph_rect.width().max(1.0) as usize;
+    let total_steps = pixel_width * WAVEFORM_PREVIEW_OVERSAMPLE;
+    let dt = WAVEFORM_PREVIEW_DURATION_SECONDS / total_steps as f32;
     let tuning_scale = tuning_a4_hz / 440.0;
     let mut phase = 0.0_f32;
 
-    for step in 0..=WAVEFORM_PREVIEW_STEPS {
-        let t = step as f32 / WAVEFORM_PREVIEW_STEPS as f32;
+    let mut col_min = vec![f32::MAX; pixel_width];
+    let mut col_max = vec![f32::MIN; pixel_width];
+
+    for step in 0..=total_steps {
+        let t = step as f32 / total_steps as f32;
         let amp = bezier_point(amplitude_points, t).y.clamp(0.0, 1.0);
         let pitch = bezier_point(pitch_points, t).y;
-        let hz = (pitch_hz_from_normalized(pitch) * tuning_scale).max(20.0);
-        phase += std::f32::consts::TAU * hz * dt;
+        let hz = (pitch_hz_from_normalized(pitch) * tuning_scale).clamp(20.0, 22050.0);
+        phase = (phase + std::f32::consts::TAU * hz * dt).rem_euclid(std::f32::consts::TAU);
 
         let sample = phase.sin() * amp;
         let y = (0.5 + sample * 0.46).clamp(0.0, 1.0);
-        points.push(to_screen(Pos2::new(t, y), graph_rect));
+
+        let col = ((t * pixel_width as f32) as usize).min(pixel_width - 1);
+        col_min[col] = col_min[col].min(y);
+        col_max[col] = col_max[col].max(y);
     }
 
-    points
+    (0..pixel_width)
+        .map(|col| {
+            let y_min = if col_min[col] == f32::MAX { 0.5 } else { col_min[col] };
+            let y_max = if col_max[col] == f32::MIN { 0.5 } else { col_max[col] };
+            let x = (col as f32 + 0.5) / pixel_width as f32;
+            [
+                to_screen(Pos2::new(x, y_min), graph_rect),
+                to_screen(Pos2::new(x, y_max), graph_rect),
+            ]
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -528,25 +545,25 @@ pub fn create_testing_editor(
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Amplitude, amplitude_lut);
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Pitch, pitch_lut);
 
-                let waveform_points = waveform_preview_points(
+                let waveform_cols = waveform_preview_columns(
                     graph_rect,
                     &state.amplitude_curve.points,
                     &state.pitch_curve.points,
                     tuning_a4_hz,
                 );
 
-                if let (Some(first), Some(last)) = (waveform_points.first(), waveform_points.last()) {
+                if let (Some(first), Some(last)) = (waveform_cols.first(), waveform_cols.last()) {
                     let mid_y = graph_rect.center().y;
                     painter.line_segment(
-                        [Pos2::new(first.x, mid_y), Pos2::new(last.x, mid_y)],
+                        [Pos2::new(first[0].x, mid_y), Pos2::new(last[0].x, mid_y)],
                         Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 128, 136, 45)),
                     );
                 }
 
-                for line in waveform_points.windows(2) {
+                for [a, b] in &waveform_cols {
                     painter.line_segment(
-                        [line[0], line[1]],
-                        Stroke::new(1.2, Color32::from_rgba_unmultiplied(180, 206, 232, 110)),
+                        [*a, *b],
+                        Stroke::new(1.0, Color32::from_rgba_unmultiplied(180, 206, 232, 110)),
                     );
                 }
 

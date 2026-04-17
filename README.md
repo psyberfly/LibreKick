@@ -8,7 +8,39 @@ To run the plugin on Linux, go to `/scripts`:
 
 
 # TODO
-1. Sounds coming out of the plugin don't sound like kicks yet.
+1. Add maxLength parameter to limit kick duration (hard-cutoff). For UI: use a red triangle on x-axis of graph to indicate max length; apply slight black tint to area after max length for better visibility. 
+2. Fix rendered waveform: reduce the frequency of the waveform to make transients more readable; keep everything else the same. 
+3. Fix audio: sounds coming out of the plugin don't sound like kicks yet.
+4. Add undo, redo buttons 
+
+# Fix for TODO #2:
+
+The waveform display can be implemented as a time-domain rendering of a sine oscillator driven by pitch and amplitude envelopes. The x-axis represents time (e.g., 0–1000 ms), scaled by the zoom level, while the y-axis reflects amplitude. The instantaneous frequency from the pitch curve is integrated to compute phase:
+
+phase(t)=∫2πf(t)dt
+y(t)=A(t)⋅sin(phase(t))
+
+The zoom parameter (0–100%) controls how much of the total duration is visible:
+
+At 100% zoom, the full duration (e.g., 1000 ms) is displayed
+At lower zoom levels, a shorter time window is shown, increasing visible waveform detail (fewer cycles on screen)
+
+For example, at 1 Hz:
+
+100% zoom (1000 ms) → 1 full cycle
+50% zoom (500 ms visible) → 0.5 cycle
+
+At higher frequencies, rendering every sample leads to dense, unreadable visuals. Downsampling is required for display purposes. The most reliable method is:
+
+Min/max envelope decimation per pixel column: compute the minimum and maximum sample values within each pixel column and render that range
+
+This approach:
+
+Preserves peaks and transients
+Avoids misleading alias-like artifacts
+Produces a clear, accurate visual representation
+
+Naive point skipping should be avoided, as it loses important waveform detail.
 
 
 # ARCHITECTURE
