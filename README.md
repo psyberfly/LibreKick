@@ -9,6 +9,7 @@
 </p>
 
 # USAGE
+**This project is in early dev state**   
 Currently, only Linux VST 2.0 build is configured.
 1. `cd /scripts`:
 2. `cp sample.env config.env` and update your `config.env` file to your local sys
