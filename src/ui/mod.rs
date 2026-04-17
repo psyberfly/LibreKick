@@ -18,6 +18,9 @@ const WAVEFORM_ZOOM_MIN_PERCENT: f32 = 1.0;
 const WAVEFORM_ZOOM_MAX_PERCENT: f32 = 200.0;
 const WAVEFORM_ZOOM_STEP_PERCENT: f32 = 5.0;
 const HISTORY_STACK_CAP: usize = 200;
+const RESIZE_CORNER_VISUAL_SIZE: f32 = 20.0;
+const RESIZE_CORNER_HIT_RADIUS: f32 = 30.0;
+const RESIZE_SIDE_HIT_RADIUS: f32 = 16.0;
 const AXIS_SUBDIVISIONS: usize = 10;
 const AMP_DB_FLOOR: f32 = -30.0;
 const BASE_EDITOR_WIDTH: f32 = 760.0;
@@ -433,6 +436,15 @@ pub fn create_testing_editor(
 
                 let ui_scale = ui_scale_from_size(ui.available_size_before_wrap());
                 let mut point_dragging_this_frame = false;
+                {
+                    let style = ui.style_mut();
+                    style.interaction.resize_grab_radius_corner =
+                        (RESIZE_CORNER_HIT_RADIUS * ui_scale).max(24.0);
+                    style.interaction.resize_grab_radius_side =
+                        (RESIZE_SIDE_HIT_RADIUS * ui_scale).max(12.0);
+                    style.visuals.resize_corner_size =
+                        (RESIZE_CORNER_VISUAL_SIZE * ui_scale).max(16.0);
+                }
                 ui.scope(|ui| {
                 apply_ui_text_scale(ui, ui_scale);
                 ui.add_space(6.0 * ui_scale);
