@@ -1,26 +1,29 @@
 <p align="center">
-  <img width="564" height="388" alt="LibreKick Logo 2_compressed" src="https://github.com/user-attachments/assets/1bdde8c0-dc79-4671-beb0-936cd3c82313" />
+  <img src="https://github.com/user-attachments/assets/d2d13586-41f2-4105-b7a7-fb4a50fd1c8b" width="50%" />
 </p>
 
 # Open Source Waveform Shaper Kick Synth
 
-<img width="282" height="194" alt="image" src="https://github.com/user-attachments/assets/ecae543b-23e5-4d81-aaea-b0ac58061c17" />
+<p align="center">
+<img alt="image" src="https://github.com/user-attachments/assets/f0d24eb8-763b-461a-baa6-b3fe109b8e03" width="80%" />
+</p>
 
 # USAGE
 Currently, only Linux VST 2.0 build is configured.
-
 1. `cd /scripts`:
 2. `cp sample.env config.env` and update your `config.env` file to your local sys
 3. `./build.sh`
 4. `./install.sh` installs the VST into your configured system VST location; ready to use via your DAW.
 
+# DEV
+
 ## Testing
 1. Use `./restart.sh` to hot-reload (compile changes and re-launch the VST using Carla; requires Carla locally installed on your machine).
 
-# TODOs
+## TODOs
 1. Improve rendered waveform: In pitch envp, frequency change is clamped to halfway point (632Hz).
 
-# ARCHITECTURE
+## Architecture
 
 Current app architecture is split into clear modules with a simple UI-to-audio data contract:
 
@@ -61,7 +64,7 @@ Current app architecture is split into clear modules with a simple UI-to-audio d
 - `build.sh`, `start.sh`, `restart.sh`, `install.sh` wrappers.
 - Stale artifact checks ensure bundle/install/start use latest build outputs.
 
-# AUDIO
+## Audio
 
 Audio processing flow per block:
 
