@@ -1,4 +1,7 @@
-Open Source LibreKick Plugin VST!
+# Open Source Waveform Shaper Kick Synth
+
+<img width="1129" height="777" alt="image" src="https://github.com/user-attachments/assets/9f991b6e-a488-42d4-9846-dd4cde2e0d38" />
+
 
 # USAGE
 To run the plugin on Linux, go to `/scripts`:
@@ -9,37 +12,6 @@ To run the plugin on Linux, go to `/scripts`:
 
 # TODO
 1. Improve rendered waveform: In pitch envp, frequency change is clamped to halfway point (632Hz).
-2. Explore logarithmic representation of y-axis for pitch envelope? Can log also be used to better render waveform?
-
-# Fix for TODO #2:
-
-The waveform display can be implemented as a time-domain rendering of a sine oscillator driven by pitch and amplitude envelopes. The x-axis represents time (e.g., 0–1000 ms), scaled by the zoom level, while the y-axis reflects amplitude. The instantaneous frequency from the pitch curve is integrated to compute phase:
-
-phase(t)=∫2πf(t)dt
-y(t)=A(t)⋅sin(phase(t))
-
-The zoom parameter (0–100%) controls how much of the total duration is visible:
-
-At 100% zoom, the full duration (e.g., 1000 ms) is displayed
-At lower zoom levels, a shorter time window is shown, increasing visible waveform detail (fewer cycles on screen)
-
-For example, at 1 Hz:
-
-100% zoom (1000 ms) → 1 full cycle
-50% zoom (500 ms visible) → 0.5 cycle
-
-At higher frequencies, rendering every sample leads to dense, unreadable visuals. Downsampling is required for display purposes. The most reliable method is:
-
-Min/max envelope decimation per pixel column: compute the minimum and maximum sample values within each pixel column and render that range
-
-This approach:
-
-Preserves peaks and transients
-Avoids misleading alias-like artifacts
-Produces a clear, accurate visual representation
-
-Naive point skipping should be avoided, as it loses important waveform detail.
-
 
 # ARCHITECTURE
 
