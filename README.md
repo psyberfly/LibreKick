@@ -8,10 +8,11 @@ To run the plugin on Linux, go to `/scripts`:
 
 
 # TODO
-1. Add maxLength parameter to limit kick duration (hard-cutoff). For UI: use a red triangle on x-axis of graph to indicate max length; apply slight black tint to area after max length for better visibility. 
+1. Add note lengt: For UI: use a red triangle on x-axis of graph to indicate max length; apply slight black tint to area after max length for better visibility. 
 2. Fix rendered waveform: reduce the frequency of the waveform to make transients more readable; keep everything else the same. 
 3. Fix audio: sounds coming out of the plugin don't sound like kicks yet.
 4. Add undo, redo buttons 
+5. Add waveform zoom
 
 # Fix for TODO #2:
 
