@@ -2,7 +2,10 @@
   <img src="https://github.com/user-attachments/assets/d2d13586-41f2-4105-b7a7-fb4a50fd1c8b" width="50%" />
 </p>
 
-# Open Source Waveform Shaper Kick Synth
+# Open Source Waveform Shaper Kick Synthesiser
+
+## About
+This is an audio plugin (VST 2.0) for usage in DAWs to generate Kick audio samples using visual waveshaping.   
 
 <p align="center">
 <img alt="image" src="https://github.com/user-attachments/assets/f0d24eb8-763b-461a-baa6-b3fe109b8e03" width="80%" />
