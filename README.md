@@ -8,11 +8,10 @@ To run the plugin on Linux, go to `/scripts`:
 
 
 # TODO
-1. Add note lengt: For UI: use a red triangle on x-axis of graph to indicate max length; apply slight black tint to area after max length for better visibility. 
-2. Fix rendered waveform: reduce the frequency of the waveform to make transients more readable; keep everything else the same. 
-3. Fix audio: sounds coming out of the plugin don't sound like kicks yet.
-4. Add undo, redo buttons 
-5. Add waveform zoom: We need to add a zooming widget which can zoom in and out of the waveform. Not the area outside of the rendered waveform, so the axes should be the bounds of the zoom and axes should themselves remain stable. The zoom should magnify or lessen the waveform alone. At 100% zoom, the waveform fits in its entirety up to maxLength.
+1. Fix rendered waveform: reduce the frequency of the waveform to make transients more readable; keep everything else the same. 
+2. Fix audio: sounds coming out of the plugin don't sound like kicks yet.
+3. Add undo, redo buttons 
+4. Add waveform zoom: We need to add a zooming widget which can zoom in and out of the waveform. Not the area outside of the rendered waveform, so the axes should be the bounds of the zoom and axes should themselves remain stable. The zoom should magnify or lessen the waveform alone. At 100% zoom, the waveform fits in its entirety up to maxLength.
 
 # Fix for TODO #2:
 

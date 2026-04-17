@@ -14,6 +14,9 @@ const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
 const WAVEFORM_PREVIEW_OVERSAMPLE: usize = 8;
 const NOTE_LENGTH_MAX_MS: f32 = 1000.0;
+const WAVEFORM_ZOOM_MIN_PERCENT: f32 = 1.0;
+const WAVEFORM_ZOOM_MAX_PERCENT: f32 = 200.0;
+const WAVEFORM_ZOOM_STEP_PERCENT: f32 = 5.0;
 const AXIS_SUBDIVISIONS: usize = 10;
 const AMP_DB_FLOOR: f32 = -30.0;
 const BASE_EDITOR_WIDTH: f32 = 760.0;
@@ -76,10 +79,17 @@ fn waveform_preview_columns(
     pitch_points: &[Pos2],
     tuning_a4_hz: f32,
     note_length_ms: f32,
+    waveform_zoom_percent: f32,
 ) -> Vec<[Pos2; 2]> {
     let pixel_width = graph_rect.width().max(1.0) as usize;
     let note_length_t = (note_length_ms / NOTE_LENGTH_MAX_MS).clamp(0.0, 1.0);
-    let active_pixel_width = ((pixel_width as f32 * note_length_t).round() as usize).min(pixel_width);
+    let zoom = (waveform_zoom_percent / 100.0).clamp(
+        WAVEFORM_ZOOM_MIN_PERCENT / 100.0,
+        WAVEFORM_ZOOM_MAX_PERCENT / 100.0,
+    );
+    let source_length_t = (note_length_t / zoom).min(note_length_t);
+    let display_length_t = (note_length_t * zoom).min(note_length_t);
+    let active_pixel_width = ((pixel_width as f32 * display_length_t).round() as usize).min(pixel_width);
     if active_pixel_width == 0 {
         return Vec::new();
     }
@@ -93,7 +103,7 @@ fn waveform_preview_columns(
     let mut col_max = vec![f32::MIN; active_pixel_width];
 
     for step in 0..=total_steps {
-        let t = (step as f32 / total_steps as f32) * note_length_t;
+        let t = (step as f32 / total_steps as f32) * source_length_t;
         let amp = bezier_point(amplitude_points, t).y.clamp(0.0, 1.0);
         let pitch = bezier_point(pitch_points, t).y;
         let hz = (pitch_hz_from_normalized(pitch) * tuning_scale).clamp(20.0, 22050.0);
@@ -102,7 +112,8 @@ fn waveform_preview_columns(
         let sample = phase.sin() * amp;
         let y = (0.5 + sample * 0.46).clamp(0.0, 1.0);
 
-        let col = ((t * pixel_width as f32) as usize).min(active_pixel_width - 1);
+        let x_t = (t * zoom).min(display_length_t);
+        let col = ((x_t * pixel_width as f32) as usize).min(active_pixel_width - 1);
         col_min[col] = col_min[col].min(y);
         col_max[col] = col_max[col].max(y);
     }
@@ -169,6 +180,7 @@ struct BezierUiState {
     active_curve: CurveKind,
     tuning_standard: TuningStandard,
     note_length_ms: f32,
+    waveform_zoom_percent: f32,
     selected_point: Option<usize>,
 }
 
@@ -180,6 +192,7 @@ impl Default for BezierUiState {
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A440,
             note_length_ms: NOTE_LENGTH_MAX_MS,
+            waveform_zoom_percent: 100.0,
             selected_point: Some(1),
         }
     }
@@ -337,6 +350,18 @@ pub fn create_testing_editor(
                     if ui.button("Trigger").clicked() {
                         shared::request_trigger(&shared_for_ui);
                     }
+                    ui.separator();
+                    if ui.button("-").clicked() {
+                        state.waveform_zoom_percent =
+                            (state.waveform_zoom_percent - WAVEFORM_ZOOM_STEP_PERCENT)
+                                .clamp(WAVEFORM_ZOOM_MIN_PERCENT, WAVEFORM_ZOOM_MAX_PERCENT);
+                    }
+                    ui.label(format!("Zoom {:.0}%", state.waveform_zoom_percent));
+                    if ui.button("+").clicked() {
+                        state.waveform_zoom_percent =
+                            (state.waveform_zoom_percent + WAVEFORM_ZOOM_STEP_PERCENT)
+                                .clamp(WAVEFORM_ZOOM_MIN_PERCENT, WAVEFORM_ZOOM_MAX_PERCENT);
+                    }
                 });
                 ui.add_space(8.0);
 
@@ -351,6 +376,17 @@ pub fn create_testing_editor(
                     Vec2::new(graph_width, graph_height),
                     Sense::click(),
                 );
+                if graph_response.hovered() {
+                    let (modifier_down, scroll_y) =
+                        ui.input(|i| ((i.modifiers.ctrl || i.modifiers.command), i.raw_scroll_delta.y));
+                    if modifier_down && scroll_y.abs() > f32::EPSILON {
+                        state.waveform_zoom_percent =
+                            (state.waveform_zoom_percent + scroll_y * 0.08).clamp(
+                                WAVEFORM_ZOOM_MIN_PERCENT,
+                                WAVEFORM_ZOOM_MAX_PERCENT,
+                            );
+                    }
+                }
                 let left_axis_padding = (62.0 * ui_scale).clamp(52.0, 120.0);
                 let bottom_axis_padding = (52.0 * ui_scale).clamp(40.0, 110.0);
                 let top_axis_padding = (30.0 * ui_scale).clamp(22.0, 56.0);
@@ -645,6 +681,7 @@ pub fn create_testing_editor(
                     &state.pitch_curve.points,
                     tuning_a4_hz,
                     state.note_length_ms,
+                    state.waveform_zoom_percent,
                 );
 
                 if let (Some(first), Some(last)) = (waveform_cols.first(), waveform_cols.last()) {
