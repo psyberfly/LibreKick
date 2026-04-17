@@ -1,9 +1,10 @@
-<img width="997" height="362" alt="LibreKick Logo 2_compressed" src="https://github.com/user-attachments/assets/1bdde8c0-dc79-4671-beb0-936cd3c82313" />
-
+<p align="center">
+  <img width="564" height="388" alt="LibreKick Logo 2_compressed" src="https://github.com/user-attachments/assets/1bdde8c0-dc79-4671-beb0-936cd3c82313" />
+</p>
 
 # Open Source Waveform Shaper Kick Synth
 
-<img width="1129" height="777" alt="image" src="https://github.com/user-attachments/assets/ecae543b-23e5-4d81-aaea-b0ac58061c17" />
+<img width="282" height="194" alt="image" src="https://github.com/user-attachments/assets/ecae543b-23e5-4d81-aaea-b0ac58061c17" />
 
 # USAGE
 Currently, only Linux VST 2.0 build is configured.
