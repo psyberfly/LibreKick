@@ -13,11 +13,60 @@ use crate::shared;
 const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_STEPS: usize = 420;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 0.65;
+const AXIS_SUBDIVISIONS: usize = 10;
+const AMP_DB_FLOOR: f32 = -30.0;
+const BASE_EDITOR_WIDTH: f32 = 760.0;
+const BASE_EDITOR_HEIGHT: f32 = 420.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CurveKind {
     Amplitude,
     Pitch,
+}
+
+fn ui_scale_from_size(size: Vec2) -> f32 {
+    let scale_x = size.x / BASE_EDITOR_WIDTH;
+    let scale_y = size.y / BASE_EDITOR_HEIGHT;
+    ((scale_x + scale_y) * 0.5).clamp(0.8, 2.2)
+}
+
+fn apply_ui_text_scale(ui: &mut egui::Ui, scale: f32) {
+    let mut style = ui.style().as_ref().clone();
+    style.text_styles = [
+        (egui::TextStyle::Heading, FontId::proportional(21.0 * scale)),
+        (egui::TextStyle::Body, FontId::proportional(14.0 * scale)),
+        (egui::TextStyle::Monospace, FontId::monospace(13.0 * scale)),
+        (egui::TextStyle::Button, FontId::proportional(14.0 * scale)),
+        (egui::TextStyle::Small, FontId::proportional(11.0 * scale)),
+    ]
+    .into();
+    ui.ctx().set_style(style.clone());
+    ui.set_style(style);
+}
+
+fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
+    match kind {
+        CurveKind::Amplitude => {
+            let db = AMP_DB_FLOOR + normalized.clamp(0.0, 1.0) * (0.0 - AMP_DB_FLOOR);
+            format!("{:.0} dB", db)
+        }
+        CurveKind::Pitch => {
+            let hz = pitch_hz_from_normalized(normalized);
+            if hz >= 1000.0 {
+                format!("{:.1}k", hz / 1000.0)
+            } else {
+                format!("{:.0}", hz)
+            }
+        }
+    }
+}
+
+fn axis_x_label(normalized: f32) -> String {
+    if normalized <= 0.0 {
+        "0s".to_owned()
+    } else {
+        format!("{:.0}ms", normalized * 1000.0)
+    }
 }
 
 fn waveform_preview_points(
@@ -168,8 +217,8 @@ fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
 }
 
 fn amplitude_db(value: f32) -> f32 {
-    let min_amp = 10.0_f32.powf(-60.0 / 20.0);
-    (20.0 * value.max(min_amp).log10()).clamp(-60.0, 0.0)
+    let min_amp = 10.0_f32.powf(AMP_DB_FLOOR / 20.0);
+    (20.0 * value.max(min_amp).log10()).clamp(AMP_DB_FLOOR, 0.0)
 }
 
 fn pitch_hz_from_normalized(value: f32) -> f32 {
@@ -236,6 +285,9 @@ pub fn create_testing_editor(
             ResizableWindow::new("kick-plugin-resize")
                 .min_size(Vec2::new(520.0, 320.0))
                 .show(_ctx, &resizable_state, |ui| {
+                let ui_scale = ui_scale_from_size(ui.available_size_before_wrap());
+                ui.scope(|ui| {
+                apply_ui_text_scale(ui, ui_scale);
                 ui.heading("Kick Curve Editor (Prototype)");
                 ui.horizontal(|ui| {
                     ui.label("Curve:");
@@ -263,7 +315,20 @@ pub fn create_testing_editor(
                     Vec2::new(graph_width, graph_height),
                     Sense::click(),
                 );
-                let graph_rect = outer_rect.shrink2(Vec2::new(20.0, 20.0));
+                let left_axis_padding = (62.0 * ui_scale).clamp(52.0, 120.0);
+                let bottom_axis_padding = (52.0 * ui_scale).clamp(40.0, 110.0);
+                let top_axis_padding = (30.0 * ui_scale).clamp(22.0, 56.0);
+                let right_axis_padding = (24.0 * ui_scale).clamp(18.0, 48.0);
+                let graph_rect = Rect::from_min_max(
+                    Pos2::new(
+                        outer_rect.left() + left_axis_padding,
+                        outer_rect.top() + top_axis_padding,
+                    ),
+                    Pos2::new(
+                        outer_rect.right() - right_axis_padding,
+                        outer_rect.bottom() - bottom_axis_padding,
+                    ),
+                );
 
                 let painter = ui.painter_at(outer_rect);
                 painter.rect_filled(outer_rect, 4.0, Color32::from_rgb(10, 12, 14));
@@ -275,16 +340,20 @@ pub fn create_testing_editor(
                     egui::StrokeKind::Inside,
                 );
 
-                let grid_divisions = 8;
-                for i in 0..=grid_divisions {
-                    let f = i as f32 / grid_divisions as f32;
+                for i in 0..=AXIS_SUBDIVISIONS {
+                    let f = i as f32 / AXIS_SUBDIVISIONS as f32;
                     let x = egui::lerp(graph_rect.left()..=graph_rect.right(), f);
-                    let y = egui::lerp(graph_rect.bottom()..=graph_rect.top(), f);
 
                     painter.line_segment(
                         [Pos2::new(x, graph_rect.top()), Pos2::new(x, graph_rect.bottom())],
                         Stroke::new(1.0, Color32::from_rgb(34, 39, 45)),
                     );
+                }
+
+                for i in 0..=AXIS_SUBDIVISIONS {
+                    let f = i as f32 / AXIS_SUBDIVISIONS as f32;
+                    let y = egui::lerp(graph_rect.bottom()..=graph_rect.top(), f);
+
                     painter.line_segment(
                         [Pos2::new(graph_rect.left(), y), Pos2::new(graph_rect.right(), y)],
                         Stroke::new(1.0, Color32::from_rgb(34, 39, 45)),
@@ -292,19 +361,46 @@ pub fn create_testing_editor(
                 }
 
                 painter.text(
-                    Pos2::new(graph_rect.left(), graph_rect.top() - 16.0),
+                    Pos2::new(graph_rect.left(), outer_rect.top() + top_axis_padding * 0.35),
                     Align2::LEFT_BOTTOM,
-                    "Amount",
-                    FontId::proportional(12.0),
+                    match state.active_curve {
+                        CurveKind::Amplitude => "Amount (dB)",
+                        CurveKind::Pitch => "Pitch (Hz)",
+                    },
+                    FontId::proportional(12.0 * ui_scale),
                     Color32::from_rgb(185, 191, 198),
                 );
                 painter.text(
-                    Pos2::new(graph_rect.right(), graph_rect.bottom() + 16.0),
+                    Pos2::new(graph_rect.right(), outer_rect.bottom() - bottom_axis_padding * 0.2),
                     Align2::RIGHT_TOP,
-                    "Time",
-                    FontId::proportional(12.0),
+                    "Length",
+                    FontId::proportional(12.0 * ui_scale),
                     Color32::from_rgb(185, 191, 198),
                 );
+
+                for i in 0..=AXIS_SUBDIVISIONS {
+                    let f = i as f32 / AXIS_SUBDIVISIONS as f32;
+                    let x = egui::lerp(graph_rect.left()..=graph_rect.right(), f);
+                    painter.text(
+                        Pos2::new(x, graph_rect.bottom() + bottom_axis_padding * 0.08),
+                        Align2::CENTER_TOP,
+                        axis_x_label(f),
+                        FontId::proportional(10.0 * ui_scale),
+                        Color32::from_rgb(165, 171, 178),
+                    );
+                }
+
+                for i in 0..=AXIS_SUBDIVISIONS {
+                    let f = i as f32 / AXIS_SUBDIVISIONS as f32;
+                    let y = egui::lerp(graph_rect.bottom()..=graph_rect.top(), f);
+                    painter.text(
+                        Pos2::new(graph_rect.left() - left_axis_padding * 0.12, y),
+                        Align2::RIGHT_CENTER,
+                        axis_y_label(state.active_curve, f),
+                        FontId::proportional(10.0 * ui_scale),
+                        Color32::from_rgb(165, 171, 178),
+                    );
+                }
 
                 let active_kind = state.active_curve;
                 let mut selected_point = state.selected_point;
@@ -333,6 +429,7 @@ pub fn create_testing_editor(
 
                         let can_remove_here = i > 0 && i + 1 < points.len();
                         response.context_menu(|ui| {
+                            apply_ui_text_scale(ui, ui_scale);
                             if ui
                                 .add_enabled(can_remove_here, egui::Button::new("Remove point"))
                                 .clicked()
@@ -493,9 +590,11 @@ pub fn create_testing_editor(
 
                     if let Some(value_point) = active_points.get(i).copied() {
                         let label = point_value_label(active_kind, value_point, tuning_a4_hz);
-                        let bubble_width = (label.len() as f32 * 7.0 + 14.0).max(56.0);
-                        let bubble_height = 20.0;
-                        let bubble_min = Pos2::new(point.x + 10.0, point.y - bubble_height * 0.5);
+                        let bubble_width = (label.len() as f32 * 7.0 * ui_scale + 14.0 * ui_scale)
+                            .max(56.0 * ui_scale);
+                        let bubble_height = 20.0 * ui_scale;
+                        let bubble_min =
+                            Pos2::new(point.x + 10.0 * ui_scale, point.y - bubble_height * 0.5);
                         let bubble_rect = Rect::from_min_size(
                             bubble_min,
                             Vec2::new(bubble_width, bubble_height),
@@ -516,7 +615,7 @@ pub fn create_testing_editor(
                             bubble_rect.center(),
                             Align2::CENTER_CENTER,
                             label,
-                            FontId::proportional(11.0),
+                            FontId::proportional(11.0 * ui_scale),
                             Color32::from_rgb(224, 230, 238),
                         );
                     }
@@ -533,6 +632,7 @@ pub fn create_testing_editor(
                 }
                 ui.label("Click/drag points to edit. Double-click graph to add point.");
                     });
+                });
                 });
         },
     )

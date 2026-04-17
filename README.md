@@ -6,104 +6,79 @@ To run the plugin on Linux, go to `/scripts`:
 2. ./bundle_linux_vst3.sh
 3. ./start_linux./sh (requires Carla to be installed on your machine) or, use install.sh to install the VST into your system VST location and use it via your DAW
 
-# PLAN
 
-Minimal plan to build a Kick-style plugin in Rust, focusing only on core functionality.
+# TODO
+1. Sounds coming out of the plugin don't sound like kicks yet.
 
-1. Framework setup
 
-Use nih-plug
+# ARCHITECTURE
 
-Create cdylib crate
-Implement plugin struct (e.g., KickSynth)
-Enable VST3 (and optionally CLAP)
-2. Core data model
+Current app architecture is split into clear modules with a simple UI-to-audio data contract:
 
-Define:
+1. `src/lib.rs` (plugin entry)
+- Defines plugin metadata, I/O layout, and MIDI capability (`MidiConfig::Basic`).
+- Owns shared state handle and `KickEngine` instance.
+- Parses host `NoteOn` events (note + velocity) and forwards trigger data to DSP.
 
-phase: f32
-sample_index: usize
-amp_table: Vec<f32>
-freq_table: Vec<f32>
-sample_rate: f32
+2. `src/ui/mod.rs` (editor + curve design)
+- Egui-based curve editor inside `ResizableWindow`.
+- Two curves: amplitude envelope and pitch envelope.
+- Converts curve points to LUTs and publishes them to shared state.
+- Sends manual trigger events and tuning selection (`A=440` / `A=432`).
+- Renders waveform preview behind envelope overlays.
 
-Optional:
+3. `src/shared/mod.rs` (UI ↔ DSP contract)
+- Thread-safe shared snapshot containing:
+  - amplitude LUT
+  - pitch LUT
+  - trigger counter
+  - tuning reference (`tuning_a4_hz`)
+- UI writes updates; audio thread reads atomic snapshots.
 
-is_active: bool
-3. Curve system (offline → tables)
+4. `src/audio/mod.rs` (engine wrapper)
+- Owns voice state and trigger edge tracking.
+- Combines parameter values + shared snapshot + MIDI trigger input.
+- Passes resolved per-block parameters into voice render loop.
+- Applies final output limiter (`clamp(-1.0, 1.0)`).
 
-Start simple:
+5. `src/audio/voice.rs` (one-shot synth voice)
+- One active kick voice with phase/time state.
+- Supports velocity-sensitive triggering.
+- Supports MIDI note-based base pitch per hit.
+- Applies pitch envelope, amplitude envelope, tuning scale, and decay.
 
-Represent curve as a few control points
-Convert to fixed-size arrays (e.g., 2048 samples)
+6. `scripts/` (dev/build workflow)
+- Target-aware script dispatch (`TARGET` in `config.env`).
+- `build.sh`, `start.sh`, `restart.sh`, `install.sh` wrappers.
+- Stale artifact checks ensure bundle/install/start use latest build outputs.
 
-For each table index:
+# AUDIO
 
-Map index → normalized time (0–1)
-Evaluate cubic Bezier
-Fill:
-amp_table[i]
-freq_table[i]
+Audio processing flow per block:
 
-Do this outside audio thread
+1. Event intake
+- Host MIDI events are read in `process()`.
+- `NoteOn` sets trigger, velocity, and note frequency (Hz).
 
-4. Audio processing loop
+2. Trigger resolution
+- A hit can be triggered from:
+  - MIDI note-on
+  - Trigger parameter edge
+  - UI trigger button (shared trigger counter)
 
-Per sample:
+3. Shared snapshot read
+- Audio thread reads latest shared snapshot once per block:
+  - amp LUT
+  - pitch LUT
+  - tuning reference frequency
 
-freq = freq_table[sample_index]
-amp = amp_table[sample_index]
-phase += 2π * freq / sample_rate
-out = amp * sin(phase)
-sample_index += 1
+4. Voice synthesis per sample
+- Envelope position comes from elapsed hit time and decay.
+- Amplitude comes from level × velocity × amp LUT.
+- Frequency comes from base frequency (MIDI note if present, else parameter) + pitch drop × pitch LUT.
+- Global tuning scale (`tuning_a4_hz / 440`) is applied.
+- Sample is generated as sine oscillator output.
 
-If end reached:
-
-output 0 or stop
-5. Triggering
-
-On note-on (or manual trigger):
-
-phase = 0
-sample_index = 0
-is_active = true
-6. Parameters (minimal)
-
-Expose:
-
-start frequency
-end frequency
-decay time
-gain
-
-Skip UI Bezier editor initially.
-
-7. Thread safety
-Rebuild tables when parameters change
-Swap using Arc or double buffer
-No allocation in audio callback
-8. Basic output validation
-Confirm:
-clean sine drop (kick sound)
-no clicks (except intentional transient)
-9. First improvements
-
-Add in order:
-
-Click/transient (short noise burst)
-Distortion (simple waveshaper)
-Oversampling (2x or 4x)
-Better curve resolution
-10. UI (last step)
-Add Bezier editor (drag points)
-Convert UI → tables
-Sync safely to DSP
-Summary
-
-You are building:
-
-Bezier → lookup tables
-Table-driven oscillator
-Trigger/reset system
-
-That is the functional core of a Kick 2–style plugin.
+5. Output stage
+- Mono sample is copied to all output channels.
+- Final sample is hard-limited to `[-1.0, 1.0]`.
