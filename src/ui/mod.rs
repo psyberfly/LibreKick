@@ -13,6 +13,9 @@ use crate::shared;
 const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
 const WAVEFORM_PREVIEW_OVERSAMPLE: usize = 8;
+const WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL: f32 = 0.3;
+const FINAL_WAVEFORM_TARGET_CYCLES_PER_POINT: f32 = 0.12;
+const FINAL_WAVEFORM_MAX_DOWNSAMPLE_FACTOR: usize = 8;
 const NOTE_LENGTH_MAX_MS: f32 = 1000.0;
 const WAVEFORM_ZOOM_MIN_PERCENT: f32 = 1.0;
 const WAVEFORM_ZOOM_MAX_PERCENT: f32 = 200.0;
@@ -77,14 +80,16 @@ fn axis_x_label(normalized: f32) -> String {
     }
 }
 
-fn waveform_preview_columns(
+fn waveform_preview_points(
     graph_rect: Rect,
     amplitude_points: &[Pos2],
     pitch_points: &[Pos2],
+    active_curve: CurveKind,
+    show_final_waveform: bool,
     tuning_a4_hz: f32,
     note_length_ms: f32,
     waveform_zoom_percent: f32,
-) -> Vec<[Pos2; 2]> {
+) -> Vec<Pos2> {
     let pixel_width = graph_rect.width().max(1.0) as usize;
     let note_length_t = (note_length_ms / NOTE_LENGTH_MAX_MS).clamp(0.0, 1.0);
     let zoom = (waveform_zoom_percent / 100.0).clamp(
@@ -100,17 +105,86 @@ fn waveform_preview_columns(
 
     let total_steps = active_pixel_width * WAVEFORM_PREVIEW_OVERSAMPLE;
     let dt = WAVEFORM_PREVIEW_DURATION_SECONDS / total_steps as f32;
+    let source_seconds = (WAVEFORM_PREVIEW_DURATION_SECONDS * source_length_t).max(0.001);
+    let max_display_hz = ((active_pixel_width as f32 / source_seconds)
+        * WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL)
+        .max(5.0);
     let tuning_scale = tuning_a4_hz / 440.0;
     let mut phase = 0.0_f32;
 
-    let mut col_min = vec![f32::MAX; active_pixel_width];
-    let mut col_max = vec![f32::MIN; active_pixel_width];
+    if show_final_waveform {
+        let source_seconds_per_col = source_seconds / active_pixel_width as f32;
+        let mut previous_t = 0.0_f32;
+        let raw_points: Vec<Pos2> = (0..active_pixel_width)
+            .map(|col| {
+                let x = (col as f32 + 0.5) / pixel_width as f32;
+                let x_t = x.min(display_length_t);
+                let t = (x_t / zoom).clamp(0.0, source_length_t);
+
+                let amp = envelope_value_linear(amplitude_points, t);
+                let pitch = envelope_value_linear(pitch_points, t);
+                let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
+                    .clamp(20.0, 22050.0)
+                    .min(max_display_hz);
+
+                let dt = ((t - previous_t).max(0.0)) * WAVEFORM_PREVIEW_DURATION_SECONDS;
+                phase = (phase + std::f32::consts::TAU * hz * dt).rem_euclid(std::f32::consts::TAU);
+                previous_t = t;
+
+                let sample = phase.sin() * amp;
+                let y = (0.5 + sample * 0.46).clamp(0.0, 1.0);
+                to_screen(Pos2::new(x, y), graph_rect)
+            })
+            .collect();
+
+        let mut downsampled_points = Vec::with_capacity(raw_points.len());
+        let mut col = 0_usize;
+        while col < active_pixel_width {
+            let t = (col as f32 + 0.5) / pixel_width as f32;
+            let sample_t = ((t.min(display_length_t)) / zoom).clamp(0.0, source_length_t);
+            let pitch = envelope_value_linear(pitch_points, sample_t);
+            let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
+                .clamp(20.0, 22050.0)
+                .min(max_display_hz);
+
+            let cycles_per_col = hz * source_seconds_per_col;
+            let downsample_factor = (cycles_per_col / FINAL_WAVEFORM_TARGET_CYCLES_PER_POINT)
+                .ceil()
+                .max(1.0)
+                .min(FINAL_WAVEFORM_MAX_DOWNSAMPLE_FACTOR as f32) as usize;
+
+            let block_end = (col + downsample_factor).min(active_pixel_width);
+            downsampled_points.push(raw_points[col]);
+            col = block_end;
+        }
+
+        if let Some(last_point) = raw_points.last().copied() {
+            if downsampled_points.last().copied() != Some(last_point) {
+                downsampled_points.push(last_point);
+            }
+        }
+
+        return downsampled_points;
+    }
+
+    let mut col_sum = vec![0.0_f32; active_pixel_width];
+    let mut col_count = vec![0_u16; active_pixel_width];
 
     for step in 0..=total_steps {
         let t = (step as f32 / total_steps as f32) * source_length_t;
-        let amp = bezier_point(amplitude_points, t).y.clamp(0.0, 1.0);
-        let pitch = bezier_point(pitch_points, t).y;
-        let hz = (pitch_hz_from_normalized(pitch) * tuning_scale).clamp(20.0, 22050.0);
+        let amp = if show_final_waveform || matches!(active_curve, CurveKind::Amplitude) {
+            envelope_value_linear(amplitude_points, t)
+        } else {
+            1.0
+        };
+        let pitch = if show_final_waveform || matches!(active_curve, CurveKind::Pitch) {
+            envelope_value_linear(pitch_points, t)
+        } else {
+            0.0
+        };
+        let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
+            .clamp(20.0, 22050.0)
+            .min(max_display_hz);
         phase = (phase + std::f32::consts::TAU * hz * dt).rem_euclid(std::f32::consts::TAU);
 
         let sample = phase.sin() * amp;
@@ -118,19 +192,39 @@ fn waveform_preview_columns(
 
         let x_t = (t * zoom).min(display_length_t);
         let col = ((x_t * pixel_width as f32) as usize).min(active_pixel_width - 1);
-        col_min[col] = col_min[col].min(y);
-        col_max[col] = col_max[col].max(y);
+        col_sum[col] += y;
+        col_count[col] = col_count[col].saturating_add(1);
+    }
+
+    let mut col_avg = vec![0.5_f32; active_pixel_width];
+    let mut last_y = 0.5_f32;
+    for col in 0..active_pixel_width {
+        if col_count[col] > 0 {
+            let avg = col_sum[col] / col_count[col] as f32;
+            col_avg[col] = avg;
+            last_y = avg;
+        } else {
+            col_avg[col] = last_y;
+        }
     }
 
     (0..active_pixel_width)
         .map(|col| {
-            let y_min = if col_min[col] == f32::MAX { 0.5 } else { col_min[col] };
-            let y_max = if col_max[col] == f32::MIN { 0.5 } else { col_max[col] };
+            let start = col.saturating_sub(1);
+            let end = (col + 1).min(active_pixel_width - 1);
+            let mut smooth_sum = 0.0_f32;
+            let mut smooth_count = 0_u16;
+            for idx in start..=end {
+                smooth_sum += col_avg[idx];
+                smooth_count += 1;
+            }
+            let y = if smooth_count > 0 {
+                smooth_sum / smooth_count as f32
+            } else {
+                col_avg[col]
+            };
             let x = (col as f32 + 0.5) / pixel_width as f32;
-            [
-                to_screen(Pos2::new(x, y_min), graph_rect),
-                to_screen(Pos2::new(x, y_max), graph_rect),
-            ]
+            to_screen(Pos2::new(x, y), graph_rect)
         })
         .collect()
 }
@@ -160,6 +254,7 @@ struct EditorSnapshot {
     amplitude_curve: Curve,
     pitch_curve: Curve,
     active_curve: CurveKind,
+    show_final_waveform: bool,
     tuning_standard: TuningStandard,
     note_length_ms: f32,
     waveform_zoom_percent: f32,
@@ -194,6 +289,7 @@ struct BezierUiState {
     amplitude_curve: Curve,
     pitch_curve: Curve,
     active_curve: CurveKind,
+    show_final_waveform: bool,
     tuning_standard: TuningStandard,
     note_length_ms: f32,
     waveform_zoom_percent: f32,
@@ -209,6 +305,7 @@ impl Default for BezierUiState {
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
+            show_final_waveform: true,
             tuning_standard: TuningStandard::A440,
             note_length_ms: NOTE_LENGTH_MAX_MS,
             waveform_zoom_percent: 100.0,
@@ -241,6 +338,7 @@ impl BezierUiState {
             amplitude_curve: self.amplitude_curve.clone(),
             pitch_curve: self.pitch_curve.clone(),
             active_curve: self.active_curve,
+            show_final_waveform: self.show_final_waveform,
             tuning_standard: self.tuning_standard,
             note_length_ms: self.note_length_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
@@ -252,6 +350,7 @@ impl BezierUiState {
         self.amplitude_curve = snapshot.amplitude_curve;
         self.pitch_curve = snapshot.pitch_curve;
         self.active_curve = snapshot.active_curve;
+        self.show_final_waveform = snapshot.show_final_waveform;
         self.tuning_standard = snapshot.tuning_standard;
         self.note_length_ms = snapshot.note_length_ms;
         self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
@@ -319,22 +418,27 @@ fn to_normalized_with_note_length(point: Pos2, rect: Rect, note_length_t: f32) -
     Pos2::new(x, y)
 }
 
-fn bezier_point(points: &[Pos2], t: f32) -> Pos2 {
+fn envelope_value_linear(points: &[Pos2], t: f32) -> f32 {
     if points.is_empty() {
-        return Pos2::new(0.0, 0.0);
+        return 0.0;
     }
 
-    let mut work = points.to_vec();
-    let n = work.len();
-    for level in 1..n {
-        for i in 0..(n - level) {
-            let x = egui::lerp(work[i].x..=work[i + 1].x, t);
-            let y = egui::lerp(work[i].y..=work[i + 1].y, t);
-            work[i] = Pos2::new(x, y);
+    let t = t.clamp(0.0, 1.0);
+    if t <= points[0].x {
+        return points[0].y.clamp(0.0, 1.0);
+    }
+
+    for pair in points.windows(2) {
+        let left = pair[0];
+        let right = pair[1];
+        if t <= right.x {
+            let span = (right.x - left.x).max(f32::EPSILON);
+            let local_t = ((t - left.x) / span).clamp(0.0, 1.0);
+            return egui::lerp(left.y..=right.y, local_t).clamp(0.0, 1.0);
         }
     }
 
-    work[0]
+    points.last().map_or(0.0, |p| p.y).clamp(0.0, 1.0)
 }
 
 fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
@@ -342,7 +446,7 @@ fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
 
     for (i, value) in lut.iter_mut().enumerate() {
         let t = i as f32 / (shared::CURVE_LUT_SIZE as f32 - 1.0);
-        *value = bezier_point(points, t).y.clamp(0.0, 1.0);
+        *value = envelope_value_linear(points, t);
     }
 
     lut
@@ -453,6 +557,12 @@ pub fn create_testing_editor(
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
+                    if ui
+                        .selectable_label(state.show_final_waveform, "Final")
+                        .clicked()
+                    {
+                        state.show_final_waveform = !state.show_final_waveform;
+                    }
                     ui.separator();
                     ui.label("Tuning:");
                     ui.selectable_value(&mut state.tuning_standard, TuningStandard::A440, "A=440");
@@ -811,26 +921,28 @@ pub fn create_testing_editor(
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Amplitude, amplitude_lut);
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Pitch, pitch_lut);
 
-                let waveform_cols = waveform_preview_columns(
+                let waveform_points = waveform_preview_points(
                     graph_rect,
                     &state.amplitude_curve.points,
                     &state.pitch_curve.points,
+                    state.active_curve,
+                    state.show_final_waveform,
                     tuning_a4_hz,
                     state.note_length_ms,
                     state.waveform_zoom_percent,
                 );
 
-                if let (Some(first), Some(last)) = (waveform_cols.first(), waveform_cols.last()) {
+                if let (Some(first), Some(last)) = (waveform_points.first(), waveform_points.last()) {
                     let mid_y = graph_rect.center().y;
                     painter.line_segment(
-                        [Pos2::new(first[0].x, mid_y), Pos2::new(last[0].x, mid_y)],
+                        [Pos2::new(first.x, mid_y), Pos2::new(last.x, mid_y)],
                         Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 128, 136, 45)),
                     );
                 }
 
-                for [a, b] in &waveform_cols {
+                for line in waveform_points.windows(2) {
                     painter.line_segment(
-                        [*a, *b],
+                        [line[0], line[1]],
                         Stroke::new(1.0, Color32::from_rgba_unmultiplied(180, 206, 232, 110)),
                     );
                 }
@@ -841,20 +953,8 @@ pub fn create_testing_editor(
                     .collect();
 
                 for line in screen_points.windows(2) {
-                    painter.line_segment([line[0], line[1]], Stroke::new(1.0, Color32::from_rgb(90, 150, 190)));
-                }
-
-                let mut previous =
-                    to_screen_with_note_length(bezier_point(&active_points, 0.0), graph_rect, note_length_norm);
-                for step in 1..=220 {
-                    let t = step as f32 / 220.0;
-                    let next = to_screen_with_note_length(
-                        bezier_point(&active_points, t),
-                        graph_rect,
-                        note_length_norm,
-                    );
                     painter.line_segment(
-                        [previous, next],
+                        [line[0], line[1]],
                         Stroke::new(
                             2.0,
                             if active_kind == CurveKind::Amplitude {
@@ -864,7 +964,6 @@ pub fn create_testing_editor(
                             },
                         ),
                     );
-                    previous = next;
                 }
 
                 for (i, point) in screen_points.iter().enumerate() {
