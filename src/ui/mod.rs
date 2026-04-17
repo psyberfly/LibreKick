@@ -17,6 +17,7 @@ const NOTE_LENGTH_MAX_MS: f32 = 1000.0;
 const WAVEFORM_ZOOM_MIN_PERCENT: f32 = 1.0;
 const WAVEFORM_ZOOM_MAX_PERCENT: f32 = 200.0;
 const WAVEFORM_ZOOM_STEP_PERCENT: f32 = 5.0;
+const HISTORY_STACK_CAP: usize = 200;
 const AXIS_SUBDIVISIONS: usize = 10;
 const AMP_DB_FLOOR: f32 = -30.0;
 const BASE_EDITOR_WIDTH: f32 = 760.0;
@@ -146,8 +147,20 @@ impl TuningStandard {
     }
 }
 
+#[derive(Clone, PartialEq)]
 struct Curve {
     points: Vec<Pos2>,
+}
+
+#[derive(Clone, PartialEq)]
+struct EditorSnapshot {
+    amplitude_curve: Curve,
+    pitch_curve: Curve,
+    active_curve: CurveKind,
+    tuning_standard: TuningStandard,
+    note_length_ms: f32,
+    waveform_zoom_percent: f32,
+    selected_point: Option<usize>,
 }
 
 impl Curve {
@@ -182,6 +195,9 @@ struct BezierUiState {
     note_length_ms: f32,
     waveform_zoom_percent: f32,
     selected_point: Option<usize>,
+    undo_stack: Vec<EditorSnapshot>,
+    redo_stack: Vec<EditorSnapshot>,
+    point_drag_snapshot: Option<EditorSnapshot>,
 }
 
 impl Default for BezierUiState {
@@ -194,11 +210,75 @@ impl Default for BezierUiState {
             note_length_ms: NOTE_LENGTH_MAX_MS,
             waveform_zoom_percent: 100.0,
             selected_point: Some(1),
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+            point_drag_snapshot: None,
         }
     }
 }
 
 impl BezierUiState {
+    fn push_bounded_snapshot(stack: &mut Vec<EditorSnapshot>, snapshot: EditorSnapshot) {
+        stack.push(snapshot);
+        let overflow = stack.len().saturating_sub(HISTORY_STACK_CAP);
+        if overflow > 0 {
+            stack.drain(0..overflow);
+        }
+    }
+
+    fn push_undo_snapshot(&mut self, snapshot: EditorSnapshot) {
+        if self.snapshot() != snapshot {
+            Self::push_bounded_snapshot(&mut self.undo_stack, snapshot);
+            self.redo_stack.clear();
+        }
+    }
+
+    fn snapshot(&self) -> EditorSnapshot {
+        EditorSnapshot {
+            amplitude_curve: self.amplitude_curve.clone(),
+            pitch_curve: self.pitch_curve.clone(),
+            active_curve: self.active_curve,
+            tuning_standard: self.tuning_standard,
+            note_length_ms: self.note_length_ms,
+            waveform_zoom_percent: self.waveform_zoom_percent,
+            selected_point: self.selected_point,
+        }
+    }
+
+    fn apply_snapshot(&mut self, snapshot: EditorSnapshot) {
+        self.amplitude_curve = snapshot.amplitude_curve;
+        self.pitch_curve = snapshot.pitch_curve;
+        self.active_curve = snapshot.active_curve;
+        self.tuning_standard = snapshot.tuning_standard;
+        self.note_length_ms = snapshot.note_length_ms;
+        self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
+        self.selected_point = snapshot.selected_point;
+    }
+
+    fn commit_history_if_changed(&mut self, before: &EditorSnapshot) {
+        self.push_undo_snapshot(before.clone());
+    }
+
+    fn undo(&mut self) -> bool {
+        if let Some(snapshot) = self.undo_stack.pop() {
+            let current = self.snapshot();
+            Self::push_bounded_snapshot(&mut self.redo_stack, current);
+            self.apply_snapshot(snapshot);
+            return true;
+        }
+        false
+    }
+
+    fn redo(&mut self) -> bool {
+        if let Some(snapshot) = self.redo_stack.pop() {
+            let current = self.snapshot();
+            Self::push_bounded_snapshot(&mut self.undo_stack, current);
+            self.apply_snapshot(snapshot);
+            return true;
+        }
+        false
+    }
+
     fn active_curve(&self) -> &Curve {
         match self.active_curve {
             CurveKind::Amplitude => &self.amplitude_curve,
@@ -334,11 +414,52 @@ pub fn create_testing_editor(
             ResizableWindow::new("kick-plugin-resize")
                 .min_size(Vec2::new(520.0, 320.0))
                 .show(_ctx, &resizable_state, |ui| {
+                let snapshot_before = state.snapshot();
+                let mut history_action_applied = false;
+
+                let (undo_shortcut, redo_shortcut) = ui.input(|i| {
+                    let modifier_down = i.modifiers.ctrl || i.modifiers.command;
+                    (
+                        modifier_down && i.key_pressed(egui::Key::Z),
+                        modifier_down && i.key_pressed(egui::Key::Y),
+                    )
+                });
+                if undo_shortcut {
+                    history_action_applied |= state.undo();
+                }
+                if redo_shortcut {
+                    history_action_applied |= state.redo();
+                }
+
                 let ui_scale = ui_scale_from_size(ui.available_size_before_wrap());
+                let mut point_dragging_this_frame = false;
                 ui.scope(|ui| {
                 apply_ui_text_scale(ui, ui_scale);
                 ui.heading("Kick Curve Editor (Prototype)");
                 ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let redo_clicked = ui
+                            .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">"))
+                            .on_hover_ui(|ui| {
+                                apply_ui_text_scale(ui, ui_scale);
+                                ui.label("Redo (Ctrl/Cmd + Y)");
+                            })
+                            .clicked();
+                        let undo_clicked = ui
+                            .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<"))
+                            .on_hover_ui(|ui| {
+                                apply_ui_text_scale(ui, ui_scale);
+                                ui.label("Undo (Ctrl/Cmd + Z)");
+                            })
+                            .clicked();
+                        if redo_clicked {
+                            history_action_applied |= state.redo();
+                        }
+                        if undo_clicked {
+                            history_action_applied |= state.undo();
+                        }
+                    });
+
                     ui.label("Curve:");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
                     ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
@@ -575,6 +696,7 @@ pub fn create_testing_editor(
                         });
 
                         if response.dragged() {
+                            point_dragging_this_frame = true;
                             if let Some(pointer_pos) = response.interact_pointer_pos() {
                                 points[i] = to_normalized_with_note_length(
                                     pointer_pos,
@@ -786,6 +908,19 @@ pub fn create_testing_editor(
                 }
                 ui.label("Click/drag points to edit. Double-click graph to add point.");
                     });
+                if point_dragging_this_frame && state.point_drag_snapshot.is_none() {
+                    state.point_drag_snapshot = Some(snapshot_before.clone());
+                }
+                let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
+                if !point_dragging_this_frame && !pointer_primary_down {
+                    if let Some(drag_start_snapshot) = state.point_drag_snapshot.take() {
+                        state.push_undo_snapshot(drag_start_snapshot);
+                    }
+                }
+
+                if !history_action_applied && state.point_drag_snapshot.is_none() {
+                    state.commit_history_if_changed(&snapshot_before);
+                }
                 });
                 });
         },

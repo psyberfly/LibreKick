@@ -11,7 +11,6 @@ To run the plugin on Linux, go to `/scripts`:
 1. Fix rendered waveform: reduce the frequency of the waveform to make transients more readable; keep everything else the same. 
 2. Fix audio: sounds coming out of the plugin don't sound like kicks yet.
 3. Add undo, redo buttons 
-4. Add waveform zoom: We need to add a zooming widget which can zoom in and out of the waveform. Not the area outside of the rendered waveform, so the axes should be the bounds of the zoom and axes should themselves remain stable. The zoom should magnify or lessen the waveform alone. At 100% zoom, the waveform fits in its entirety up to maxLength.
 
 # Fix for TODO #2:
 
