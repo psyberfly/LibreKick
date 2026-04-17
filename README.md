@@ -1,3 +1,4 @@
+<img width="997" height="362" alt="LibreKick Logo v2" src="https://github.com/user-attachments/assets/ae2b7fe2-a123-44e1-b2a4-c5473fbfcac9" />
 
 
 # Open Source Waveform Shaper Kick Synth
