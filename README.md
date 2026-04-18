@@ -5,7 +5,9 @@
 # Open Source Waveform Shaper Kick Synthesiser
 
 ## About
-This is an audio synthesiser plugin for usage in DAWs to generate Kick audio samples using visual waveshaping.   
+LibreKick is a synthesiser plugin for usage in DAWs to generate Kick audio samples using visual waveshaping.  
+For the origin story, visit: https://librekick.org 
+
 **This project is in early alpha state.**   
 
 <p align="center">
