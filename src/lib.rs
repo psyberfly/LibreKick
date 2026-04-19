@@ -6,6 +6,7 @@ use nih_plug_egui::EguiState;
 mod audio;
 mod config;
 mod midi;
+mod patches;
 mod shared;
 mod ui;
 

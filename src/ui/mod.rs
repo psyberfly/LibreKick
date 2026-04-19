@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{cmp::Ordering, sync::Arc};
 
 use nih_plug::prelude::Editor;
 use nih_plug_egui::{
@@ -11,7 +11,7 @@ use nih_plug_egui::{
     EguiState,
 };
 
-use crate::{config, shared};
+use crate::{config, patches, shared};
 
 const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
@@ -374,6 +374,29 @@ impl TuningStandard {
     }
 }
 
+fn tuning_standard_from_a4_hz(hz: f32) -> TuningStandard {
+    if (hz - 432.0).abs() <= (hz - 440.0).abs() {
+        TuningStandard::A432
+    } else {
+        TuningStandard::A440
+    }
+}
+
+fn points_from_patch(raw_points: &[(f32, f32)], fallback: &[Pos2]) -> Vec<Pos2> {
+    let mut points: Vec<Pos2> = raw_points
+        .iter()
+        .map(|(x, y)| Pos2::new(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)))
+        .collect();
+
+    if points.len() < 2 {
+        return fallback.to_vec();
+    }
+
+    points.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal));
+    constrain_curve_points(&mut points);
+    points
+}
+
 #[derive(Clone, PartialEq)]
 struct Curve {
     points: Vec<Pos2>,
@@ -433,6 +456,9 @@ struct BezierUiState {
     point_drag_snapshot: Option<EditorSnapshot>,
     brand_logo: Option<TextureHandle>,
     show_help_popup: bool,
+    available_patches: Vec<String>,
+    new_patch_name: String,
+    patch_status: Option<String>,
 }
 
 impl Default for BezierUiState {
@@ -456,6 +482,9 @@ impl Default for BezierUiState {
             point_drag_snapshot: None,
             brand_logo: None,
             show_help_popup: false,
+            available_patches: patches::list_patch_names().unwrap_or_default(),
+            new_patch_name: String::new(),
+            patch_status: None,
         }
     }
 }
@@ -536,6 +565,73 @@ impl BezierUiState {
             CurveKind::Amplitude => &mut self.amplitude_curve,
             CurveKind::Pitch => &mut self.pitch_curve,
         }
+    }
+
+    fn refresh_patch_list(&mut self) {
+        match patches::list_patch_names() {
+            Ok(patches) => {
+                self.available_patches = patches;
+            }
+            Err(error) => {
+                self.patch_status = Some(error);
+            }
+        }
+    }
+
+    fn to_patch_data(&self, name: String) -> patches::PatchData {
+        patches::PatchData {
+            name,
+            tuning_a4_hz: self.tuning_standard.a4_hz(),
+            note_end_ms: self.note_length_ms,
+            max_note_length_ms: self.note_length_max_ms,
+            waveform_zoom_percent: self.waveform_zoom_percent,
+            active_curve: match self.active_curve {
+                CurveKind::Amplitude => "amplitude".to_owned(),
+                CurveKind::Pitch => "pitch".to_owned(),
+            },
+            amplitude_points: self
+                .amplitude_curve
+                .points
+                .iter()
+                .map(|point| (point.x, point.y))
+                .collect(),
+            pitch_points: self
+                .pitch_curve
+                .points
+                .iter()
+                .map(|point| (point.x, point.y))
+                .collect(),
+        }
+    }
+
+    fn apply_patch_data(&mut self, patch: patches::PatchData) {
+        self.amplitude_curve.points =
+            points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
+        self.pitch_curve.points = points_from_patch(&patch.pitch_points, &Curve::default_pitch().points);
+        self.active_curve = if patch.active_curve.eq_ignore_ascii_case("pitch") {
+            CurveKind::Pitch
+        } else {
+            CurveKind::Amplitude
+        };
+        self.tuning_standard = tuning_standard_from_a4_hz(patch.tuning_a4_hz);
+
+        self.note_length_max_ms = patch
+            .max_note_length_ms
+            .clamp(NOTE_LENGTH_MAX_SLIDER_MIN_MS, NOTE_LENGTH_MAX_SLIDER_MAX_MS);
+        self.base_note_length_max_ms = self.note_length_max_ms;
+        self.note_length_ms = patch.note_end_ms.clamp(0.0, self.note_length_max_ms);
+
+        let app_cfg = config::app_config();
+        self.waveform_zoom_percent = patch.waveform_zoom_percent.clamp(
+            app_cfg.waveform_zoom_min_percent,
+            app_cfg.waveform_zoom_max_percent,
+        );
+
+        self.selection_drag_start = None;
+        self.selection_drag_current = None;
+        let selected_index = 1.min(self.active_curve().points.len().saturating_sub(1));
+        self.selected_point = Some(selected_index);
+        self.selected_points = vec![selected_index];
     }
 }
 
@@ -794,6 +890,69 @@ pub fn create_testing_editor(
                         {
                             state.show_help_popup = true;
                         }
+
+                        ui.menu_button("Patches", |ui| {
+                            apply_ui_text_scale(ui, ui_scale);
+                            ui.set_min_width(280.0 * ui_scale);
+                            ui.label(format!("Dir: {}", config::patches_dir()));
+                            ui.separator();
+                            ui.label("Load Patch");
+
+                            let patch_names = state.available_patches.clone();
+                            if patch_names.is_empty() {
+                                ui.label("No patches found.");
+                            } else {
+                                for patch_name in patch_names {
+                                    if ui.button(&patch_name).clicked() {
+                                        let before = state.snapshot();
+                                        match patches::load_patch(&patch_name) {
+                                            Ok(patch) => {
+                                                state.apply_patch_data(patch);
+                                                state.commit_history_if_changed(&before);
+                                                state.patch_status =
+                                                    Some(format!("Loaded patch: {patch_name}"));
+                                            }
+                                            Err(error) => {
+                                                state.patch_status =
+                                                    Some(format!("Failed to load patch: {error}"));
+                                            }
+                                        }
+                                        ui.close_menu();
+                                    }
+                                }
+                            }
+
+                            ui.separator();
+                            ui.label("Save Patch");
+                            ui.text_edit_singleline(&mut state.new_patch_name);
+                            let can_save_patch = !state.new_patch_name.trim().is_empty();
+                            if ui
+                                .add_enabled(can_save_patch, egui::Button::new("Save"))
+                                .clicked()
+                            {
+                                let patch_name = state.new_patch_name.trim().to_owned();
+                                let patch_data = state.to_patch_data(patch_name.clone());
+                                match patches::save_patch(&patch_data) {
+                                    Ok(()) => {
+                                        state.patch_status = Some(format!("Saved patch: {patch_name}"));
+                                        state.refresh_patch_list();
+                                    }
+                                    Err(error) => {
+                                        state.patch_status =
+                                            Some(format!("Failed to save patch: {error}"));
+                                    }
+                                }
+                            }
+
+                            if ui.button("Refresh List").clicked() {
+                                state.refresh_patch_list();
+                            }
+
+                            if let Some(status) = &state.patch_status {
+                                ui.separator();
+                                ui.label(status);
+                            }
+                        });
                     });
                 });
 
