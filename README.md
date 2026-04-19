@@ -34,8 +34,6 @@ Origin story: https://librekick.org
 
 ## Architecture
 
-Current app architecture is split into clear modules with a simple UI-to-audio data contract:
-
 1. `src/lib.rs` (plugin entry)
 - Defines plugin metadata, I/O layout, and MIDI capability (`MidiConfig::Basic`).
 - Owns shared state handle and `KickEngine` instance.
