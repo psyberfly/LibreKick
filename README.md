@@ -11,6 +11,8 @@ Latest releases: https://github.com/psyberfly/LibreKick/releases
 Origin story: https://librekick.org  
 **This project is in early alpha dev stage.**    
   
+<p>&nbsp;</p>
+
 <p align="center">
 <img alt="image" src="https://github.com/user-attachments/assets/3e0bde10-123a-49e0-b9f5-6d788c2610ec" width="80%" />
 </p>
