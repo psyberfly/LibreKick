@@ -6,6 +6,8 @@ use std::{
 use crate::config;
 
 pub const PATCH_FILE_EXTENSION: &str = ".librekick_patch";
+pub const BUILTIN_DEFAULT_PATCH_NAME: &str = "default_psy_kick";
+const DEFAULT_PATCH_NAME_FILE: &str = ".default_patch_name";
 
 #[derive(Clone, Debug)]
 pub struct PatchData {
@@ -19,8 +21,99 @@ pub struct PatchData {
     pub pitch_points: Vec<(f32, f32)>,
 }
 
+pub fn builtin_default_patch_data() -> PatchData {
+    PatchData {
+        name: BUILTIN_DEFAULT_PATCH_NAME.to_owned(),
+        tuning_a4_hz: 432.0,
+        note_end_ms: 206.93333,
+        max_note_length_ms: 1000.0,
+        waveform_zoom_percent: 200.0,
+        active_curve: "pitch".to_owned(),
+        amplitude_points: vec![
+            (0.000000, 0.815547),
+            (0.029639, 0.284431),
+            (0.212629, 0.788254),
+            (0.570876, 0.466934),
+            (1.000000, 0.000000),
+        ],
+        pitch_points: vec![
+            (0.000000, 0.974639),
+            (0.216495, 0.112608),
+            (0.617268, 0.210654),
+            (0.881443, 0.311613),
+            (0.990000, 0.829996),
+            (1.000000, 0.123286),
+        ],
+    }
+}
+
+pub fn set_default_patch_name(name: &str) -> Result<(), String> {
+    ensure_patches_dir()?;
+
+    let cleaned_name = sanitize_patch_name(name);
+    if cleaned_name.is_empty() {
+        return Err("Patch name is empty after sanitization.".to_owned());
+    }
+
+    let patch_path = patch_file_path(&cleaned_name)?;
+    if !patch_path.exists() {
+        return Err(format!("Patch '{cleaned_name}' does not exist. Save it first."));
+    }
+
+    let default_path = default_patch_name_path();
+    fs::write(&default_path, cleaned_name).map_err(|error| {
+        format!(
+            "Failed to save default patch setting '{}': {error}",
+            default_path.display()
+        )
+    })
+}
+
+pub fn get_default_patch_name() -> Result<Option<String>, String> {
+    ensure_patches_dir()?;
+
+    let default_path = default_patch_name_path();
+    if !default_path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&default_path).map_err(|error| {
+        format!(
+            "Failed to read default patch setting '{}': {error}",
+            default_path.display()
+        )
+    })?;
+
+    let cleaned = sanitize_patch_name(raw.trim());
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(cleaned))
+}
+
+pub fn ensure_default_patch_setup() -> Result<(), String> {
+    ensure_patches_dir()?;
+
+    let builtin_path = patch_file_path(BUILTIN_DEFAULT_PATCH_NAME)?;
+    if !builtin_path.exists() {
+        let builtin_patch = builtin_default_patch_data();
+        save_patch(&builtin_patch)?;
+    }
+
+    if get_default_patch_name()?.is_none() {
+        set_default_patch_name(BUILTIN_DEFAULT_PATCH_NAME)?;
+    }
+
+    Ok(())
+}
+
 fn patches_dir_path() -> PathBuf {
     PathBuf::from(config::patches_dir())
+}
+
+fn default_patch_name_path() -> PathBuf {
+    patches_dir_path().join(DEFAULT_PATCH_NAME_FILE)
 }
 
 fn sanitize_patch_name(raw_name: &str) -> String {

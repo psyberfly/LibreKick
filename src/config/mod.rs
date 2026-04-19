@@ -111,8 +111,8 @@ pub fn patches_dir() -> &'static str {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            base_editor_width: 980.0,
-            base_editor_height: 560.0,
+            base_editor_width: 1274.0,
+            base_editor_height: 728.0,
             min_editor_width: 520.0,
             min_editor_height: 320.0,
             note_length_max_ms: 1000.0,

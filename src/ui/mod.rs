@@ -319,36 +319,36 @@ fn waveform_preview_points(
     let pixel_width = graph_rect.width().max(1.0) as usize;
     let note_end_t = (note_end_ms / max_note_length_ms.max(f32::EPSILON)).clamp(0.0, 1.0);
     let zoom = effective_waveform_zoom(waveform_zoom_percent, adaptive_zoom_factor);
-    let source_length_t = (note_end_t / zoom).min(note_end_t);
-    let display_length_t = (note_end_t * zoom).min(note_end_t);
+    let display_length_t = (note_end_t * zoom).clamp(0.0, 1.0);
     let active_pixel_width = ((pixel_width as f32 * display_length_t).round() as usize).min(pixel_width);
     if active_pixel_width == 0 {
         return Vec::new();
     }
 
-    let source_seconds = (WAVEFORM_PREVIEW_DURATION_SECONDS * source_length_t).max(0.001);
+    let source_seconds = (WAVEFORM_PREVIEW_DURATION_SECONDS * note_end_t.max(f32::EPSILON)).max(0.001);
     let max_display_hz = ((active_pixel_width as f32 / source_seconds)
         * WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL)
         .max(5.0);
     let tuning_scale = tuning_a4_hz / app_cfg.default_tuning_a4_hz.max(f32::EPSILON);
     let mut phase = 0.0_f32;
 
-    let mut previous_t = 0.0_f32;
+    let mut previous_time_t = 0.0_f32;
     let raw_points: Vec<Pos2> = (0..active_pixel_width)
         .map(|col| {
             let x = (col as f32 + 0.5) / pixel_width as f32;
             let x_t = x.min(display_length_t);
-            let t = (x_t / zoom).clamp(0.0, source_length_t);
+            let note_progress_t = (x_t / display_length_t.max(f32::EPSILON)).clamp(0.0, 1.0);
+            let time_t = note_progress_t * note_end_t;
 
-            let amp = envelope_value_amplitude_db(amplitude_points, t);
-            let pitch = envelope_value_linear(pitch_points, t);
+            let amp = envelope_value_amplitude_db(amplitude_points, note_progress_t);
+            let pitch = envelope_value_linear(pitch_points, note_progress_t);
             let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
                 .clamp(20.0, 22050.0)
                 .min(max_display_hz);
 
-            let dt = ((t - previous_t).max(0.0)) * WAVEFORM_PREVIEW_DURATION_SECONDS;
+            let dt = ((time_t - previous_time_t).max(0.0)) * WAVEFORM_PREVIEW_DURATION_SECONDS;
             phase = (phase + std::f32::consts::TAU * hz * dt).rem_euclid(std::f32::consts::TAU);
-            previous_t = t;
+            previous_time_t = time_t;
 
             let sample = phase.sin() * amp;
             let y = (0.5 + sample * 0.46).clamp(0.0, 1.0);
@@ -414,6 +414,17 @@ struct EditorSnapshot {
     selected_point: Option<usize>,
 }
 
+#[derive(Clone, PartialEq)]
+struct PatchSnapshot {
+    amplitude_curve: Curve,
+    pitch_curve: Curve,
+    active_curve: CurveKind,
+    tuning_standard: TuningStandard,
+    note_length_ms: f32,
+    note_length_max_ms: f32,
+    waveform_zoom_percent: f32,
+}
+
 impl Curve {
     fn default_amplitude() -> Self {
         Self {
@@ -457,6 +468,9 @@ struct BezierUiState {
     brand_logo: Option<TextureHandle>,
     show_help_popup: bool,
     available_patches: Vec<String>,
+    selected_patch_name: Option<String>,
+    selected_patch_snapshot: Option<PatchSnapshot>,
+    default_patch_name: Option<String>,
     new_patch_name: String,
     patch_status: Option<String>,
 }
@@ -464,7 +478,7 @@ struct BezierUiState {
 impl Default for BezierUiState {
     fn default() -> Self {
         let note_length_max_ms = config::app_config().note_length_max_ms;
-        Self {
+        let mut state = Self {
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
@@ -482,10 +496,40 @@ impl Default for BezierUiState {
             point_drag_snapshot: None,
             brand_logo: None,
             show_help_popup: false,
-            available_patches: patches::list_patch_names().unwrap_or_default(),
+            available_patches: Vec::new(),
+            selected_patch_name: None,
+            selected_patch_snapshot: None,
+            default_patch_name: None,
             new_patch_name: String::new(),
             patch_status: None,
+        };
+
+        if let Err(error) = patches::ensure_default_patch_setup() {
+            state.patch_status = Some(error);
         }
+        state.refresh_patch_list();
+
+        match patches::get_default_patch_name() {
+            Ok(Some(default_name)) => {
+                state.default_patch_name = Some(default_name.clone());
+                match patches::load_patch(&default_name) {
+                    Ok(patch) => {
+                        state.apply_patch_data(patch);
+                        state.mark_patch_clean(default_name.clone());
+                        state.patch_status = Some(format!("Loaded default patch: {default_name}"));
+                    }
+                    Err(error) => {
+                        state.patch_status = Some(format!("Failed to load default patch: {error}"));
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                state.patch_status = Some(format!("Failed to read default patch: {error}"));
+            }
+        }
+
+        state
     }
 }
 
@@ -576,6 +620,46 @@ impl BezierUiState {
                 self.patch_status = Some(error);
             }
         }
+    }
+
+    fn patch_snapshot(&self) -> PatchSnapshot {
+        PatchSnapshot {
+            amplitude_curve: self.amplitude_curve.clone(),
+            pitch_curve: self.pitch_curve.clone(),
+            active_curve: self.active_curve,
+            tuning_standard: self.tuning_standard,
+            note_length_ms: self.note_length_ms,
+            note_length_max_ms: self.note_length_max_ms,
+            waveform_zoom_percent: self.waveform_zoom_percent,
+        }
+    }
+
+    fn is_selected_patch_dirty(&self) -> bool {
+        self.selected_patch_snapshot
+            .as_ref()
+            .is_some_and(|saved| self.patch_snapshot() != *saved)
+    }
+
+    fn selected_patch_indicator_text(&self) -> String {
+        match &self.selected_patch_name {
+            Some(name) => {
+                let mut label = name.clone();
+                if self.is_selected_patch_dirty() {
+                    label.push('*');
+                }
+                if self.default_patch_name.as_deref() == Some(name.as_str()) {
+                    label.push_str(" (default)");
+                }
+                label
+            }
+            None => "No patch selected".to_owned(),
+        }
+    }
+
+    fn mark_patch_clean(&mut self, patch_name: String) {
+        self.selected_patch_name = Some(patch_name.clone());
+        self.selected_patch_snapshot = Some(self.patch_snapshot());
+        self.new_patch_name = patch_name;
     }
 
     fn to_patch_data(&self, name: String) -> patches::PatchData {
@@ -891,67 +975,105 @@ pub fn create_testing_editor(
                             state.show_help_popup = true;
                         }
 
-                        ui.menu_button("Patches", |ui| {
-                            apply_ui_text_scale(ui, ui_scale);
-                            ui.set_min_width(280.0 * ui_scale);
-                            ui.label(format!("Dir: {}", config::patches_dir()));
-                            ui.separator();
-                            ui.label("Load Patch");
+                        ui.vertical(|ui| {
+                            ui.menu_button("Patches", |ui| {
+                                apply_ui_text_scale(ui, ui_scale);
+                                ui.set_min_width(300.0 * ui_scale);
+                                ui.label(format!("Dir: {}", config::patches_dir()));
+                                ui.label(format!("Current: {}", state.selected_patch_indicator_text()));
+                                ui.separator();
+                                ui.label("Load Patch");
 
-                            let patch_names = state.available_patches.clone();
-                            if patch_names.is_empty() {
-                                ui.label("No patches found.");
-                            } else {
-                                for patch_name in patch_names {
-                                    if ui.button(&patch_name).clicked() {
-                                        let before = state.snapshot();
-                                        match patches::load_patch(&patch_name) {
-                                            Ok(patch) => {
-                                                state.apply_patch_data(patch);
-                                                state.commit_history_if_changed(&before);
-                                                state.patch_status =
-                                                    Some(format!("Loaded patch: {patch_name}"));
-                                            }
-                                            Err(error) => {
-                                                state.patch_status =
-                                                    Some(format!("Failed to load patch: {error}"));
+                                let patch_names = state.available_patches.clone();
+                                if patch_names.is_empty() {
+                                    ui.label("No patches found.");
+                                } else {
+                                    for patch_name in patch_names {
+                                        if ui.button(&patch_name).clicked() {
+                                            let before = state.snapshot();
+                                            match patches::load_patch(&patch_name) {
+                                                Ok(patch) => {
+                                                    state.apply_patch_data(patch);
+                                                    state.mark_patch_clean(patch_name.clone());
+                                                    state.commit_history_if_changed(&before);
+                                                    state.patch_status =
+                                                        Some(format!("Loaded patch: {patch_name}"));
+                                                    ui.close_menu();
+                                                }
+                                                Err(error) => {
+                                                    state.patch_status =
+                                                        Some(format!("Failed to load patch: {error}"));
+                                                    ui.close_menu();
+                                                }
                                             }
                                         }
-                                        ui.close_menu();
                                     }
                                 }
-                            }
 
-                            ui.separator();
-                            ui.label("Save Patch");
-                            ui.text_edit_singleline(&mut state.new_patch_name);
-                            let can_save_patch = !state.new_patch_name.trim().is_empty();
-                            if ui
-                                .add_enabled(can_save_patch, egui::Button::new("Save"))
-                                .clicked()
-                            {
-                                let patch_name = state.new_patch_name.trim().to_owned();
-                                let patch_data = state.to_patch_data(patch_name.clone());
-                                match patches::save_patch(&patch_data) {
-                                    Ok(()) => {
-                                        state.patch_status = Some(format!("Saved patch: {patch_name}"));
-                                        state.refresh_patch_list();
-                                    }
-                                    Err(error) => {
-                                        state.patch_status =
-                                            Some(format!("Failed to save patch: {error}"));
-                                    }
-                                }
-                            }
-
-                            if ui.button("Refresh List").clicked() {
-                                state.refresh_patch_list();
-                            }
-
-                            if let Some(status) = &state.patch_status {
                                 ui.separator();
-                                ui.label(status);
-                            }
+                                ui.label("Save Patch");
+                                ui.text_edit_singleline(&mut state.new_patch_name);
+                                let can_save_patch = !state.new_patch_name.trim().is_empty();
+                                if ui
+                                    .add_enabled(can_save_patch, egui::Button::new("Save"))
+                                    .clicked()
+                                {
+                                    let patch_name = state.new_patch_name.trim().to_owned();
+                                    let patch_data = state.to_patch_data(patch_name.clone());
+                                    match patches::save_patch(&patch_data) {
+                                        Ok(()) => {
+                                            state.mark_patch_clean(patch_name.clone());
+                                            state.patch_status = Some(format!("Saved patch: {patch_name}"));
+                                            state.refresh_patch_list();
+                                        }
+                                        Err(error) => {
+                                            state.patch_status =
+                                                Some(format!("Failed to save patch: {error}"));
+                                        }
+                                    }
+                                }
+
+                                if ui.button("Set current as default").clicked() {
+                                    let selected_name = state.selected_patch_name.clone();
+                                    match selected_name {
+                                        Some(name) if !state.is_selected_patch_dirty() => {
+                                            match patches::set_default_patch_name(&name) {
+                                                Ok(()) => {
+                                                    state.default_patch_name = Some(name.clone());
+                                                    state.patch_status =
+                                                        Some(format!("Default patch set: {name}"));
+                                                }
+                                                Err(error) => {
+                                                    state.patch_status = Some(format!(
+                                                        "Failed to set default patch: {error}"
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            state.patch_status = Some(
+                                                "Save this patch first, then set it as default."
+                                                    .to_owned(),
+                                            );
+                                        }
+                                    }
+                                }
+
+                                if ui.button("Refresh List").clicked() {
+                                    state.refresh_patch_list();
+                                }
+
+                                if let Some(status) = &state.patch_status {
+                                    ui.separator();
+                                    ui.label(status);
+                                }
+                            });
+
+                            ui.label(
+                                RichText::new(state.selected_patch_indicator_text())
+                                    .small()
+                                    .color(APP_THEME.axis_tick()),
+                            );
                         });
                     });
                 });

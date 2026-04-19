@@ -33,7 +33,7 @@ struct LibreKickParams {
     #[id = "level"]
     level: FloatParam,
 
-    #[persist = "editor-state"]
+    #[persist = "editor-state-v3"]
     editor_state: Arc<EguiState>,
 }
 
