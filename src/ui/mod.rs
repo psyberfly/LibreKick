@@ -18,10 +18,6 @@ const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
 const WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL: f32 = 0.3;
 const FINAL_WAVEFORM_TARGET_CYCLES_PER_POINT: f32 = 0.12;
 const FINAL_WAVEFORM_MAX_DOWNSAMPLE_FACTOR: usize = 8;
-const NOTE_LENGTH_MAX_MS: f32 = 1000.0;
-const WAVEFORM_ZOOM_MIN_PERCENT: f32 = 1.0;
-const WAVEFORM_ZOOM_MAX_PERCENT: f32 = 200.0;
-const WAVEFORM_ZOOM_STEP_PERCENT: f32 = 5.0;
 const HISTORY_STACK_CAP: usize = 200;
 const RESIZE_CORNER_VISUAL_SIZE: f32 = 20.0;
 const RESIZE_CORNER_HIT_RADIUS: f32 = 30.0;
@@ -308,11 +304,12 @@ fn waveform_preview_points(
     note_length_ms: f32,
     waveform_zoom_percent: f32,
 ) -> Vec<Pos2> {
+    let app_cfg = config::app_config();
     let pixel_width = graph_rect.width().max(1.0) as usize;
-    let note_length_t = (note_length_ms / NOTE_LENGTH_MAX_MS).clamp(0.0, 1.0);
+    let note_length_t = (note_length_ms / app_cfg.note_length_max_ms.max(f32::EPSILON)).clamp(0.0, 1.0);
     let zoom = (waveform_zoom_percent / 100.0).clamp(
-        WAVEFORM_ZOOM_MIN_PERCENT / 100.0,
-        WAVEFORM_ZOOM_MAX_PERCENT / 100.0,
+        app_cfg.waveform_zoom_min_percent / 100.0,
+        app_cfg.waveform_zoom_max_percent / 100.0,
     );
     let source_length_t = (note_length_t / zoom).min(note_length_t);
     let display_length_t = (note_length_t * zoom).min(note_length_t);
@@ -325,7 +322,7 @@ fn waveform_preview_points(
     let max_display_hz = ((active_pixel_width as f32 / source_seconds)
         * WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL)
         .max(5.0);
-    let tuning_scale = tuning_a4_hz / 440.0;
+    let tuning_scale = tuning_a4_hz / app_cfg.default_tuning_a4_hz.max(f32::EPSILON);
     let mut phase = 0.0_f32;
 
     let source_seconds_per_col = source_seconds / active_pixel_width as f32;
@@ -458,8 +455,8 @@ impl Default for BezierUiState {
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
-            tuning_standard: TuningStandard::A440,
-            note_length_ms: NOTE_LENGTH_MAX_MS,
+            tuning_standard: TuningStandard::A432,
+            note_length_ms: config::app_config().note_length_max_ms,
             waveform_zoom_percent: 100.0,
             selected_point: Some(1),
             undo_stack: Vec::new(),
@@ -631,7 +628,8 @@ fn point_value_label(kind: CurveKind, point: Pos2, tuning_a4_hz: f32) -> String 
     match kind {
         CurveKind::Amplitude => format!("{:.1} dB", amplitude_db(point.y)),
         CurveKind::Pitch => {
-            let hz = pitch_hz_from_normalized(point.y) * (tuning_a4_hz / 440.0);
+            let hz = pitch_hz_from_normalized(point.y)
+                * (tuning_a4_hz / config::app_config().default_tuning_a4_hz.max(f32::EPSILON));
             let note = note_name_from_hz(hz, tuning_a4_hz);
             format!("{} {:.1}Hz", note, hz)
         }
@@ -700,6 +698,7 @@ pub fn create_testing_editor(
                 }
 
                 let ui_scale = ui_scale_from_size(ui.available_size_before_wrap());
+                let app_cfg = config::app_config();
                 let mut point_dragging_this_frame = false;
                 {
                     let style = ui.style_mut();
@@ -777,14 +776,18 @@ pub fn create_testing_editor(
                     ui.separator();
                     if ui.button("-").clicked() {
                         state.waveform_zoom_percent =
-                            (state.waveform_zoom_percent - WAVEFORM_ZOOM_STEP_PERCENT)
-                                .clamp(WAVEFORM_ZOOM_MIN_PERCENT, WAVEFORM_ZOOM_MAX_PERCENT);
+                            (state.waveform_zoom_percent - app_cfg.waveform_zoom_step_percent).clamp(
+                                app_cfg.waveform_zoom_min_percent,
+                                app_cfg.waveform_zoom_max_percent,
+                            );
                     }
                     ui.label(format!("Zoom {:.0}%", state.waveform_zoom_percent));
                     if ui.button("+").clicked() {
                         state.waveform_zoom_percent =
-                            (state.waveform_zoom_percent + WAVEFORM_ZOOM_STEP_PERCENT)
-                                .clamp(WAVEFORM_ZOOM_MIN_PERCENT, WAVEFORM_ZOOM_MAX_PERCENT);
+                            (state.waveform_zoom_percent + app_cfg.waveform_zoom_step_percent).clamp(
+                                app_cfg.waveform_zoom_min_percent,
+                                app_cfg.waveform_zoom_max_percent,
+                            );
                     }
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -830,8 +833,8 @@ pub fn create_testing_editor(
                     if modifier_down && scroll_y.abs() > f32::EPSILON {
                         state.waveform_zoom_percent =
                             (state.waveform_zoom_percent + scroll_y * 0.08).clamp(
-                                WAVEFORM_ZOOM_MIN_PERCENT,
-                                WAVEFORM_ZOOM_MAX_PERCENT,
+                                app_cfg.waveform_zoom_min_percent,
+                                app_cfg.waveform_zoom_max_percent,
                             );
                     }
                 }
@@ -854,8 +857,9 @@ pub fn create_testing_editor(
                 painter.rect_filled(outer_rect, 4.0, APP_THEME.panel_bg());
                 painter.rect_filled(graph_rect, 4.0, APP_THEME.graph_bg());
 
-                let mut note_length_ms = state.note_length_ms.clamp(0.0, NOTE_LENGTH_MAX_MS);
-                let mut note_length_norm = (note_length_ms / NOTE_LENGTH_MAX_MS).clamp(0.0, 1.0);
+                let note_length_max_ms = app_cfg.note_length_max_ms.max(f32::EPSILON);
+                let mut note_length_ms = state.note_length_ms.clamp(0.0, note_length_max_ms);
+                let mut note_length_norm = (note_length_ms / note_length_max_ms).clamp(0.0, 1.0);
 
                 let mut note_length_x = egui::lerp(graph_rect.left()..=graph_rect.right(), note_length_norm);
                 let length_handle_center = Pos2::new(
@@ -879,7 +883,7 @@ pub fn create_testing_editor(
                         note_length_x = pointer_pos.x.clamp(graph_rect.left(), graph_rect.right());
                         note_length_norm =
                             ((note_length_x - graph_rect.left()) / graph_rect.width()).clamp(0.0, 1.0);
-                        note_length_ms = note_length_norm * NOTE_LENGTH_MAX_MS;
+                        note_length_ms = note_length_norm * note_length_max_ms;
                     }
                 }
 
@@ -1073,7 +1077,7 @@ pub fn create_testing_editor(
                 let active_points = state.active_curve().points.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
-                state.note_length_ms = note_length_ms.clamp(0.0, NOTE_LENGTH_MAX_MS);
+                state.note_length_ms = note_length_ms.clamp(0.0, note_length_max_ms);
                 shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
 
                 let amplitude_lut = curve_lut(&state.amplitude_curve.points);

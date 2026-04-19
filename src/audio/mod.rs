@@ -2,9 +2,12 @@ mod voice;
 
 use nih_plug::prelude::*;
 
-use crate::shared;
+use crate::{config, shared};
 
 use self::voice::{KickVoice, VoiceParams};
+
+const USE_TUNING_SAFETY_MARGIN: bool = true;
+const TUNING_SAFETY_MARGIN_HZ: f32 = 48.0;
 
 #[derive(Clone, Copy)]
 pub struct KickDspParams {
@@ -69,7 +72,15 @@ impl KickEngine {
             self.voice.trigger();
         }
 
-        let tuning_scale = (shared_snapshot.tuning_a4_hz / 440.0).clamp(0.9, 1.1);
+        let app_cfg = config::app_config();
+        let default_tuning = app_cfg.default_tuning_a4_hz.max(f32::EPSILON);
+        let mut safe_tuning = shared_snapshot.tuning_a4_hz.max(f32::EPSILON);
+        if USE_TUNING_SAFETY_MARGIN {
+            let min_tuning = (default_tuning - TUNING_SAFETY_MARGIN_HZ).max(f32::EPSILON);
+            let max_tuning = default_tuning + TUNING_SAFETY_MARGIN_HZ;
+            safe_tuning = safe_tuning.clamp(min_tuning, max_tuning);
+        }
+        let tuning_scale = safe_tuning / default_tuning;
 
         let voice_params = VoiceParams {
             decay_ms: params.decay_ms,

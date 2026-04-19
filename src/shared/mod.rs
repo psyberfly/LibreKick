@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use crate::config;
+
 pub const CURVE_LUT_SIZE: usize = 256;
 
 #[derive(Clone, Copy)]
@@ -27,11 +29,12 @@ pub(crate) struct SharedState {
 
 impl Default for SharedState {
     fn default() -> Self {
+        let app_cfg = config::app_config();
         Self {
             amp_lut: [0.0; CURVE_LUT_SIZE],
             pitch_lut: [0.0; CURVE_LUT_SIZE],
-            tuning_a4_hz: 440.0,
-            note_length_ms: 1000.0,
+            tuning_a4_hz: app_cfg.default_tuning_a4_hz,
+            note_length_ms: app_cfg.note_length_max_ms,
             trigger_counter: 0,
         }
     }
@@ -68,17 +71,19 @@ pub fn request_trigger(shared: &SharedStateHandle) {
 
 pub fn set_tuning_a4_hz(shared: &SharedStateHandle, tuning_a4_hz: f32) {
     if let Ok(mut state) = shared.lock() {
-        state.tuning_a4_hz = tuning_a4_hz.clamp(400.0, 480.0);
+        state.tuning_a4_hz = tuning_a4_hz.max(f32::EPSILON);
     }
 }
 
 pub fn set_note_length_ms(shared: &SharedStateHandle, note_length_ms: f32) {
+    let app_cfg = config::app_config();
     if let Ok(mut state) = shared.lock() {
-        state.note_length_ms = note_length_ms.clamp(0.0, 1000.0);
+        state.note_length_ms = note_length_ms.clamp(0.0, app_cfg.note_length_max_ms);
     }
 }
 
 pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
+    let app_cfg = config::app_config();
     if let Ok(state) = shared.lock() {
         return SharedSnapshot {
             amp_lut: state.amp_lut,
@@ -100,8 +105,8 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
     SharedSnapshot {
         amp_lut,
         pitch_lut,
-        tuning_a4_hz: 440.0,
-        note_length_ms: 1000.0,
+        tuning_a4_hz: app_cfg.default_tuning_a4_hz,
+        note_length_ms: app_cfg.note_length_max_ms,
         trigger_counter: 0,
     }
 }
