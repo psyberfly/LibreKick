@@ -1,0 +1,9 @@
+name=seed_psytrance_kick
+tuning_a4_hz=432
+keytrack_enabled=false
+note_end_ms=100
+max_note_length_ms=500
+waveform_zoom_percent=211.99982
+active_curve=pitch
+amplitude_points=0.000000,0.870129|0.042603,0.442252|0.149609,0.895512|0.603840,0.790355|0.725405,0.263365|1.000000,0.000000
+pitch_points=0.000000,0.914851|0.044202,0.309296|0.473782,0.109861|0.851860,0.207766|1.000000,0.309511%  

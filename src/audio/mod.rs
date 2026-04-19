@@ -11,9 +11,6 @@ const TUNING_SAFETY_MARGIN_HZ: f32 = 48.0;
 
 #[derive(Clone, Copy)]
 pub struct KickDspParams {
-    pub decay_ms: f32,
-    pub base_freq_hz: f32,
-    pub pitch_drop_hz: f32,
     pub level: f32,
     pub trigger_active: bool,
     pub midi_trigger: bool,
@@ -83,10 +80,8 @@ impl KickEngine {
         let tuning_scale = safe_tuning / default_tuning;
 
         let voice_params = VoiceParams {
-            decay_ms: params.decay_ms,
-            base_freq_hz: params.base_freq_hz,
-            pitch_drop_hz: params.pitch_drop_hz,
             level: params.level,
+            keytrack_enabled: shared_snapshot.keytrack_enabled,
             tuning_scale,
             note_length_ms: shared_snapshot.note_length_ms,
         };

@@ -4,10 +4,8 @@ use crate::shared::CURVE_LUT_SIZE;
 
 #[derive(Clone, Copy)]
 pub struct VoiceParams {
-    pub decay_ms: f32,
-    pub base_freq_hz: f32,
-    pub pitch_drop_hz: f32,
     pub level: f32,
+    pub keytrack_enabled: bool,
     pub tuning_scale: f32,
     pub note_length_ms: f32,
 }
@@ -32,6 +30,12 @@ impl Default for KickVoice {
             hit_note_hz: None,
         }
     }
+}
+
+fn pitch_curve_to_hz(value: f32) -> f32 {
+    let min_hz = 20.0_f32;
+    let max_hz = 20_000.0_f32;
+    min_hz * (max_hz / min_hz).powf(value.clamp(0.0, 1.0))
 }
 
 impl KickVoice {
@@ -69,26 +73,28 @@ impl KickVoice {
             return 0.0;
         }
 
-        let envelope_duration_seconds = (params.decay_ms * 0.001).max(0.02);
         let note_length_seconds = (params.note_length_ms * 0.001).clamp(0.0, 1.0);
         if note_length_seconds <= 0.0 {
             self.active = false;
             return 0.0;
         }
 
-        let duration_seconds = envelope_duration_seconds.min(note_length_seconds).max(f32::EPSILON);
+        let duration_seconds = note_length_seconds.max(f32::EPSILON);
         let normalized_time = (self.time_seconds / duration_seconds).clamp(0.0, 1.0);
         let lut_index = ((normalized_time * (CURVE_LUT_SIZE as f32 - 1.0)).round() as usize)
             .min(CURVE_LUT_SIZE - 1);
 
         let amp_curve = amp_lut[lut_index].clamp(0.0, 1.0);
         let pitch_curve = pitch_lut[lut_index].clamp(0.0, 1.0);
-        let hit_base_freq_hz = self.hit_note_hz.unwrap_or(params.base_freq_hz);
+        let curve_hz = pitch_curve_to_hz(pitch_curve);
+        let base_hz = if params.keytrack_enabled {
+            self.hit_note_hz.unwrap_or(curve_hz)
+        } else {
+            curve_hz
+        };
 
         let amplitude = params.level.clamp(0.0, 1.0) * self.hit_gain * amp_curve;
-        let frequency = ((hit_base_freq_hz + params.pitch_drop_hz * pitch_curve)
-            * params.tuning_scale.max(0.5))
-            .max(20.0);
+        let frequency = (base_hz * params.tuning_scale.max(0.5)).max(20.0);
 
         self.phase += TAU * frequency / self.sample_rate;
         if self.phase >= TAU {

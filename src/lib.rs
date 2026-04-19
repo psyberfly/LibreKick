@@ -21,15 +21,6 @@ struct LibreKickParams {
     #[id = "trigger"]
     trigger: BoolParam,
 
-    #[id = "decay_ms"]
-    decay_ms: FloatParam,
-
-    #[id = "base_freq_hz"]
-    base_freq_hz: FloatParam,
-
-    #[id = "pitch_drop_hz"]
-    pitch_drop_hz: FloatParam,
-
     #[id = "level"]
     level: FloatParam,
 
@@ -42,30 +33,6 @@ impl Default for LibreKickParams {
         let ui_cfg = config::ui_config();
         Self {
             trigger: BoolParam::new("Trigger", false),
-            decay_ms: FloatParam::new(
-                "Decay (ms)",
-                220.0,
-                FloatRange::Linear {
-                    min: 20.0,
-                    max: 1000.0,
-                },
-            ),
-            base_freq_hz: FloatParam::new(
-                "Base Freq",
-                52.0,
-                FloatRange::Linear {
-                    min: 30.0,
-                    max: 120.0,
-                },
-            ),
-            pitch_drop_hz: FloatParam::new(
-                "Pitch Drop",
-                170.0,
-                FloatRange::Linear {
-                    min: 0.0,
-                    max: 400.0,
-                },
-            ),
             level: FloatParam::new(
                 "Level",
                 0.8,
@@ -142,9 +109,6 @@ impl Plugin for LibreKick {
         let midi_input = midi::collect_midi_input(context);
 
         let dsp_params = audio::KickDspParams {
-            decay_ms: self.params.decay_ms.value(),
-            base_freq_hz: self.params.base_freq_hz.value(),
-            pitch_drop_hz: self.params.pitch_drop_hz.value(),
             level: self.params.level.value(),
             trigger_active: self.params.trigger.value(),
             midi_trigger: midi_input.trigger,

@@ -166,7 +166,7 @@ fn apply_ui_text_scale(ui: &mut egui::Ui, scale: f32) {
 }
 
 fn brand_logo_texture(ctx: &egui::Context) -> Option<TextureHandle> {
-    let image_bytes = include_bytes!("../media/logo.png");
+    let image_bytes = include_bytes!("../assets/logo.png");
     let image = image::load_from_memory_with_format(image_bytes, image::ImageFormat::Png)
         .ok()?
         .to_rgba8();
@@ -408,6 +408,7 @@ struct EditorSnapshot {
     pitch_curve: Curve,
     active_curve: CurveKind,
     tuning_standard: TuningStandard,
+    keytrack_enabled: bool,
     note_length_ms: f32,
     note_length_max_ms: f32,
     waveform_zoom_percent: f32,
@@ -420,6 +421,7 @@ struct PatchSnapshot {
     pitch_curve: Curve,
     active_curve: CurveKind,
     tuning_standard: TuningStandard,
+    keytrack_enabled: bool,
     note_length_ms: f32,
     note_length_max_ms: f32,
     waveform_zoom_percent: f32,
@@ -454,6 +456,7 @@ struct BezierUiState {
     pitch_curve: Curve,
     active_curve: CurveKind,
     tuning_standard: TuningStandard,
+    keytrack_enabled: bool,
     note_length_ms: f32,
     note_length_max_ms: f32,
     base_note_length_max_ms: f32,
@@ -483,6 +486,7 @@ impl Default for BezierUiState {
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A432,
+            keytrack_enabled: false,
             note_length_ms: note_length_max_ms,
             note_length_max_ms,
             base_note_length_max_ms: note_length_max_ms,
@@ -555,6 +559,7 @@ impl BezierUiState {
             pitch_curve: self.pitch_curve.clone(),
             active_curve: self.active_curve,
             tuning_standard: self.tuning_standard,
+            keytrack_enabled: self.keytrack_enabled,
             note_length_ms: self.note_length_ms,
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
@@ -567,6 +572,7 @@ impl BezierUiState {
         self.pitch_curve = snapshot.pitch_curve;
         self.active_curve = snapshot.active_curve;
         self.tuning_standard = snapshot.tuning_standard;
+        self.keytrack_enabled = snapshot.keytrack_enabled;
         self.note_length_ms = snapshot.note_length_ms;
         self.note_length_max_ms = snapshot.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
@@ -628,6 +634,7 @@ impl BezierUiState {
             pitch_curve: self.pitch_curve.clone(),
             active_curve: self.active_curve,
             tuning_standard: self.tuning_standard,
+            keytrack_enabled: self.keytrack_enabled,
             note_length_ms: self.note_length_ms,
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
@@ -666,6 +673,7 @@ impl BezierUiState {
         patches::PatchData {
             name,
             tuning_a4_hz: self.tuning_standard.a4_hz(),
+            keytrack_enabled: self.keytrack_enabled,
             note_end_ms: self.note_length_ms,
             max_note_length_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
@@ -698,6 +706,7 @@ impl BezierUiState {
             CurveKind::Amplitude
         };
         self.tuning_standard = tuning_standard_from_a4_hz(patch.tuning_a4_hz);
+        self.keytrack_enabled = patch.keytrack_enabled;
 
         self.note_length_max_ms = patch
             .max_note_length_ms
@@ -1105,6 +1114,8 @@ pub fn create_testing_editor(
                     ui.label("Tuning:");
                     ui.selectable_value(&mut state.tuning_standard, TuningStandard::A440, "A=440");
                     ui.selectable_value(&mut state.tuning_standard, TuningStandard::A432, "A=432");
+                    ui.separator();
+                    ui.checkbox(&mut state.keytrack_enabled, "Keytrack");
                     ui.separator();
                     if ui.button("Trigger").clicked() {
                         shared::request_trigger(&shared_for_ui);
@@ -1554,6 +1565,7 @@ pub fn create_testing_editor(
                 let active_points = state.active_curve().points.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
+                shared::set_keytrack_enabled(&shared_for_ui, state.keytrack_enabled);
                 state.note_length_ms = note_end_ms.clamp(0.0, max_note_length_ms);
                 shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
 
