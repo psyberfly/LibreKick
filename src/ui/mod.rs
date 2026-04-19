@@ -22,6 +22,8 @@ const RESIZE_CORNER_HIT_RADIUS: f32 = 30.0;
 const RESIZE_SIDE_HIT_RADIUS: f32 = 16.0;
 const AXIS_SUBDIVISIONS: usize = 10;
 const AMP_DB_FLOOR: f32 = -30.0;
+const NOTE_LENGTH_MAX_SLIDER_MIN_MS: f32 = 100.0;
+const NOTE_LENGTH_MAX_SLIDER_MAX_MS: f32 = 5000.0;
 struct Theme;
 
 impl Theme {
@@ -286,11 +288,11 @@ fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
     }
 }
 
-fn axis_x_label(normalized: f32) -> String {
+fn axis_x_label(normalized: f32, note_length_max_ms: f32) -> String {
     if normalized <= 0.0 {
         "0s".to_owned()
     } else {
-        format!("{:.0}ms", normalized * 1000.0)
+        format!("{:.0}ms", normalized * note_length_max_ms)
     }
 }
 
@@ -300,15 +302,18 @@ fn waveform_preview_points(
     pitch_points: &[Pos2],
     tuning_a4_hz: f32,
     note_length_ms: f32,
+    note_length_max_ms: f32,
     waveform_zoom_percent: f32,
+    adaptive_zoom_factor: f32,
 ) -> Vec<Pos2> {
     let app_cfg = config::app_config();
     let pixel_width = graph_rect.width().max(1.0) as usize;
-    let note_length_t = (note_length_ms / app_cfg.note_length_max_ms.max(f32::EPSILON)).clamp(0.0, 1.0);
-    let zoom = (waveform_zoom_percent / 100.0).clamp(
+    let note_length_t = (note_length_ms / note_length_max_ms.max(f32::EPSILON)).clamp(0.0, 1.0);
+    let user_zoom = (waveform_zoom_percent / 100.0).clamp(
         app_cfg.waveform_zoom_min_percent / 100.0,
         app_cfg.waveform_zoom_max_percent / 100.0,
     );
+    let zoom = (user_zoom * adaptive_zoom_factor.max(f32::EPSILON)).max(f32::EPSILON);
     let source_length_t = (note_length_t / zoom).min(note_length_t);
     let display_length_t = (note_length_t * zoom).min(note_length_t);
     let active_pixel_width = ((pixel_width as f32 * display_length_t).round() as usize).min(pixel_width);
@@ -330,7 +335,7 @@ fn waveform_preview_points(
             let x_t = x.min(display_length_t);
             let t = (x_t / zoom).clamp(0.0, source_length_t);
 
-            let amp = envelope_value_linear(amplitude_points, t);
+            let amp = envelope_value_amplitude_db(amplitude_points, t);
             let pitch = envelope_value_linear(pitch_points, t);
             let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
                 .clamp(20.0, 22050.0)
@@ -376,6 +381,7 @@ struct EditorSnapshot {
     active_curve: CurveKind,
     tuning_standard: TuningStandard,
     note_length_ms: f32,
+    note_length_max_ms: f32,
     waveform_zoom_percent: f32,
     selected_point: Option<usize>,
 }
@@ -410,6 +416,8 @@ struct BezierUiState {
     active_curve: CurveKind,
     tuning_standard: TuningStandard,
     note_length_ms: f32,
+    note_length_max_ms: f32,
+    base_note_length_max_ms: f32,
     waveform_zoom_percent: f32,
     selected_point: Option<usize>,
     undo_stack: Vec<EditorSnapshot>,
@@ -421,12 +429,15 @@ struct BezierUiState {
 
 impl Default for BezierUiState {
     fn default() -> Self {
+        let note_length_max_ms = config::app_config().note_length_max_ms;
         Self {
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A432,
-            note_length_ms: config::app_config().note_length_max_ms,
+            note_length_ms: note_length_max_ms,
+            note_length_max_ms,
+            base_note_length_max_ms: note_length_max_ms,
             waveform_zoom_percent: 100.0,
             selected_point: Some(1),
             undo_stack: Vec::new(),
@@ -461,6 +472,7 @@ impl BezierUiState {
             active_curve: self.active_curve,
             tuning_standard: self.tuning_standard,
             note_length_ms: self.note_length_ms,
+            note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
             selected_point: self.selected_point,
         }
@@ -472,6 +484,7 @@ impl BezierUiState {
         self.active_curve = snapshot.active_curve;
         self.tuning_standard = snapshot.tuning_standard;
         self.note_length_ms = snapshot.note_length_ms;
+        self.note_length_max_ms = snapshot.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
         self.selected_point = snapshot.selected_point;
     }
@@ -560,6 +573,40 @@ fn envelope_value_linear(points: &[Pos2], t: f32) -> f32 {
     points.last().map_or(0.0, |p| p.y).clamp(0.0, 1.0)
 }
 
+fn amplitude_floor_linear() -> f32 {
+    10.0_f32.powf(AMP_DB_FLOOR / 20.0)
+}
+
+fn amplitude_db_to_linear(db: f32) -> f32 {
+    10.0_f32.powf(db.clamp(AMP_DB_FLOOR, 0.0) / 20.0)
+}
+
+fn envelope_value_amplitude_db(points: &[Pos2], t: f32) -> f32 {
+    if points.is_empty() {
+        return 0.0;
+    }
+
+    let t = t.clamp(0.0, 1.0);
+    let point_db = |y: f32| amplitude_db(y);
+
+    if t <= points[0].x {
+        return points[0].y.clamp(0.0, 1.0);
+    }
+
+    for pair in points.windows(2) {
+        let left = pair[0];
+        let right = pair[1];
+        if t <= right.x {
+            let span = (right.x - left.x).max(f32::EPSILON);
+            let local_t = ((t - left.x) / span).clamp(0.0, 1.0);
+            let interpolated_db = egui::lerp(point_db(left.y)..=point_db(right.y), local_t);
+            return amplitude_db_to_linear(interpolated_db).clamp(0.0, 1.0);
+        }
+    }
+
+    points.last().map_or(0.0, |p| p.y).clamp(0.0, 1.0)
+}
+
 fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
     let mut lut = [0.0; shared::CURVE_LUT_SIZE];
 
@@ -572,8 +619,7 @@ fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
 }
 
 fn amplitude_db(value: f32) -> f32 {
-    let min_amp = 10.0_f32.powf(AMP_DB_FLOOR / 20.0);
-    (20.0 * value.max(min_amp).log10()).clamp(AMP_DB_FLOOR, 0.0)
+    (20.0 * value.max(amplitude_floor_linear()).log10()).clamp(AMP_DB_FLOOR, 0.0)
 }
 
 fn pitch_hz_from_normalized(value: f32) -> f32 {
@@ -744,6 +790,23 @@ pub fn create_testing_editor(
                         shared::request_trigger(&shared_for_ui);
                     }
                     ui.separator();
+                    ui.label("Max Length");
+                    let max_length_changed = ui
+                        .add(
+                            egui::Slider::new(
+                                &mut state.note_length_max_ms,
+                                NOTE_LENGTH_MAX_SLIDER_MIN_MS..=NOTE_LENGTH_MAX_SLIDER_MAX_MS,
+                            )
+                            .text("ms")
+                            .step_by(1.0),
+                        )
+                        .changed();
+                    if max_length_changed {
+                        state.note_length_max_ms = state.note_length_max_ms
+                            .clamp(NOTE_LENGTH_MAX_SLIDER_MIN_MS, NOTE_LENGTH_MAX_SLIDER_MAX_MS);
+                        state.note_length_ms = state.note_length_ms.clamp(0.0, state.note_length_max_ms);
+                    }
+                    ui.separator();
                     if ui.button("-").clicked() {
                         state.waveform_zoom_percent =
                             (state.waveform_zoom_percent - app_cfg.waveform_zoom_step_percent).clamp(
@@ -827,7 +890,7 @@ pub fn create_testing_editor(
                 painter.rect_filled(outer_rect, 4.0, APP_THEME.panel_bg());
                 painter.rect_filled(graph_rect, 4.0, APP_THEME.graph_bg());
 
-                let note_length_max_ms = app_cfg.note_length_max_ms.max(f32::EPSILON);
+                let note_length_max_ms = state.note_length_max_ms.max(f32::EPSILON);
                 let mut note_length_ms = state.note_length_ms.clamp(0.0, note_length_max_ms);
                 let mut note_length_norm = (note_length_ms / note_length_max_ms).clamp(0.0, 1.0);
 
@@ -941,7 +1004,7 @@ pub fn create_testing_editor(
                     painter.text(
                         Pos2::new(x, graph_rect.bottom() + bottom_axis_padding * 0.08),
                         Align2::CENTER_TOP,
-                        axis_x_label(f),
+                        axis_x_label(f, note_length_max_ms),
                         themed_font(10.0 * ui_scale),
                         APP_THEME.axis_tick(),
                     );
@@ -1049,6 +1112,8 @@ pub fn create_testing_editor(
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
                 state.note_length_ms = note_length_ms.clamp(0.0, note_length_max_ms);
                 shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
+                let adaptive_zoom_factor =
+                    state.base_note_length_max_ms.max(f32::EPSILON) / note_length_max_ms;
 
                 let amplitude_lut = curve_lut(&state.amplitude_curve.points);
                 let pitch_lut = curve_lut(&state.pitch_curve.points);
@@ -1061,7 +1126,9 @@ pub fn create_testing_editor(
                     &state.pitch_curve.points,
                     tuning_a4_hz,
                     state.note_length_ms,
+                    note_length_max_ms,
                     state.waveform_zoom_percent,
+                    adaptive_zoom_factor,
                 );
 
                 if let (Some(first), Some(last)) = (waveform_points.first(), waveform_points.last()) {
