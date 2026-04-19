@@ -288,12 +288,21 @@ fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
     }
 }
 
-fn axis_x_label(normalized: f32, note_length_max_ms: f32) -> String {
-    if normalized <= 0.0 {
-        "0s".to_owned()
+fn axis_x_label(time_ms: f32) -> String {
+    if time_ms <= 0.0 {
+        "0ms".to_owned()
     } else {
-        format!("{:.0}ms", normalized * note_length_max_ms)
+        format!("{:.0}ms", time_ms)
     }
+}
+
+fn effective_waveform_zoom(waveform_zoom_percent: f32, adaptive_zoom_factor: f32) -> f32 {
+    let app_cfg = config::app_config();
+    let user_zoom = (waveform_zoom_percent / 100.0).clamp(
+        app_cfg.waveform_zoom_min_percent / 100.0,
+        app_cfg.waveform_zoom_max_percent / 100.0,
+    );
+    (user_zoom * adaptive_zoom_factor.max(f32::EPSILON)).max(f32::EPSILON)
 }
 
 fn waveform_preview_points(
@@ -301,21 +310,17 @@ fn waveform_preview_points(
     amplitude_points: &[Pos2],
     pitch_points: &[Pos2],
     tuning_a4_hz: f32,
-    note_length_ms: f32,
-    note_length_max_ms: f32,
+    note_end_ms: f32,
+    max_note_length_ms: f32,
     waveform_zoom_percent: f32,
     adaptive_zoom_factor: f32,
 ) -> Vec<Pos2> {
     let app_cfg = config::app_config();
     let pixel_width = graph_rect.width().max(1.0) as usize;
-    let note_length_t = (note_length_ms / note_length_max_ms.max(f32::EPSILON)).clamp(0.0, 1.0);
-    let user_zoom = (waveform_zoom_percent / 100.0).clamp(
-        app_cfg.waveform_zoom_min_percent / 100.0,
-        app_cfg.waveform_zoom_max_percent / 100.0,
-    );
-    let zoom = (user_zoom * adaptive_zoom_factor.max(f32::EPSILON)).max(f32::EPSILON);
-    let source_length_t = (note_length_t / zoom).min(note_length_t);
-    let display_length_t = (note_length_t * zoom).min(note_length_t);
+    let note_end_t = (note_end_ms / max_note_length_ms.max(f32::EPSILON)).clamp(0.0, 1.0);
+    let zoom = effective_waveform_zoom(waveform_zoom_percent, adaptive_zoom_factor);
+    let source_length_t = (note_end_t / zoom).min(note_end_t);
+    let display_length_t = (note_end_t * zoom).min(note_end_t);
     let active_pixel_width = ((pixel_width as f32 * display_length_t).round() as usize).min(pixel_width);
     if active_pixel_width == 0 {
         return Vec::new();
@@ -541,17 +546,17 @@ fn to_screen(point: Pos2, rect: Rect) -> Pos2 {
     )
 }
 
-fn to_screen_with_note_length(point: Pos2, rect: Rect, note_length_t: f32) -> Pos2 {
-    let note_length_t = note_length_t.clamp(0.0, 1.0);
+fn to_screen_with_note_end(point: Pos2, rect: Rect, note_end_display_t: f32) -> Pos2 {
+    let note_end_display_t = note_end_display_t.clamp(0.0, 1.0);
     Pos2::new(
-        rect.left() + point.x * note_length_t * rect.width(),
+        rect.left() + point.x * note_end_display_t * rect.width(),
         rect.bottom() - point.y * rect.height(),
     )
 }
 
-fn to_normalized_with_note_length(point: Pos2, rect: Rect, note_length_t: f32) -> Pos2 {
-    let note_length_t = note_length_t.clamp(0.0, 1.0).max(f32::EPSILON);
-    let x = ((point.x - rect.left()) / (rect.width() * note_length_t)).clamp(0.0, 1.0);
+fn to_normalized_with_note_end(point: Pos2, rect: Rect, note_end_display_t: f32) -> Pos2 {
+    let note_end_display_t = note_end_display_t.clamp(0.0, 1.0).max(f32::EPSILON);
+    let x = ((point.x - rect.left()) / (rect.width() * note_end_display_t)).clamp(0.0, 1.0);
     let y = ((rect.bottom() - point.y) / rect.height()).clamp(0.0, 1.0);
     Pos2::new(x, y)
 }
@@ -824,7 +829,7 @@ pub fn create_testing_editor(
                         shared::request_trigger(&shared_for_ui);
                     }
                     ui.separator();
-                    ui.label("Max Length");
+                    ui.label("Max Note Length");
                     let max_length_changed = ui
                         .add(
                             egui::Slider::new(
@@ -931,13 +936,18 @@ pub fn create_testing_editor(
                 painter.rect_filled(outer_rect, 4.0, APP_THEME.panel_bg());
                 painter.rect_filled(graph_rect, 4.0, APP_THEME.graph_bg());
 
-                let note_length_max_ms = state.note_length_max_ms.max(f32::EPSILON);
-                let mut note_length_ms = state.note_length_ms.clamp(0.0, note_length_max_ms);
-                let mut note_length_norm = (note_length_ms / note_length_max_ms).clamp(0.0, 1.0);
+                let max_note_length_ms = state.note_length_max_ms.max(f32::EPSILON);
+                let mut note_end_ms = state.note_length_ms.clamp(0.0, max_note_length_ms);
+                let mut note_end_t = (note_end_ms / max_note_length_ms).clamp(0.0, 1.0);
+                let adaptive_zoom_factor =
+                    state.base_note_length_max_ms.max(f32::EPSILON) / max_note_length_ms;
+                let waveform_zoom = effective_waveform_zoom(state.waveform_zoom_percent, adaptive_zoom_factor);
+                let mut note_end_display_t = (note_end_t * waveform_zoom).clamp(0.0, 1.0);
 
-                let mut note_length_x = egui::lerp(graph_rect.left()..=graph_rect.right(), note_length_norm);
+                let mut note_end_x =
+                    egui::lerp(graph_rect.left()..=graph_rect.right(), note_end_display_t);
                 let length_handle_center = Pos2::new(
-                    note_length_x,
+                    note_end_x,
                     graph_rect.bottom() + bottom_axis_padding * 0.34,
                 );
                 let length_handle_size = Vec2::new(18.0 * ui_scale, (bottom_axis_padding * 0.55).max(18.0));
@@ -954,16 +964,17 @@ pub fn create_testing_editor(
 
                 if length_response.dragged() {
                     if let Some(pointer_pos) = length_response.interact_pointer_pos() {
-                        note_length_x = pointer_pos.x.clamp(graph_rect.left(), graph_rect.right());
-                        note_length_norm =
-                            ((note_length_x - graph_rect.left()) / graph_rect.width()).clamp(0.0, 1.0);
-                        note_length_ms = note_length_norm * note_length_max_ms;
+                        note_end_x = pointer_pos.x.clamp(graph_rect.left(), graph_rect.right());
+                        note_end_display_t =
+                            ((note_end_x - graph_rect.left()) / graph_rect.width()).clamp(0.0, 1.0);
+                        note_end_t = (note_end_display_t / waveform_zoom).clamp(0.0, 1.0);
+                        note_end_ms = note_end_t * max_note_length_ms;
                     }
                 }
 
-                if note_length_x < graph_rect.right() {
+                if note_end_x < graph_rect.right() {
                     let shaded_rect = Rect::from_min_max(
-                        Pos2::new(note_length_x, graph_rect.top()),
+                        Pos2::new(note_end_x, graph_rect.top()),
                         Pos2::new(graph_rect.right(), graph_rect.bottom()),
                     );
                     painter.rect_filled(
@@ -994,9 +1005,9 @@ pub fn create_testing_editor(
                 let triangle_h = (10.0 * ui_scale).max(8.0);
                 let triangle_top_y = graph_rect.bottom() + 2.0 * ui_scale;
                 let triangle_points = vec![
-                    Pos2::new(note_length_x - triangle_half_w, triangle_top_y),
-                    Pos2::new(note_length_x + triangle_half_w, triangle_top_y),
-                    Pos2::new(note_length_x, triangle_top_y + triangle_h),
+                    Pos2::new(note_end_x - triangle_half_w, triangle_top_y),
+                    Pos2::new(note_end_x + triangle_half_w, triangle_top_y),
+                    Pos2::new(note_end_x, triangle_top_y + triangle_h),
                 ];
                 painter.add(egui::Shape::convex_polygon(
                     triangle_points,
@@ -1004,9 +1015,9 @@ pub fn create_testing_editor(
                     Stroke::new(1.0, APP_THEME.note_length_stroke()),
                 ));
                 painter.text(
-                    Pos2::new(note_length_x, outer_rect.bottom() - bottom_axis_padding * 0.62),
+                    Pos2::new(note_end_x, outer_rect.bottom() - bottom_axis_padding * 0.62),
                     Align2::CENTER_BOTTOM,
-                    format!("{:.0}ms", note_length_ms),
+                    format!("{:.0}ms", note_end_ms),
                     themed_font(10.0 * ui_scale),
                     APP_THEME.note_length_fill(),
                 );
@@ -1034,7 +1045,7 @@ pub fn create_testing_editor(
                 painter.text(
                     Pos2::new(graph_rect.right(), outer_rect.bottom() - bottom_axis_padding * 0.2),
                     Align2::RIGHT_TOP,
-                    "Length",
+                    "Time",
                     themed_font(12.0 * ui_scale),
                     APP_THEME.axis_title(),
                 );
@@ -1045,7 +1056,7 @@ pub fn create_testing_editor(
                     painter.text(
                         Pos2::new(x, graph_rect.bottom() + bottom_axis_padding * 0.08),
                         Align2::CENTER_TOP,
-                        axis_x_label(f, note_length_max_ms),
+                        axis_x_label((f / waveform_zoom) * max_note_length_ms),
                         themed_font(10.0 * ui_scale),
                         APP_THEME.axis_tick(),
                     );
@@ -1098,7 +1109,7 @@ pub fn create_testing_editor(
                     let mut remove_point_index: Option<usize> = None;
 
                     for i in 0..points.len() {
-                        let screen_point = to_screen_with_note_length(points[i], graph_rect, note_length_norm);
+                        let screen_point = to_screen_with_note_end(points[i], graph_rect, note_end_display_t);
                         let hit_rect = Rect::from_center_size(screen_point, Vec2::splat(18.0));
                         let response = ui.interact(
                             hit_rect,
@@ -1135,10 +1146,10 @@ pub fn create_testing_editor(
                         if response.dragged() {
                             point_dragging_this_frame = true;
                             if let Some(pointer_pos) = response.interact_pointer_pos() {
-                                points[i] = to_normalized_with_note_length(
+                                points[i] = to_normalized_with_note_end(
                                     pointer_pos,
                                     graph_rect,
-                                    note_length_norm,
+                                    note_end_display_t,
                                 );
                                 selected_point = Some(i);
                                 selected_points.clear();
@@ -1177,7 +1188,7 @@ pub fn create_testing_editor(
                                     .enumerate()
                                     .filter_map(|(idx, point)| {
                                         let screen_point =
-                                            to_screen_with_note_length(*point, graph_rect, note_length_norm);
+                                            to_screen_with_note_end(*point, graph_rect, note_end_display_t);
                                         if selection_rect.contains(screen_point) {
                                             Some(idx)
                                         } else {
@@ -1233,11 +1244,11 @@ pub fn create_testing_editor(
 
                     if graph_response.double_clicked() {
                         if let Some(pointer_pos) = graph_response.interact_pointer_pos() {
-                            if pointer_pos.x <= note_length_x {
-                                let new_point = to_normalized_with_note_length(
+                            if pointer_pos.x <= note_end_x {
+                                let new_point = to_normalized_with_note_end(
                                     pointer_pos,
                                     graph_rect,
-                                    note_length_norm,
+                                    note_end_display_t,
                                 );
                                 let insert_index = points
                                     .iter()
@@ -1262,10 +1273,8 @@ pub fn create_testing_editor(
                 let active_points = state.active_curve().points.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
-                state.note_length_ms = note_length_ms.clamp(0.0, note_length_max_ms);
+                state.note_length_ms = note_end_ms.clamp(0.0, max_note_length_ms);
                 shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
-                let adaptive_zoom_factor =
-                    state.base_note_length_max_ms.max(f32::EPSILON) / note_length_max_ms;
 
                 let amplitude_lut = curve_lut(&state.amplitude_curve.points);
                 let pitch_lut = curve_lut(&state.pitch_curve.points);
@@ -1278,7 +1287,7 @@ pub fn create_testing_editor(
                     &state.pitch_curve.points,
                     tuning_a4_hz,
                     state.note_length_ms,
-                    note_length_max_ms,
+                    max_note_length_ms,
                     state.waveform_zoom_percent,
                     adaptive_zoom_factor,
                 );
@@ -1300,7 +1309,7 @@ pub fn create_testing_editor(
 
                 let screen_points: Vec<Pos2> = active_points
                     .iter()
-                    .map(|point| to_screen_with_note_length(*point, graph_rect, note_length_norm))
+                    .map(|point| to_screen_with_note_end(*point, graph_rect, note_end_display_t))
                     .collect();
 
                 for line in screen_points.windows(2) {

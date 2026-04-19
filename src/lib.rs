@@ -5,12 +5,9 @@ use nih_plug_egui::EguiState;
 
 mod audio;
 mod config;
+mod midi;
 mod shared;
 mod ui;
-
-fn midi_note_to_hz(note: u8) -> f32 {
-    440.0 * 2.0_f32.powf((note as f32 - 69.0) / 12.0)
-}
 
 struct LibreKick {
     params: Arc<LibreKickParams>,
@@ -141,16 +138,7 @@ impl Plugin for LibreKick {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let mut midi_trigger = false;
-        let mut midi_velocity = 1.0;
-        let mut midi_note_hz = None;
-        while let Some(event) = context.next_event() {
-            if let NoteEvent::NoteOn { note, velocity, .. } = event {
-                midi_trigger = true;
-                midi_velocity = velocity;
-                midi_note_hz = Some(midi_note_to_hz(note));
-            }
-        }
+        let midi_input = midi::collect_midi_input(context);
 
         let dsp_params = audio::KickDspParams {
             decay_ms: self.params.decay_ms.value(),
@@ -158,9 +146,9 @@ impl Plugin for LibreKick {
             pitch_drop_hz: self.params.pitch_drop_hz.value(),
             level: self.params.level.value(),
             trigger_active: self.params.trigger.value(),
-            midi_trigger,
-            midi_velocity,
-            midi_note_hz,
+            midi_trigger: midi_input.trigger,
+            midi_velocity: midi_input.velocity,
+            midi_note_hz: midi_input.note_hz,
         };
 
         self.engine.process(buffer, dsp_params, &self.shared)
