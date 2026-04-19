@@ -19,10 +19,17 @@ Origin story: https://librekick.org
 
 
 # USAGE
+Download the Linux CLAP3 build from: https://github.com/psyberfly/LibreKick/releases/download/v0.1.0/LibreKick_linux_x86_64.clap
+
+Or build it yourself for a different target and format:
+
 1. `cd /scripts`:
-2. `cp sample.env config.env` and update your `config.env` file to your local needs.
-3. `./build.sh`
-4. `./install.sh` installs the VST into your configured system VST location; ready to use via your DAW.
+2. `cp sample.env config.env`. Update your `config.env` file to your local needs. Refer `sample.env` for info about building for other operating systems and formats.
+3. `./build.sh <target> <format>`
+4. `./install.sh <target> <format>` installs the VST into your configured system VST location; ready to use via your DAW.
+
+# KNOWN ISSUES
+1. If your window size starts off small you can enlarge the window using the re-sizing handle on the window bottom-right. See: https://github.com/psyberfly/LibreKick/issues/2 
 
 # DEV
 
