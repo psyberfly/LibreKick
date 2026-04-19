@@ -16,8 +16,6 @@ use crate::{config, shared};
 const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
 const WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL: f32 = 0.3;
-const FINAL_WAVEFORM_TARGET_CYCLES_PER_POINT: f32 = 0.12;
-const FINAL_WAVEFORM_MAX_DOWNSAMPLE_FACTOR: usize = 8;
 const HISTORY_STACK_CAP: usize = 200;
 const RESIZE_CORNER_VISUAL_SIZE: f32 = 20.0;
 const RESIZE_CORNER_HIT_RADIUS: f32 = 30.0;
@@ -325,7 +323,6 @@ fn waveform_preview_points(
     let tuning_scale = tuning_a4_hz / app_cfg.default_tuning_a4_hz.max(f32::EPSILON);
     let mut phase = 0.0_f32;
 
-    let source_seconds_per_col = source_seconds / active_pixel_width as f32;
     let mut previous_t = 0.0_f32;
     let raw_points: Vec<Pos2> = (0..active_pixel_width)
         .map(|col| {
@@ -349,34 +346,7 @@ fn waveform_preview_points(
         })
         .collect();
 
-    let mut downsampled_points = Vec::with_capacity(raw_points.len());
-    let mut col = 0_usize;
-    while col < active_pixel_width {
-        let t = (col as f32 + 0.5) / pixel_width as f32;
-        let sample_t = ((t.min(display_length_t)) / zoom).clamp(0.0, source_length_t);
-        let pitch = envelope_value_linear(pitch_points, sample_t);
-        let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
-            .clamp(20.0, 22050.0)
-            .min(max_display_hz);
-
-        let cycles_per_col = hz * source_seconds_per_col;
-        let downsample_factor = (cycles_per_col / FINAL_WAVEFORM_TARGET_CYCLES_PER_POINT)
-            .ceil()
-            .max(1.0)
-            .min(FINAL_WAVEFORM_MAX_DOWNSAMPLE_FACTOR as f32) as usize;
-
-        let block_end = (col + downsample_factor).min(active_pixel_width);
-        downsampled_points.push(raw_points[col]);
-        col = block_end;
-    }
-
-    if let Some(last_point) = raw_points.last().copied() {
-        if downsampled_points.last().copied() != Some(last_point) {
-            downsampled_points.push(last_point);
-        }
-    }
-
-    downsampled_points
+    raw_points
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
