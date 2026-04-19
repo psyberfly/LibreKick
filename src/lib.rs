@@ -4,6 +4,7 @@ use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 
 mod audio;
+mod config;
 mod shared;
 mod ui;
 
@@ -40,6 +41,7 @@ struct LibreKickParams {
 
 impl Default for LibreKickParams {
     fn default() -> Self {
+        let ui_cfg = config::ui_config();
         Self {
             trigger: BoolParam::new("Trigger", false),
             decay_ms: FloatParam::new(
@@ -71,7 +73,10 @@ impl Default for LibreKickParams {
                 0.8,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
-            editor_state: EguiState::from_size(760, 420),
+            editor_state: EguiState::from_size(
+                ui_cfg.base_editor_width as u32,
+                ui_cfg.base_editor_height as u32,
+            ),
         }
     }
 }

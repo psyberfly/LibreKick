@@ -11,7 +11,7 @@ use nih_plug_egui::{
     EguiState,
 };
 
-use crate::shared;
+use crate::{config, shared};
 
 const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
@@ -28,9 +28,6 @@ const RESIZE_CORNER_HIT_RADIUS: f32 = 30.0;
 const RESIZE_SIDE_HIT_RADIUS: f32 = 16.0;
 const AXIS_SUBDIVISIONS: usize = 10;
 const AMP_DB_FLOOR: f32 = -30.0;
-const BASE_EDITOR_WIDTH: f32 = 760.0;
-const BASE_EDITOR_HEIGHT: f32 = 420.0;
-
 struct Theme;
 
 impl Theme {
@@ -152,8 +149,9 @@ enum CurveKind {
 }
 
 fn ui_scale_from_size(size: Vec2) -> f32 {
-    let scale_x = size.x / BASE_EDITOR_WIDTH;
-    let scale_y = size.y / BASE_EDITOR_HEIGHT;
+    let ui_cfg = config::ui_config();
+    let scale_x = size.x / ui_cfg.base_editor_width;
+    let scale_y = size.y / ui_cfg.base_editor_height;
     ((scale_x + scale_y) * 0.5).clamp(0.8, 2.2)
 }
 
@@ -664,6 +662,7 @@ pub fn create_testing_editor(
     editor_state: Arc<EguiState>,
     shared_state: shared::SharedStateHandle,
 ) -> Option<Box<dyn Editor>> {
+    let ui_cfg = config::ui_config();
     let resizable_state = editor_state.clone();
     let shared_for_ui = shared_state.clone();
 
@@ -681,7 +680,7 @@ pub fn create_testing_editor(
         },
         move |_ctx, _setter, state| {
             ResizableWindow::new("kick-plugin-resize")
-                .min_size(Vec2::new(520.0, 320.0))
+                .min_size(Vec2::new(ui_cfg.min_editor_width, ui_cfg.min_editor_height))
                 .show(_ctx, &resizable_state, |ui| {
                 let snapshot_before = state.snapshot();
                 let mut history_action_applied = false;
