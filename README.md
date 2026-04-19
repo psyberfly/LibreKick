@@ -8,12 +8,13 @@
 LibreKick is an aduio synthesiser plugin for DAWs to generate Kick samples using visual waveshaping.  
 
 Latest releases: https://github.com/psyberfly/LibreKick/releases  
-Origin story: https://librekick.org 
-**This project is in early alpha stage.**   
-
+Origin story: https://librekick.org  
+**This project is in early alpha dev stage.**    
+  
 <p align="center">
-<img alt="image" src="https://github.com/user-attachments/assets/f0d24eb8-763b-461a-baa6-b3fe109b8e03" width="80%" />
+<img alt="image" src="https://github.com/user-attachments/assets/3e0bde10-123a-49e0-b9f5-6d788c2610ec" width="80%" />
 </p>
+
 
 # USAGE
 1. `cd /scripts`:
