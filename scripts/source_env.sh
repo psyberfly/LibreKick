@@ -57,6 +57,39 @@ is_supported_target() {
   esac
 }
 
+release_bundle_basename_for() {
+  local target="${1,,}"
+  local format=""
+  local arch=""
+  format="$(normalize_format "$2")"
+  arch="$(target_arch_for "$target")"
+
+  case "$format" in
+    vst3) echo "${PLUGIN_NAME}_${target}_${arch}.vst3" ;;
+    clap3) echo "${PLUGIN_NAME}_${target}_${arch}.clap" ;;
+    au)
+      if [[ "$target" != "darwin" ]]; then
+        echo ""
+      else
+        echo "${PLUGIN_NAME}_${target}_${arch}.component"
+      fi
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+install_bundle_basename_for() {
+  local format=""
+  format="$(normalize_format "$1")"
+
+  case "$format" in
+    vst3) echo "${PLUGIN_NAME}.vst3" ;;
+    clap3) echo "${PLUGIN_NAME}.clap" ;;
+    au) echo "${PLUGIN_NAME}.component" ;;
+    *) return 1 ;;
+  esac
+}
+
 normalize_format() {
   local format="${1,,}"
   case "$format" in
@@ -87,6 +120,14 @@ target_arch_dir_for() {
     linux) echo "x86_64-linux" ;;
     darwin) echo "x86_64-macos" ;;
     windows) echo "x86_64-win" ;;
+    *) return 1 ;;
+  esac
+}
+
+target_arch_for() {
+  local target="${1,,}"
+  case "$target" in
+    linux|darwin|windows) echo "x86_64" ;;
     *) return 1 ;;
   esac
 }
@@ -194,21 +235,16 @@ bundle_artifact_path_for() {
   local target="${1,,}"
   local format=""
   local root=""
+  local artifact_basename=""
   format="$(normalize_format "$2")"
   root="$(format_output_root_for "$format")"
+  artifact_basename="$(release_bundle_basename_for "$target" "$format")"
 
-  case "$format" in
-    vst3) echo "$root/${PLUGIN_NAME}.vst3" ;;
-    clap3) echo "$root/${PLUGIN_NAME}.clap" ;;
-    au)
-      if [[ "$target" != "darwin" ]]; then
-        echo ""
-      else
-        echo "$root/${PLUGIN_NAME}.component"
-      fi
-      ;;
-    *) return 1 ;;
-  esac
+  if [[ -z "$artifact_basename" ]]; then
+    echo ""
+  else
+    echo "$root/$artifact_basename"
+  fi
 }
 
 bundle_binary_path_for() {

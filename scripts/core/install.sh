@@ -39,7 +39,7 @@ if [[ -z "$INSTALL_ROOT" ]]; then
   exit 1
 fi
 
-INSTALL_BUNDLE_DIR="$INSTALL_ROOT/$(basename "$PLUGIN_BUNDLE_DIR")"
+INSTALL_BUNDLE_DIR="$INSTALL_ROOT/$(install_bundle_basename_for "$FORMAT")"
 
 if [[ ! -e "$PLUGIN_BUNDLE_DIR" ]]; then
   echo "Missing bundle: $PLUGIN_BUNDLE_DIR"
