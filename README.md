@@ -29,9 +29,6 @@ Origin story: https://librekick.org
 ## Testing
 1. Use `./restart.sh` to hot-reload (compile changes and re-launch the VST using Carla; requires Carla locally installed on your machine).
 
-## TODOs
-1. Improve rendered waveform: In pitch envp, frequency change is clamped to halfway point (632Hz).
-
 ## Architecture
 
 Current app architecture is split into clear modules with a simple UI-to-audio data contract:
