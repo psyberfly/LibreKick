@@ -173,4 +173,14 @@ impl Vst3Plugin for LibreKick {
         &[Vst3SubCategory::Instrument, Vst3SubCategory::Synth];
 }
 
+impl ClapPlugin for LibreKick {
+    const CLAP_ID: &'static str = "com.psyberfly.librekick";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Kick drum synthesizer");
+    const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
+    const CLAP_SUPPORT_URL: Option<&'static str> = Some(Self::URL);
+    const CLAP_FEATURES: &'static [ClapFeature] =
+        &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Drum];
+}
+
+nih_export_clap!(LibreKick);
 nih_export_vst3!(LibreKick);

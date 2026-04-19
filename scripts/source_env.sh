@@ -114,7 +114,7 @@ if [[ -z "$TARGETS_RAW" ]]; then
   exit 1
 fi
 
-FORMATS_RAW="${FORMATS:-${FORMAT:-vst3}}"
+FORMATS_RAW="${FORMATS:-${FORMAT:-clap3}}"
 
 parse_csv_list "$TARGETS_RAW" TARGET_LIST
 parse_csv_list "$FORMATS_RAW" FORMAT_LIST_RAW

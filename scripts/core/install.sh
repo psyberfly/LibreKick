@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../source_env.sh"
 
 TARGET_NAME="${1:-${TARGET:-}}"
-FORMAT="${2:-${FORMAT:-vst3}}"
+FORMAT="${2:-${FORMAT:-clap3}}"
 FORMAT="$(normalize_format "$FORMAT")"
 
 if [[ -z "$TARGET_NAME" ]]; then

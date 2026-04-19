@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/source_env.sh"
 
 TARGETS_INPUT="${1:-${TARGETS_RAW:-${TARGET:-}}}"
-FORMATS_INPUT="${2:-${FORMATS_RAW:-${FORMAT:-vst3}}}"
+FORMATS_INPUT="${2:-${FORMATS_RAW:-${FORMAT:-clap3}}}"
 
 if [[ -z "$TARGETS_INPUT" ]]; then
   echo "target is not set. Define TARGETS/TARGET in scripts/config.env (e.g. TARGETS=linux,darwin)."

@@ -6,7 +6,7 @@ source "$SCRIPT_DIR/../source_env.sh"
 
 TARGET="${1:-${TARGET:-}}"
 MODE="${2:-single}"
-FORMAT="${3:-${FORMAT:-vst3}}"
+FORMAT="${3:-${FORMAT:-clap3}}"
 FORMAT="$(normalize_format "$FORMAT")"
 
 if [[ -z "$TARGET" ]]; then
@@ -32,7 +32,7 @@ if [[ "$FORMAT" == "au" && "$TARGET" != "darwin" ]]; then
 fi
 
 if [[ "$MODE" != "single" && "$MODE" != "full" ]]; then
-  echo "Usage: $0 <target> [single|full] [vst3|clap3|au]"
+  echo "Usage: $0 <target> [single|full] [clap3|vst3|au]"
   exit 1
 fi
 
@@ -86,16 +86,27 @@ case "$TARGET" in
           "$PLUGIN_NAME"
         )
 
+        opened_in_single=false
+
         for candidate in "${CANDIDATES[@]}"; do
           echo "Starting Carla Single with ${CARLA_FORMAT^^} candidate: $candidate"
           if carla-single "$CARLA_FORMAT" "$candidate"; then
-            exit 0
+            opened_in_single=true
+            break
           fi
           echo "Failed to open candidate in carla-single: $candidate"
         done
 
+        if [[ "$opened_in_single" == true ]]; then
+          exit 0
+        fi
+
         echo "Could not auto-load plugin in carla-single from target output."
-        exit 1
+        if [[ "$FORMAT" == "clap3" ]]; then
+          echo "Your Carla build may not support CLAP in carla-single mode; falling back to full Carla."
+        else
+          echo "Falling back to full Carla mode."
+        fi
       fi
 
       echo "carla-single not found; falling back to full Carla mode."

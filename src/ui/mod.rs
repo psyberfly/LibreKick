@@ -420,6 +420,9 @@ struct BezierUiState {
     base_note_length_max_ms: f32,
     waveform_zoom_percent: f32,
     selected_point: Option<usize>,
+    selected_points: Vec<usize>,
+    selection_drag_start: Option<Pos2>,
+    selection_drag_current: Option<Pos2>,
     undo_stack: Vec<EditorSnapshot>,
     redo_stack: Vec<EditorSnapshot>,
     point_drag_snapshot: Option<EditorSnapshot>,
@@ -440,6 +443,9 @@ impl Default for BezierUiState {
             base_note_length_max_ms: note_length_max_ms,
             waveform_zoom_percent: 100.0,
             selected_point: Some(1),
+            selected_points: vec![1],
+            selection_drag_start: None,
+            selection_drag_current: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             point_drag_snapshot: None,
@@ -706,6 +712,34 @@ pub fn create_testing_editor(
                         modifier_down && i.key_pressed(egui::Key::Y),
                     )
                 });
+                let (cut_shortcut, delete_shortcut) = ui.input(|i| {
+                    let mut cut = false;
+                    let mut delete = false;
+
+                    for event in &i.events {
+                        match event {
+                            egui::Event::Cut => {
+                                cut = true;
+                            }
+                            egui::Event::Key {
+                                key,
+                                pressed,
+                                modifiers,
+                                ..
+                            } if *pressed => {
+                                if *key == egui::Key::X && (modifiers.ctrl || modifiers.command) {
+                                    cut = true;
+                                }
+                                if *key == egui::Key::Delete || *key == egui::Key::Backspace {
+                                    delete = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    (cut, delete)
+                });
                 if undo_shortcut {
                     history_action_applied |= state.undo();
                 }
@@ -858,8 +892,15 @@ pub fn create_testing_editor(
                 let graph_height = available.y.max(220.0);
                 let (outer_rect, graph_response) = ui.allocate_exact_size(
                     Vec2::new(graph_width, graph_height),
-                    Sense::click(),
+                    Sense::click_and_drag(),
                 );
+                if graph_response.clicked()
+                    || graph_response.drag_started_by(egui::PointerButton::Primary)
+                    || graph_response.drag_started_by(egui::PointerButton::Secondary)
+                {
+                    graph_response.request_focus();
+                }
+                let graph_has_focus = graph_response.has_focus();
                 if graph_response.hovered() {
                     let (modifier_down, scroll_y) =
                         ui.input(|i| ((i.modifiers.ctrl || i.modifiers.command), i.raw_scroll_delta.y));
@@ -1024,6 +1065,32 @@ pub fn create_testing_editor(
 
                 let active_kind = state.active_curve;
                 let mut selected_point = state.selected_point;
+                let mut selected_points = state.selected_points.clone();
+                let mut selection_drag_start = state.selection_drag_start;
+                let mut selection_drag_current = state.selection_drag_current;
+                let mut remove_selected_requested = graph_has_focus && (cut_shortcut || delete_shortcut);
+
+                let curve_point_count = state.active_curve().points.len();
+                selected_points.retain(|&idx| idx < curve_point_count);
+                if selected_points.is_empty() {
+                    if let Some(idx) = selected_point.filter(|idx| *idx < curve_point_count) {
+                        selected_points.push(idx);
+                    }
+                }
+
+                graph_response.context_menu(|ui| {
+                    apply_ui_text_scale(ui, ui_scale);
+                    let can_remove_selected = selected_points
+                        .iter()
+                        .any(|&idx| idx > 0 && idx + 1 < curve_point_count);
+                    if ui
+                        .add_enabled(can_remove_selected, egui::Button::new("Remove selected points"))
+                        .clicked()
+                    {
+                        remove_selected_requested = true;
+                        ui.close_menu();
+                    }
+                });
 
                 {
                     let points = &mut state.active_curve_mut().points;
@@ -1041,10 +1108,16 @@ pub fn create_testing_editor(
 
                         if response.clicked() {
                             selected_point = Some(i);
+                            selected_points.clear();
+                            selected_points.push(i);
                         }
 
                         if response.secondary_clicked() {
                             selected_point = Some(i);
+                            if !selected_points.contains(&i) {
+                                selected_points.clear();
+                                selected_points.push(i);
+                            }
                         }
 
                         let can_remove_here = i > 0 && i + 1 < points.len();
@@ -1068,7 +1141,79 @@ pub fn create_testing_editor(
                                     note_length_norm,
                                 );
                                 selected_point = Some(i);
+                                selected_points.clear();
+                                selected_points.push(i);
                                 constrain_curve_points(points);
+                            }
+                        }
+                    }
+
+                    if graph_response.drag_started_by(egui::PointerButton::Primary)
+                        && !point_dragging_this_frame
+                    {
+                        if let Some(pointer_pos) = graph_response.interact_pointer_pos() {
+                            if graph_rect.contains(pointer_pos) {
+                                selection_drag_start = Some(pointer_pos);
+                                selection_drag_current = Some(pointer_pos);
+                                selected_points.clear();
+                                selected_point = None;
+                            }
+                        }
+                    }
+
+                    let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
+                    if selection_drag_start.is_some() && pointer_primary_down && !point_dragging_this_frame {
+                        if let Some(pointer_pos) = ui.input(|i| i.pointer.interact_pos()) {
+                            selection_drag_current = Some(pointer_pos);
+                        }
+                    }
+
+                    if selection_drag_start.is_some() && !pointer_primary_down {
+                        if let (Some(start), Some(end)) = (selection_drag_start, selection_drag_current) {
+                            let selection_rect = Rect::from_two_pos(start, end).intersect(graph_rect);
+                            if selection_rect.width() > 1.0 || selection_rect.height() > 1.0 {
+                                selected_points = points
+                                    .iter()
+                                    .enumerate()
+                                    .filter_map(|(idx, point)| {
+                                        let screen_point =
+                                            to_screen_with_note_length(*point, graph_rect, note_length_norm);
+                                        if selection_rect.contains(screen_point) {
+                                            Some(idx)
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .collect();
+                                selected_point = selected_points.first().copied();
+                            }
+                        }
+                        selection_drag_start = None;
+                        selection_drag_current = None;
+                    }
+
+                    if remove_selected_requested {
+                        let mut remove_indices: Vec<usize> = selected_points
+                            .iter()
+                            .copied()
+                            .filter(|&idx| idx > 0 && idx + 1 < points.len())
+                            .collect();
+                        remove_indices.sort_unstable();
+                        remove_indices.dedup();
+
+                        if !remove_indices.is_empty() {
+                            for idx in remove_indices.into_iter().rev() {
+                                points.remove(idx);
+                            }
+                            constrain_curve_points(points);
+                            selected_points.clear();
+                            if points.len() > 1 {
+                                let fallback = 1.min(points.len() - 1);
+                                selected_point = Some(fallback);
+                                selected_points.push(fallback);
+                            } else {
+                                selected_point = Some(0);
+                                selected_points.push(0);
                             }
                         }
                     }
@@ -1076,12 +1221,14 @@ pub fn create_testing_editor(
                     if let Some(remove_index) = remove_point_index {
                         points.remove(remove_index);
                         constrain_curve_points(points);
-                        selected_point = Some(
+                        let fallback =
                             remove_index
                                 .saturating_sub(1)
                                 .min(points.len() - 2)
-                                .max(1),
-                        );
+                                .max(1);
+                        selected_point = Some(fallback);
+                        selected_points.clear();
+                        selected_points.push(fallback);
                     }
 
                     if graph_response.double_clicked() {
@@ -1100,6 +1247,8 @@ pub fn create_testing_editor(
                                 points.insert(index, new_point);
                                 constrain_curve_points(points);
                                 selected_point = Some(index);
+                                selected_points.clear();
+                                selected_points.push(index);
                             }
                         }
                     }
@@ -1107,6 +1256,9 @@ pub fn create_testing_editor(
                 }
 
                 state.selected_point = selected_point;
+                state.selected_points = selected_points;
+                state.selection_drag_start = selection_drag_start;
+                state.selection_drag_current = selection_drag_current;
                 let active_points = state.active_curve().points.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
@@ -1164,7 +1316,7 @@ pub fn create_testing_editor(
                 for (i, point) in screen_points.iter().enumerate() {
                     let color = if i == 0 || i + 1 == screen_points.len() {
                         APP_THEME.endpoint_point()
-                    } else if Some(i) == state.selected_point {
+                    } else if state.selected_points.contains(&i) {
                         APP_THEME.selected_point()
                     } else {
                         APP_THEME.control_point()
@@ -1204,6 +1356,22 @@ pub fn create_testing_editor(
                         );
                     }
                 }
+                if let (Some(start), Some(current)) =
+                    (state.selection_drag_start, state.selection_drag_current)
+                {
+                    let selection_rect = Rect::from_two_pos(start, current).intersect(graph_rect);
+                    painter.rect_filled(
+                        selection_rect,
+                        0.0,
+                        Color32::from_rgba_unmultiplied(255, 200, 0, 36),
+                    );
+                    painter.rect_stroke(
+                        selection_rect,
+                        0.0,
+                        Stroke::new(1.0, APP_THEME.selected_point()),
+                        egui::StrokeKind::Inside,
+                    );
+                }
                 if let Some(selected) = selected_point {
                     if let Some(point) = active_points.get(selected) {
                         ui.label(format!(
@@ -1214,7 +1382,12 @@ pub fn create_testing_editor(
                 } else {
                     ui.label("No point selected.");
                 }
-                ui.label("Click/drag points to edit. Double-click graph to add point.");
+                if state.selected_points.len() > 1 {
+                    ui.label(format!("{} points selected.", state.selected_points.len()));
+                }
+                ui.label(
+                    "Click/drag points to edit. Drag box to multi-select. Delete/Backspace/Ctrl(Cmd)+X removes selected points.",
+                );
                     });
                 if point_dragging_this_frame && state.point_drag_snapshot.is_none() {
                     state.point_drag_snapshot = Some(snapshot_before.clone());
