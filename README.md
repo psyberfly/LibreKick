@@ -28,6 +28,16 @@ Or build it yourself for a different target and format:
 3. `./build.sh <target> <format>`
 4. `./install.sh <target> <format>` installs the VST into your configured system VST location; ready to use via your DAW.
 
+## KEY BINDINGS
+
+- `Ctrl/Cmd + Z`: Undo
+- `Ctrl/Cmd + Shift + Z` or `Ctrl/Cmd + Y`: Redo
+- `Delete` / `Backspace` / `Ctrl/Cmd + X`: Remove selected point(s)
+- `Shift` (in graph): Enter Shift-lock mode for precise point control
+  - Move mouse (no button): adjust locked point on X axis
+  - Hold left mouse: adjust locked point on Y axis (vertical-only)
+- `Ctrl/Cmd + Mouse Wheel` (over graph): Adjust waveform zoom
+
 # KNOWN ISSUES
 1. If your window size starts off small you can enlarge the window using the re-sizing handle on the window bottom-right. See: https://github.com/psyberfly/LibreKick/issues/2 
 

@@ -561,6 +561,17 @@ pub fn create_testing_editor(
                             ui.label("- Drag points to shape the selected envelope.");
                             ui.label("- Double-click inside the graph to add a point.");
                             ui.label("- Right-click a point to remove it.");
+                            ui.label("- Ctrl/Cmd + mouse wheel over graph adjusts zoom.");
+                            ui.add_space(4.0 * ui_scale);
+                            ui.label("Keyboard shortcuts:");
+                            ui.label("- Ctrl/Cmd + Z: Undo");
+                            ui.label("- Ctrl/Cmd + Shift + Z or Ctrl/Cmd + Y: Redo");
+                            ui.label("- Delete/Backspace/Ctrl/Cmd + X: Remove selected point(s)");
+                            ui.add_space(4.0 * ui_scale);
+                            ui.label("Shift-lock mode:");
+                            ui.label("- Hold Shift and click near a point to lock it.");
+                            ui.label("- Move mouse (no button) to adjust locked point on X.");
+                            ui.label("- Hold left mouse to adjust locked point on Y (vertical-only).");
                             ui.add_space(4.0 * ui_scale);
                             ui.label("Envelope basics:");
                             ui.label("- Amplitude envelope controls volume over time.");
