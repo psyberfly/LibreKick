@@ -21,7 +21,7 @@ pub fn edge_color() -> Color32 {
 }
 
 pub fn pitch_edge_color() -> Color32 {
-    Color32::from_rgb(10, 58, 140)
+    Color32::from_rgb(135, 206, 235)
 }
 
 pub fn accent_color() -> Color32 {
