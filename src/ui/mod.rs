@@ -1,5 +1,7 @@
 use std::{cmp::Ordering, sync::Arc};
 
+mod theme;
+
 use nih_plug::prelude::Editor;
 use nih_plug_egui::{
     create_egui_editor,
@@ -12,6 +14,8 @@ use nih_plug_egui::{
 };
 
 use crate::{config, patches, shared};
+
+use self::theme as ui_theme;
 
 const MIN_POINT_GAP_X: f32 = 0.01;
 const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
@@ -48,7 +52,7 @@ impl Theme {
     }
 
     fn panel_bg(self) -> Color32 {
-        Color32::from_rgb(10, 12, 14)
+        ui_theme::background_color()
     }
 
     fn graph_bg(self) -> Color32 {
@@ -68,7 +72,7 @@ impl Theme {
     }
 
     fn note_length_fill(self) -> Color32 {
-        Color32::from_rgb(220, 64, 64)
+        ui_theme::accent_color()
     }
 
     fn note_length_stroke(self) -> Color32 {
@@ -92,15 +96,15 @@ impl Theme {
     }
 
     fn endpoint_point(self) -> Color32 {
-        Color32::from_rgb(220, 64, 64)
+        ui_theme::weight_color()
     }
 
     fn selected_point(self) -> Color32 {
-        Color32::from_rgb(255, 214, 122)
+        ui_theme::weight_color()
     }
 
     fn control_point(self) -> Color32 {
-        Color32::from_rgb(245, 160, 88)
+        ui_theme::weight_color()
     }
 
     fn point_outline(self) -> Color32 {
@@ -1372,7 +1376,10 @@ pub fn create_testing_editor(
                         CurveKind::Pitch => "Pitch (Hz)",
                     },
                     themed_font(12.0 * ui_scale),
-                    APP_THEME.axis_title(),
+                    match state.active_curve {
+                        CurveKind::Amplitude => ui_theme::amp_env_color(),
+                        CurveKind::Pitch => ui_theme::pitch_env_color(),
+                    },
                 );
                 painter.text(
                     Pos2::new(graph_rect.right(), outer_rect.bottom() - bottom_axis_padding * 0.2),
@@ -1739,8 +1746,14 @@ pub fn create_testing_editor(
                     painter.line_segment(
                         [line[0], line[1]],
                         Stroke::new(
-                            2.0,
-                            Color32::from_rgb(255, 255, 0),
+                            match active_kind {
+                                CurveKind::Amplitude => 2.0,
+                                CurveKind::Pitch => 3.5,
+                            },
+                            match active_kind {
+                                CurveKind::Amplitude => ui_theme::edge_color(),
+                                CurveKind::Pitch => ui_theme::pitch_edge_color(),
+                            },
                         ),
                     );
                 }
@@ -1768,7 +1781,7 @@ pub fn create_testing_editor(
                         painter.circle_stroke(
                             *point,
                             12.0,
-                            Stroke::new(2.0, Color32::from_rgb(255, 72, 72)),
+                            Stroke::new(2.0, ui_theme::accent_color()),
                         );
                         let cross_len = 8.0;
                         painter.line_segment(

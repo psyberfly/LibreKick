@@ -39,6 +39,8 @@ fi
 LOCAL_PLUGIN_DIR="$(format_output_root_for "$FORMAT")"
 PLUGIN_ARTIFACT="$(bundle_artifact_path_for "$TARGET" "$FORMAT")"
 PLUGIN_BINARY="$(bundle_binary_path_for "$TARGET" "$FORMAT")"
+CANONICAL_PLUGIN_ARTIFACT="$(canonical_bundle_artifact_path_for "$TARGET" "$FORMAT")"
+CANONICAL_PLUGIN_BINARY="$(canonical_bundle_binary_path_for "$TARGET" "$FORMAT")"
 
 if [[ ! -d "$LOCAL_PLUGIN_DIR" ]]; then
   echo "Plugin output path does not exist: $LOCAL_PLUGIN_DIR"
@@ -81,6 +83,8 @@ case "$TARGET" in
     if [[ "$MODE" == "single" ]]; then
       if command -v carla-single >/dev/null 2>&1; then
         CANDIDATES=(
+          "$CANONICAL_PLUGIN_BINARY"
+          "$CANONICAL_PLUGIN_ARTIFACT"
           "$PLUGIN_BINARY"
           "$PLUGIN_ARTIFACT"
           "$PLUGIN_NAME"
@@ -89,6 +93,9 @@ case "$TARGET" in
         opened_in_single=false
 
         for candidate in "${CANDIDATES[@]}"; do
+          if [[ -z "$candidate" ]]; then
+            continue
+          fi
           echo "Starting Carla Single with ${CARLA_FORMAT^^} candidate: $candidate"
           if carla-single "$CARLA_FORMAT" "$candidate"; then
             opened_in_single=true
@@ -107,9 +114,9 @@ case "$TARGET" in
         else
           echo "Falling back to full Carla mode."
         fi
+      else
+        echo "carla-single not found; falling back to full Carla mode."
       fi
-
-      echo "carla-single not found; falling back to full Carla mode."
     fi
 
     if command -v carla >/dev/null 2>&1; then

@@ -34,6 +34,8 @@ BINARY_SRC="$(cargo_binary_path_for_target "$TARGET")"
 BUNDLE_ARTIFACT="$(bundle_artifact_path_for "$TARGET" "$FORMAT")"
 BINARY_DST="$(bundle_binary_path_for "$TARGET" "$FORMAT")"
 BINARY_DST_DIR="$(dirname "$BINARY_DST")"
+CANONICAL_BUNDLE_ARTIFACT="$(canonical_bundle_artifact_path_for "$TARGET" "$FORMAT")"
+CANONICAL_BINARY_DST="$(canonical_bundle_binary_path_for "$TARGET" "$FORMAT")"
 
 if [[ ! -f "$BINARY_SRC" ]]; then
   echo "Missing binary: $BINARY_SRC"
@@ -46,12 +48,26 @@ case "$FORMAT" in
     rm -rf "$BUNDLE_ARTIFACT"
     mkdir -p "$BINARY_DST_DIR"
     cp "$BINARY_SRC" "$BINARY_DST"
+
+    if [[ -n "$CANONICAL_BUNDLE_ARTIFACT" && "$CANONICAL_BUNDLE_ARTIFACT" != "$BUNDLE_ARTIFACT" ]]; then
+      rm -rf "$CANONICAL_BUNDLE_ARTIFACT"
+      mkdir -p "$(dirname "$CANONICAL_BINARY_DST")"
+      cp "$BINARY_SRC" "$CANONICAL_BINARY_DST"
+      echo "Created (compat): $CANONICAL_BUNDLE_ARTIFACT"
+    fi
     ;;
   clap3)
     mkdir -p "$(dirname "$BUNDLE_ARTIFACT")"
     rm -f "$BUNDLE_ARTIFACT"
     cp "$BINARY_SRC" "$BUNDLE_ARTIFACT"
     chmod +x "$BUNDLE_ARTIFACT"
+
+    if [[ -n "$CANONICAL_BUNDLE_ARTIFACT" && "$CANONICAL_BUNDLE_ARTIFACT" != "$BUNDLE_ARTIFACT" ]]; then
+      rm -f "$CANONICAL_BUNDLE_ARTIFACT"
+      cp "$BINARY_SRC" "$CANONICAL_BUNDLE_ARTIFACT"
+      chmod +x "$CANONICAL_BUNDLE_ARTIFACT"
+      echo "Created (compat): $CANONICAL_BUNDLE_ARTIFACT"
+    fi
     ;;
   *)
     echo "Unsupported format: $FORMAT"

@@ -33,6 +33,22 @@ trim_string() {
   printf '%s' "$value"
 }
 
+canonical_bundle_artifact_path_for() {
+  local target="${1,,}"
+  local format=""
+  local root=""
+  local canonical_basename=""
+  format="$(normalize_format "$2")"
+  root="$(format_output_root_for "$format")"
+  canonical_basename="$(install_bundle_basename_for "$format")"
+
+  if [[ "$format" == "au" && "$target" != "darwin" ]]; then
+    echo ""
+  else
+    echo "$root/$canonical_basename"
+  fi
+}
+
 parse_csv_list() {
   local raw="$1"
   local -n out_ref="$2"
@@ -53,6 +69,33 @@ is_supported_target() {
   local target="${1,,}"
   case "$target" in
     linux|darwin|windows) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+canonical_bundle_binary_path_for() {
+  local target="${1,,}"
+  local format=""
+  local artifact=""
+  local ext=""
+  format="$(normalize_format "$2")"
+  artifact="$(canonical_bundle_artifact_path_for "$target" "$format")"
+
+  case "$format" in
+    vst3)
+      ext="$(binary_extension_for_target "$target")"
+      echo "$artifact/Contents/$(target_arch_dir_for "$target")/${PLUGIN_NAME}${ext}"
+      ;;
+    clap3)
+      echo "$artifact"
+      ;;
+    au)
+      if [[ "$target" != "darwin" ]]; then
+        echo ""
+      else
+        echo "$artifact/Contents/MacOS/${PLUGIN_NAME}"
+      fi
+      ;;
     *) return 1 ;;
   esac
 }
