@@ -465,6 +465,7 @@ struct BezierUiState {
     selected_points: Vec<usize>,
     selection_drag_start: Option<Pos2>,
     selection_drag_current: Option<Pos2>,
+    shift_locked_point: Option<usize>,
     undo_stack: Vec<EditorSnapshot>,
     redo_stack: Vec<EditorSnapshot>,
     point_drag_snapshot: Option<EditorSnapshot>,
@@ -495,6 +496,7 @@ impl Default for BezierUiState {
             selected_points: vec![1],
             selection_drag_start: None,
             selection_drag_current: None,
+            shift_locked_point: None,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             point_drag_snapshot: None,
@@ -900,11 +902,39 @@ pub fn create_testing_editor(
                 let mut history_action_applied = false;
 
                 let (undo_shortcut, redo_shortcut) = ui.input(|i| {
-                    let modifier_down = i.modifiers.ctrl || i.modifiers.command;
-                    (
-                        modifier_down && i.key_pressed(egui::Key::Z),
-                        modifier_down && i.key_pressed(egui::Key::Y),
-                    )
+                    let mut undo = false;
+                    let mut redo = false;
+
+                    for event in &i.events {
+                        if let egui::Event::Key {
+                            key,
+                            pressed,
+                            modifiers,
+                            ..
+                        } = event
+                        {
+                            if !*pressed {
+                                continue;
+                            }
+
+                            let modifier_down = modifiers.ctrl || modifiers.command;
+                            if !modifier_down {
+                                continue;
+                            }
+
+                            if *key == egui::Key::Z {
+                                if modifiers.shift {
+                                    redo = true;
+                                } else {
+                                    undo = true;
+                                }
+                            } else if *key == egui::Key::Y {
+                                redo = true;
+                            }
+                        }
+                    }
+
+                    (undo, redo)
                 });
                 let (cut_shortcut, delete_shortcut) = ui.input(|i| {
                     let mut cut = false;
@@ -1199,6 +1229,13 @@ pub fn create_testing_editor(
                 }
                 let graph_has_focus = graph_response.has_focus();
                 if graph_response.hovered() {
+                    graph_response.request_focus();
+                }
+                let shift_down = ui.input(|i| i.modifiers.shift);
+                if shift_down && (graph_response.hovered() || graph_has_focus) {
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::Crosshair);
+                }
+                if graph_response.hovered() {
                     let (modifier_down, scroll_y) =
                         ui.input(|i| ((i.modifiers.ctrl || i.modifiers.command), i.raw_scroll_delta.y));
                     if modifier_down && scroll_y.abs() > f32::EPSILON {
@@ -1208,6 +1245,9 @@ pub fn create_testing_editor(
                                 app_cfg.waveform_zoom_max_percent,
                             );
                     }
+                }
+                if !shift_down {
+                    state.shift_locked_point = None;
                 }
                 let left_axis_padding = (62.0 * ui_scale).clamp(52.0, 120.0);
                 let bottom_axis_padding = (52.0 * ui_scale).clamp(40.0, 110.0);
@@ -1371,12 +1411,22 @@ pub fn create_testing_editor(
                 let mut selected_points = state.selected_points.clone();
                 let mut selection_drag_start = state.selection_drag_start;
                 let mut selection_drag_current = state.selection_drag_current;
+                let mut shift_locked_point = state.shift_locked_point;
+                let mut shift_snap_candidate: Option<usize> = None;
                 let mut remove_selected_requested = graph_has_focus && (cut_shortcut || delete_shortcut);
 
                 let curve_point_count = state.active_curve().points.len();
+                shift_locked_point = shift_locked_point.filter(|&idx| idx < curve_point_count);
                 selected_points.retain(|&idx| idx < curve_point_count);
                 if selected_points.is_empty() {
                     if let Some(idx) = selected_point.filter(|idx| *idx < curve_point_count) {
+                        selected_points.push(idx);
+                    }
+                }
+                if shift_down {
+                    if let Some(idx) = shift_locked_point {
+                        selected_point = Some(idx);
+                        selected_points.clear();
                         selected_points.push(idx);
                     }
                 }
@@ -1402,7 +1452,7 @@ pub fn create_testing_editor(
 
                     for i in 0..points.len() {
                         let screen_point = to_screen_with_note_end(points[i], graph_rect, note_end_display_t);
-                        let hit_rect = Rect::from_center_size(screen_point, Vec2::splat(18.0));
+                        let hit_rect = Rect::from_center_size(screen_point, Vec2::splat(54.0));
                         let response = ui.interact(
                             hit_rect,
                             ui.make_persistent_id(("bezier-control", active_kind as u8, i)),
@@ -1410,16 +1460,24 @@ pub fn create_testing_editor(
                         );
 
                         if response.clicked() {
+                            graph_response.request_focus();
                             selected_point = Some(i);
                             selected_points.clear();
                             selected_points.push(i);
+                            if shift_down {
+                                shift_locked_point = Some(i);
+                            }
                         }
 
                         if response.secondary_clicked() {
+                            graph_response.request_focus();
                             selected_point = Some(i);
                             if !selected_points.contains(&i) {
                                 selected_points.clear();
                                 selected_points.push(i);
+                            }
+                            if shift_down {
+                                shift_locked_point = Some(i);
                             }
                         }
 
@@ -1436,23 +1494,94 @@ pub fn create_testing_editor(
                         });
 
                         if response.dragged() {
+                            graph_response.request_focus();
                             point_dragging_this_frame = true;
                             if let Some(pointer_pos) = response.interact_pointer_pos() {
-                                points[i] = to_normalized_with_note_end(
+                                let mut new_point = to_normalized_with_note_end(
                                     pointer_pos,
                                     graph_rect,
                                     note_end_display_t,
                                 );
+                                if shift_down {
+                                    new_point.y = points[i].y;
+                                }
+                                points[i] = new_point;
                                 selected_point = Some(i);
                                 selected_points.clear();
                                 selected_points.push(i);
+                                if shift_down {
+                                    shift_locked_point = Some(i);
+                                }
                                 constrain_curve_points(points);
+                            }
+                        }
+                    }
+
+                    if shift_down {
+                        let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
+                        let pointer_primary_clicked = ui.input(|i| i.pointer.primary_clicked());
+                        let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+
+                        if let Some(pointer_pos) = pointer_pos.filter(|pos| graph_rect.contains(*pos)) {
+                            if shift_locked_point.is_none() {
+                                let snap_assist_radius = 30.0_f32;
+                                let mut best: Option<(usize, f32)> = None;
+                                for (idx, point) in points.iter().enumerate() {
+                                    let screen =
+                                        to_screen_with_note_end(*point, graph_rect, note_end_display_t);
+                                    let distance = screen.distance(pointer_pos);
+                                    if distance <= snap_assist_radius {
+                                        if let Some((_, best_distance)) = best {
+                                            if distance < best_distance {
+                                                best = Some((idx, distance));
+                                            }
+                                        } else {
+                                            best = Some((idx, distance));
+                                        }
+                                    }
+                                }
+
+                                if let Some((idx, _)) = best {
+                                    shift_snap_candidate = Some(idx);
+                                    if pointer_primary_clicked {
+                                        shift_locked_point = Some(idx);
+                                        selected_point = Some(idx);
+                                        selected_points.clear();
+                                        selected_points.push(idx);
+                                    }
+                                }
+                            }
+
+                            if let Some(idx) = shift_locked_point.filter(|&idx| idx < points.len()) {
+                                let mapped_point = to_normalized_with_note_end(
+                                    pointer_pos,
+                                    graph_rect,
+                                    note_end_display_t,
+                                );
+                                let mut new_point = points[idx];
+                                if pointer_primary_down {
+                                    new_point.y = mapped_point.y;
+                                } else {
+                                    new_point.x = mapped_point.x;
+                                }
+                                if (new_point.x - points[idx].x).abs() > f32::EPSILON
+                                    || (new_point.y - points[idx].y).abs() > f32::EPSILON
+                                {
+                                    points[idx] = new_point;
+                                    point_dragging_this_frame = true;
+                                    selected_point = Some(idx);
+                                    selected_points.clear();
+                                    selected_points.push(idx);
+                                    shift_locked_point = Some(idx);
+                                    constrain_curve_points(points);
+                                }
                             }
                         }
                     }
 
                     if graph_response.drag_started_by(egui::PointerButton::Primary)
                         && !point_dragging_this_frame
+                        && !shift_down
                     {
                         if let Some(pointer_pos) = graph_response.interact_pointer_pos() {
                             if graph_rect.contains(pointer_pos) {
@@ -1562,6 +1691,7 @@ pub fn create_testing_editor(
                 state.selected_points = selected_points;
                 state.selection_drag_start = selection_drag_start;
                 state.selection_drag_current = selection_drag_current;
+                state.shift_locked_point = shift_locked_point;
                 let active_points = state.active_curve().points.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
@@ -1625,6 +1755,37 @@ pub fn create_testing_editor(
                     };
                     painter.circle_filled(*point, 6.0, color);
                     painter.circle_stroke(*point, 7.0, Stroke::new(1.0, APP_THEME.point_outline()));
+
+                    if shift_down && shift_snap_candidate == Some(i) {
+                        painter.circle_stroke(
+                            *point,
+                            11.0,
+                            Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 72, 72, 180)),
+                        );
+                    }
+
+                    if shift_down && state.shift_locked_point == Some(i) {
+                        painter.circle_stroke(
+                            *point,
+                            12.0,
+                            Stroke::new(2.0, Color32::from_rgb(255, 72, 72)),
+                        );
+                        let cross_len = 8.0;
+                        painter.line_segment(
+                            [
+                                Pos2::new(point.x - cross_len, point.y),
+                                Pos2::new(point.x + cross_len, point.y),
+                            ],
+                            Stroke::new(1.6, APP_THEME.selected_point()),
+                        );
+                        painter.line_segment(
+                            [
+                                Pos2::new(point.x, point.y - cross_len),
+                                Pos2::new(point.x, point.y + cross_len),
+                            ],
+                            Stroke::new(1.6, APP_THEME.selected_point()),
+                        );
+                    }
 
                     if let Some(value_point) = active_points.get(i).copied() {
                         let label = point_value_label(active_kind, value_point, tuning_a4_hz);
