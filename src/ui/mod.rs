@@ -19,7 +19,8 @@ use crate::{config, patches, shared};
 
 use self::helpers::{
     axis_x_label, axis_y_label, constrain_curve_points, curve_lut, effective_waveform_zoom,
-    point_value_label, to_normalized_with_note_end, to_screen_with_note_end, waveform_preview_points,
+    envelope_value_linear, normalize_segment_bends, point_value_label, to_normalized_with_note_end,
+    to_screen_with_note_end, waveform_preview_points,
 };
 use self::state::BezierUiState;
 use self::theme as ui_theme;
@@ -34,6 +35,7 @@ const RESIZE_SIDE_HIT_RADIUS: f32 = 16.0;
 const AXIS_SUBDIVISIONS: usize = 10;
 const SHIFT_LOCK_X_FREEZE_AFTER_VERTICAL_RELEASE_SECONDS: f64 = 0.250;
 const SHIFT_LOCK_X_REENGAGE_HORIZONTAL_PIXELS: f32 = 4.0;
+const EDGE_BEND_HIT_RADIUS_PIXELS: f32 = 14.0;
 const AMP_DB_FLOOR: f32 = -30.0;
 const NOTE_LENGTH_MAX_SLIDER_MIN_MS: f32 = 100.0;
 const NOTE_LENGTH_MAX_SLIDER_MAX_MS: f32 = 5000.0;
@@ -870,6 +872,12 @@ pub fn create_testing_editor(
                 let mut shift_lock_require_horizontal_reengage =
                     state.shift_lock_require_horizontal_reengage;
                 let mut shift_lock_reengage_anchor_screen_x = state.shift_lock_reengage_anchor_screen_x;
+                let mut edge_bend_drag_segment = state.edge_bend_drag_segment;
+                let mut edge_bend_drag_start_pointer_y = state.edge_bend_drag_start_pointer_y;
+                let mut edge_bend_drag_start_value = state.edge_bend_drag_start_value;
+                let mut bend_hover_segment: Option<usize> = None;
+                let mut bend_hover_point: Option<Pos2> = None;
+                let mut bend_hover_value: Option<f32> = None;
                 let mut shift_snap_candidate: Option<usize> = None;
                 let mut remove_selected_requested = graph_has_focus && (cut_shortcut || delete_shortcut);
 
@@ -909,7 +917,15 @@ pub fn create_testing_editor(
                 });
 
                 {
-                    let points = &mut state.active_curve_mut().points;
+                    let curve = state.active_curve_mut();
+                    let points = &mut curve.points;
+                    let bends = &mut curve.bends;
+                    normalize_segment_bends(points, bends);
+                    if edge_bend_drag_segment.is_some_and(|segment| segment >= bends.len()) {
+                        edge_bend_drag_segment = None;
+                        edge_bend_drag_start_pointer_y = None;
+                        edge_bend_drag_start_value = 0.0;
+                    }
                     constrain_curve_points(points);
                     let mut remove_point_index: Option<usize> = None;
 
@@ -991,6 +1007,81 @@ pub fn create_testing_editor(
                                     shift_lock_reengage_anchor_screen_x = None;
                                 }
                                 constrain_curve_points(points);
+                            }
+                        }
+                    }
+
+                    let bend_modifier_down = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+                    let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
+                    let pointer_pos = ui
+                        .input(|i| i.pointer.interact_pos())
+                        .filter(|pos| graph_rect.contains(*pos));
+
+                    if !pointer_primary_down {
+                        edge_bend_drag_segment = None;
+                        edge_bend_drag_start_pointer_y = None;
+                    }
+
+                    if bend_modifier_down {
+                        if let Some(pointer_pos) = pointer_pos {
+                            let mut best_segment: Option<(usize, f32, Pos2)> = None;
+                            for seg_idx in 0..points.len().saturating_sub(1) {
+                                let left =
+                                    to_screen_with_note_end(points[seg_idx], graph_rect, note_end_display_t);
+                                let right = to_screen_with_note_end(
+                                    points[seg_idx + 1],
+                                    graph_rect,
+                                    note_end_display_t,
+                                );
+                                let ab = right - left;
+                                let ap = pointer_pos - left;
+                                let denom = ab.dot(ab).max(f32::EPSILON);
+                                let t = (ap.dot(ab) / denom).clamp(0.0, 1.0);
+                                let closest = left + ab * t;
+                                let distance = closest.distance(pointer_pos);
+                                if distance <= EDGE_BEND_HIT_RADIUS_PIXELS {
+                                    if let Some((_, best_distance, _)) = best_segment {
+                                        if distance < best_distance {
+                                            best_segment = Some((seg_idx, distance, closest));
+                                        }
+                                    } else {
+                                        best_segment = Some((seg_idx, distance, closest));
+                                    }
+                                }
+                            }
+
+                            if let Some((seg_idx, _distance, closest)) = best_segment {
+                                bend_hover_segment = Some(seg_idx);
+                                bend_hover_point = Some(closest);
+                                bend_hover_value = bends.get(seg_idx).copied();
+                                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+
+                                if pointer_primary_down
+                                    && !shift_down
+                                    && !point_dragging_this_frame
+                                    && edge_bend_drag_segment.is_none()
+                                {
+                                    edge_bend_drag_segment = Some(seg_idx);
+                                    edge_bend_drag_start_pointer_y = Some(pointer_pos.y);
+                                    edge_bend_drag_start_value = bends.get(seg_idx).copied().unwrap_or(0.0);
+                                }
+                            }
+                        }
+                    }
+
+                    if bend_modifier_down && pointer_primary_down && !shift_down {
+                        if let (Some(seg_idx), Some(pointer_pos)) = (edge_bend_drag_segment, pointer_pos) {
+                            if seg_idx < bends.len() {
+                                let start_y = edge_bend_drag_start_pointer_y.unwrap_or(pointer_pos.y);
+                                let delta = (start_y - pointer_pos.y)
+                                    / (graph_rect.height() * 0.45).max(f32::EPSILON);
+                                let bend = (edge_bend_drag_start_value + delta).clamp(-1.0, 1.0);
+                                bends[seg_idx] = bend;
+                                bend_hover_segment = Some(seg_idx);
+                                bend_hover_point = Some(pointer_pos);
+                                bend_hover_value = Some(bend);
+                                point_dragging_this_frame = true;
+                                ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
                             }
                         }
                     }
@@ -1150,7 +1241,12 @@ pub fn create_testing_editor(
                         if !remove_indices.is_empty() {
                             for idx in remove_indices.into_iter().rev() {
                                 points.remove(idx);
+                                if !bends.is_empty() {
+                                    let bend_idx = idx.saturating_sub(1).min(bends.len() - 1);
+                                    bends.remove(bend_idx);
+                                }
                             }
+                            normalize_segment_bends(points, bends);
                             constrain_curve_points(points);
                             selected_points.clear();
                             if points.len() > 1 {
@@ -1166,6 +1262,11 @@ pub fn create_testing_editor(
 
                     if let Some(remove_index) = remove_point_index {
                         points.remove(remove_index);
+                        if !bends.is_empty() {
+                            let bend_idx = remove_index.saturating_sub(1).min(bends.len() - 1);
+                            bends.remove(bend_idx);
+                        }
+                        normalize_segment_bends(points, bends);
                         constrain_curve_points(points);
                         let fallback =
                             remove_index
@@ -1191,6 +1292,9 @@ pub fn create_testing_editor(
                                     .unwrap_or(points.len() - 1);
                                 let index = insert_index.max(1).min(points.len() - 1);
                                 points.insert(index, new_point);
+                                let bend_index = index.saturating_sub(1).min(bends.len());
+                                bends.insert(bend_index, 0.0);
+                                normalize_segment_bends(points, bends);
                                 constrain_curve_points(points);
                                 selected_point = Some(index);
                                 selected_points.clear();
@@ -1209,22 +1313,28 @@ pub fn create_testing_editor(
                 state.shift_lock_x_freeze_until_seconds = shift_lock_x_freeze_until_seconds;
                 state.shift_lock_require_horizontal_reengage = shift_lock_require_horizontal_reengage;
                 state.shift_lock_reengage_anchor_screen_x = shift_lock_reengage_anchor_screen_x;
+                state.edge_bend_drag_segment = edge_bend_drag_segment;
+                state.edge_bend_drag_start_pointer_y = edge_bend_drag_start_pointer_y;
+                state.edge_bend_drag_start_value = edge_bend_drag_start_value;
                 let active_points = state.active_curve().points.clone();
+                let active_bends = state.active_curve().bends.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
                 shared::set_keytrack_enabled(&shared_for_ui, state.keytrack_enabled);
                 state.note_length_ms = note_end_ms.clamp(0.0, max_note_length_ms);
                 shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
 
-                let amplitude_lut = curve_lut(&state.amplitude_curve.points);
-                let pitch_lut = curve_lut(&state.pitch_curve.points);
+                let amplitude_lut = curve_lut(&state.amplitude_curve.points, &state.amplitude_curve.bends);
+                let pitch_lut = curve_lut(&state.pitch_curve.points, &state.pitch_curve.bends);
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Amplitude, amplitude_lut);
                 shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Pitch, pitch_lut);
 
                 let waveform_points = waveform_preview_points(
                     graph_rect,
                     &state.amplitude_curve.points,
+                    &state.amplitude_curve.bends,
                     &state.pitch_curve.points,
+                    &state.pitch_curve.bends,
                     tuning_a4_hz,
                     state.note_length_ms,
                     max_note_length_ms,
@@ -1252,7 +1362,15 @@ pub fn create_testing_editor(
                     .map(|point| to_screen_with_note_end(*point, graph_rect, note_end_display_t))
                     .collect();
 
-                for line in screen_points.windows(2) {
+                let curve_draw_points: Vec<Pos2> = (0..=160)
+                    .map(|step| {
+                        let t = step as f32 / 160.0;
+                        let y = envelope_value_linear(&active_points, &active_bends, t);
+                        to_screen_with_note_end(Pos2::new(t, y), graph_rect, note_end_display_t)
+                    })
+                    .collect();
+
+                for line in curve_draw_points.windows(2) {
                     painter.line_segment(
                         [line[0], line[1]],
                         Stroke::new(
@@ -1265,6 +1383,38 @@ pub fn create_testing_editor(
                                 CurveKind::Pitch => ui_theme::pitch_edge_color(),
                             },
                         ),
+                    );
+                }
+
+                if let Some(segment) = bend_hover_segment.filter(|seg| *seg + 1 < screen_points.len()) {
+                    painter.line_segment(
+                        [screen_points[segment], screen_points[segment + 1]],
+                        Stroke::new(4.0, Color32::from_rgba_unmultiplied(255, 255, 255, 60)),
+                    );
+                }
+
+                if let (Some(point), Some(value)) = (bend_hover_point, bend_hover_value) {
+                    let label = format!("{:+.0}%", value * 100.0);
+                    let bubble_width = (label.len() as f32 * 7.0 * ui_scale + 14.0 * ui_scale)
+                        .max(52.0 * ui_scale);
+                    let bubble_height = 20.0 * ui_scale;
+                    let bubble_rect = Rect::from_min_size(
+                        point + Vec2::new(10.0 * ui_scale, -bubble_height * 0.5),
+                        Vec2::new(bubble_width, bubble_height),
+                    );
+                    painter.rect_filled(bubble_rect, bubble_height * 0.5, APP_THEME.bubble_bg());
+                    painter.rect_stroke(
+                        bubble_rect,
+                        bubble_height * 0.5,
+                        Stroke::new(1.0, APP_THEME.bubble_border()),
+                        egui::StrokeKind::Inside,
+                    );
+                    painter.text(
+                        bubble_rect.center(),
+                        Align2::CENTER_CENTER,
+                        label,
+                        themed_font(11.0 * ui_scale),
+                        APP_THEME.bubble_text(),
                     );
                 }
 

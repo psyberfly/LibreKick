@@ -5,13 +5,17 @@ use nih_plug_egui::egui::{Pos2, TextureHandle};
 use crate::{config, patches};
 
 use super::{
-    helpers::constrain_curve_points, tuning_standard_from_a4_hz, CurveKind, TuningStandard,
+    helpers::{constrain_curve_points, normalize_segment_bends},
+    tuning_standard_from_a4_hz,
+    CurveKind,
+    TuningStandard,
     HISTORY_STACK_CAP, NOTE_LENGTH_MAX_SLIDER_MAX_MS, NOTE_LENGTH_MAX_SLIDER_MIN_MS,
 };
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Curve {
     pub(super) points: Vec<Pos2>,
+    pub(super) bends: Vec<f32>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -48,6 +52,7 @@ impl Curve {
                 Pos2::new(0.42, 0.24),
                 Pos2::new(1.0, 0.0),
             ],
+            bends: vec![0.0; 3],
         }
     }
 
@@ -59,6 +64,7 @@ impl Curve {
                 Pos2::new(0.30, 0.30),
                 Pos2::new(1.0, 0.08),
             ],
+            bends: vec![0.0; 3],
         }
     }
 }
@@ -81,6 +87,9 @@ pub(super) struct BezierUiState {
     pub(super) shift_lock_x_freeze_until_seconds: f64,
     pub(super) shift_lock_require_horizontal_reengage: bool,
     pub(super) shift_lock_reengage_anchor_screen_x: Option<f32>,
+    pub(super) edge_bend_drag_segment: Option<usize>,
+    pub(super) edge_bend_drag_start_pointer_y: Option<f32>,
+    pub(super) edge_bend_drag_start_value: f32,
     pub(super) undo_stack: Vec<EditorSnapshot>,
     pub(super) redo_stack: Vec<EditorSnapshot>,
     pub(super) point_drag_snapshot: Option<EditorSnapshot>,
@@ -115,6 +124,9 @@ impl Default for BezierUiState {
             shift_lock_x_freeze_until_seconds: 0.0,
             shift_lock_require_horizontal_reengage: false,
             shift_lock_reengage_anchor_screen_x: None,
+            edge_bend_drag_segment: None,
+            edge_bend_drag_start_pointer_y: None,
+            edge_bend_drag_start_value: 0.0,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             point_drag_snapshot: None,
@@ -307,19 +319,23 @@ impl BezierUiState {
                 .iter()
                 .map(|point| (point.x, point.y))
                 .collect(),
+            amplitude_bends: self.amplitude_curve.bends.clone(),
             pitch_points: self
                 .pitch_curve
                 .points
                 .iter()
                 .map(|point| (point.x, point.y))
                 .collect(),
+            pitch_bends: self.pitch_curve.bends.clone(),
         }
     }
 
     pub(super) fn apply_patch_data(&mut self, patch: patches::PatchData) {
         self.amplitude_curve.points =
             points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
+        self.amplitude_curve.bends = bends_from_patch(&patch.amplitude_bends, self.amplitude_curve.points.len());
         self.pitch_curve.points = points_from_patch(&patch.pitch_points, &Curve::default_pitch().points);
+        self.pitch_curve.bends = bends_from_patch(&patch.pitch_bends, self.pitch_curve.points.len());
         self.active_curve = if patch.active_curve.eq_ignore_ascii_case("pitch") {
             CurveKind::Pitch
         } else {
@@ -361,4 +377,11 @@ fn points_from_patch(raw_points: &[(f32, f32)], fallback: &[Pos2]) -> Vec<Pos2> 
     points.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal));
     constrain_curve_points(&mut points);
     points
+}
+
+fn bends_from_patch(raw_bends: &[f32], point_count: usize) -> Vec<f32> {
+    let mut bends = raw_bends.to_vec();
+    let dummy_points = vec![Pos2::ZERO; point_count.max(2)];
+    normalize_segment_bends(&dummy_points, &mut bends);
+    bends
 }

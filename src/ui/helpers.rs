@@ -46,7 +46,9 @@ pub(super) fn effective_waveform_zoom(waveform_zoom_percent: f32, adaptive_zoom_
 pub(super) fn waveform_preview_points(
     graph_rect: Rect,
     amplitude_points: &[Pos2],
+    amplitude_bends: &[f32],
     pitch_points: &[Pos2],
+    pitch_bends: &[f32],
     tuning_a4_hz: f32,
     note_end_ms: f32,
     max_note_length_ms: f32,
@@ -77,8 +79,8 @@ pub(super) fn waveform_preview_points(
             let note_progress_t = (x_t / display_length_t.max(f32::EPSILON)).clamp(0.0, 1.0);
             let time_t = note_progress_t * note_end_t;
 
-            let amp = envelope_value_amplitude_db(amplitude_points, note_progress_t);
-            let pitch = envelope_value_linear(pitch_points, note_progress_t);
+            let amp = envelope_value_amplitude_db(amplitude_points, amplitude_bends, note_progress_t);
+            let pitch = envelope_value_linear(pitch_points, pitch_bends, note_progress_t);
             let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
                 .clamp(20.0, 22050.0)
                 .min(max_display_hz);
@@ -116,7 +118,32 @@ pub(super) fn to_normalized_with_note_end(point: Pos2, rect: Rect, note_end_disp
     Pos2::new(x, y)
 }
 
-pub(super) fn envelope_value_linear(points: &[Pos2], t: f32) -> f32 {
+pub(super) fn normalize_segment_bends(points: &[Pos2], bends: &mut Vec<f32>) {
+    let target_len = points.len().saturating_sub(1);
+    bends.truncate(target_len);
+    if bends.len() < target_len {
+        bends.resize(target_len, 0.0);
+    }
+    for bend in bends.iter_mut() {
+        *bend = bend.clamp(-1.0, 1.0);
+    }
+}
+
+fn bend_local_t(local_t: f32, bend: f32) -> f32 {
+    let local_t = local_t.clamp(0.0, 1.0);
+    let bend = bend.clamp(-1.0, 1.0);
+    if bend.abs() <= f32::EPSILON {
+        return local_t;
+    }
+
+    if bend > 0.0 {
+        local_t.powf(1.0 + bend * 3.0)
+    } else {
+        1.0 - (1.0 - local_t).powf(1.0 + (-bend) * 3.0)
+    }
+}
+
+pub(super) fn envelope_value_linear(points: &[Pos2], bends: &[f32], t: f32) -> f32 {
     if points.is_empty() {
         return 0.0;
     }
@@ -126,13 +153,14 @@ pub(super) fn envelope_value_linear(points: &[Pos2], t: f32) -> f32 {
         return points[0].y.clamp(0.0, 1.0);
     }
 
-    for pair in points.windows(2) {
+    for (segment_idx, pair) in points.windows(2).enumerate() {
         let left = pair[0];
         let right = pair[1];
         if t <= right.x {
             let span = (right.x - left.x).max(f32::EPSILON);
             let local_t = ((t - left.x) / span).clamp(0.0, 1.0);
-            return egui::lerp(left.y..=right.y, local_t).clamp(0.0, 1.0);
+            let bent_t = bend_local_t(local_t, bends.get(segment_idx).copied().unwrap_or(0.0));
+            return egui::lerp(left.y..=right.y, bent_t).clamp(0.0, 1.0);
         }
     }
 
@@ -147,7 +175,7 @@ pub(super) fn amplitude_db_to_linear(db: f32) -> f32 {
     10.0_f32.powf(db.clamp(AMP_DB_FLOOR, 0.0) / 20.0)
 }
 
-pub(super) fn envelope_value_amplitude_db(points: &[Pos2], t: f32) -> f32 {
+pub(super) fn envelope_value_amplitude_db(points: &[Pos2], bends: &[f32], t: f32) -> f32 {
     if points.is_empty() {
         return 0.0;
     }
@@ -159,13 +187,14 @@ pub(super) fn envelope_value_amplitude_db(points: &[Pos2], t: f32) -> f32 {
         return points[0].y.clamp(0.0, 1.0);
     }
 
-    for pair in points.windows(2) {
+    for (segment_idx, pair) in points.windows(2).enumerate() {
         let left = pair[0];
         let right = pair[1];
         if t <= right.x {
             let span = (right.x - left.x).max(f32::EPSILON);
             let local_t = ((t - left.x) / span).clamp(0.0, 1.0);
-            let interpolated_db = egui::lerp(point_db(left.y)..=point_db(right.y), local_t);
+            let bent_t = bend_local_t(local_t, bends.get(segment_idx).copied().unwrap_or(0.0));
+            let interpolated_db = egui::lerp(point_db(left.y)..=point_db(right.y), bent_t);
             return amplitude_db_to_linear(interpolated_db).clamp(0.0, 1.0);
         }
     }
@@ -173,12 +202,12 @@ pub(super) fn envelope_value_amplitude_db(points: &[Pos2], t: f32) -> f32 {
     points.last().map_or(0.0, |p| p.y).clamp(0.0, 1.0)
 }
 
-pub(super) fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
+pub(super) fn curve_lut(points: &[Pos2], bends: &[f32]) -> [f32; shared::CURVE_LUT_SIZE] {
     let mut lut = [0.0; shared::CURVE_LUT_SIZE];
 
     for (i, value) in lut.iter_mut().enumerate() {
         let t = i as f32 / (shared::CURVE_LUT_SIZE as f32 - 1.0);
-        *value = envelope_value_linear(points, t);
+        *value = envelope_value_linear(points, bends, t);
     }
 
     lut

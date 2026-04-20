@@ -21,7 +21,9 @@ pub struct PatchData {
     pub waveform_zoom_percent: f32,
     pub active_curve: String,
     pub amplitude_points: Vec<(f32, f32)>,
+    pub amplitude_bends: Vec<f32>,
     pub pitch_points: Vec<(f32, f32)>,
+    pub pitch_bends: Vec<f32>,
 }
 
 pub fn set_default_patch_name(name: &str) -> Result<(), String> {
@@ -148,6 +150,14 @@ fn points_to_string(points: &[(f32, f32)]) -> String {
         .join("|")
 }
 
+fn bends_to_string(bends: &[f32]) -> String {
+    bends
+        .iter()
+        .map(|bend| format!("{:.6}", bend.clamp(-1.0, 1.0)))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 fn parse_points(raw: &str, label: &str) -> Result<Vec<(f32, f32)>, String> {
     let mut points = Vec::new();
 
@@ -175,6 +185,19 @@ fn parse_points(raw: &str, label: &str) -> Result<Vec<(f32, f32)>, String> {
     Ok(points)
 }
 
+fn parse_bends(raw: &str, label: &str) -> Result<Vec<f32>, String> {
+    let mut bends = Vec::new();
+
+    for part in raw.split('|').map(str::trim).filter(|segment| !segment.is_empty()) {
+        let bend = part
+            .parse::<f32>()
+            .map_err(|_| format!("Invalid bend value in {label}: '{part}'"))?;
+        bends.push(bend.clamp(-1.0, 1.0));
+    }
+
+    Ok(bends)
+}
+
 fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, String> {
     let mut patch_name: Option<String> = None;
     let mut tuning_a4_hz: Option<f32> = None;
@@ -184,7 +207,9 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut waveform_zoom_percent: Option<f32> = None;
     let mut active_curve: Option<String> = None;
     let mut amplitude_points: Option<Vec<(f32, f32)>> = None;
+    let mut amplitude_bends: Option<Vec<f32>> = None;
     let mut pitch_points: Option<Vec<(f32, f32)>> = None;
+    let mut pitch_bends: Option<Vec<f32>> = None;
 
     for raw_line in raw.lines() {
         let line = raw_line.trim();
@@ -228,7 +253,9 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             }
             "active_curve" => active_curve = Some(value.to_owned()),
             "amplitude_points" => amplitude_points = Some(parse_points(value, "amplitude_points")?),
+            "amplitude_bends" => amplitude_bends = Some(parse_bends(value, "amplitude_bends")?),
             "pitch_points" => pitch_points = Some(parse_points(value, "pitch_points")?),
+            "pitch_bends" => pitch_bends = Some(parse_bends(value, "pitch_bends")?),
             _ => {}
         }
     }
@@ -248,7 +275,9 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             .ok_or_else(|| "Missing waveform_zoom_percent".to_owned())?,
         active_curve: active_curve.unwrap_or_else(|| "amplitude".to_owned()),
         amplitude_points: amplitude_points.ok_or_else(|| "Missing amplitude_points".to_owned())?,
+        amplitude_bends: amplitude_bends.unwrap_or_default(),
         pitch_points: pitch_points.ok_or_else(|| "Missing pitch_points".to_owned())?,
+        pitch_bends: pitch_bends.unwrap_or_default(),
     })
 }
 
@@ -299,7 +328,9 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         format!("waveform_zoom_percent={}", patch.waveform_zoom_percent),
         format!("active_curve={}", patch.active_curve),
         format!("amplitude_points={}", points_to_string(&patch.amplitude_points)),
+        format!("amplitude_bends={}", bends_to_string(&patch.amplitude_bends)),
         format!("pitch_points={}", points_to_string(&patch.pitch_points)),
+        format!("pitch_bends={}", bends_to_string(&patch.pitch_bends)),
     ]
     .join("\n");
 
