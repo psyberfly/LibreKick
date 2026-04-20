@@ -41,6 +41,8 @@ Or build it yourself for a different target and format:
 # KNOWN ISSUES
 1. If your window size starts off small you can enlarge the window using the re-sizing handle on the window bottom-right. See: https://github.com/psyberfly/LibreKick/issues/2 
 
+2. FIXME: When CTRL/CMD is held on an edge, the edge bend handle comes vissible at the displacement (stragight line or 0% bend region) near the curve; the handle should up when cursor is on the bent curve because curve shape has effectively changed. the 0% indicator can still be shown. 
+
 # DEV
 
 ## Testing
