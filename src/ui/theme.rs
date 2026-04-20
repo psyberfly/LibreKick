@@ -16,6 +16,14 @@ pub fn weight_color() -> Color32 {
     Color32::from_rgb(245, 222, 179)
 }
 
+pub fn start_weight_color() -> Color32 {
+    Color32::from_rgb(80, 200, 120)
+}
+
+pub fn end_weight_color() -> Color32 {
+    Color32::from_rgb(220, 64, 64)
+}
+
 pub fn edge_color() -> Color32 {
     Color32::from_rgb(255, 255, 0)
 }

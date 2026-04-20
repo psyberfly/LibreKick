@@ -104,8 +104,12 @@ impl Theme {
         Color32::from_rgba_unmultiplied(245, 170, 112, 125)
     }
 
-    fn endpoint_point(self) -> Color32 {
-        ui_theme::weight_color()
+    fn start_endpoint_point(self) -> Color32 {
+        ui_theme::start_weight_color()
+    }
+
+    fn end_endpoint_point(self) -> Color32 {
+        ui_theme::end_weight_color()
     }
 
     fn selected_point(self) -> Color32 {
@@ -973,6 +977,9 @@ pub fn create_testing_editor(
                                 if shift_down {
                                     new_point.y = points[i].y;
                                 }
+                                if i == 0 || i + 1 == points.len() {
+                                    new_point.x = points[i].x;
+                                }
                                 points[i] = new_point;
                                 selected_point = Some(i);
                                 selected_points.clear();
@@ -1065,6 +1072,8 @@ pub fn create_testing_editor(
 
                                     if now_seconds >= shift_lock_x_freeze_until_seconds
                                         && !shift_lock_require_horizontal_reengage
+                                        && idx > 0
+                                        && idx + 1 < points.len()
                                     {
                                         new_point.x = mapped_point.x;
                                     }
@@ -1260,8 +1269,10 @@ pub fn create_testing_editor(
                 }
 
                 for (i, point) in screen_points.iter().enumerate() {
-                    let color = if i == 0 || i + 1 == screen_points.len() {
-                        APP_THEME.endpoint_point()
+                    let color = if i == 0 {
+                        APP_THEME.start_endpoint_point()
+                    } else if i + 1 == screen_points.len() {
+                        APP_THEME.end_endpoint_point()
                     } else if state.selected_points.contains(&i) {
                         APP_THEME.selected_point()
                     } else {
