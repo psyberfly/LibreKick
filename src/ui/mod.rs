@@ -1,5 +1,7 @@
-use std::{cmp::Ordering, sync::Arc};
+use std::sync::Arc;
 
+mod helpers;
+mod state;
 mod theme;
 
 use nih_plug::prelude::Editor;
@@ -15,6 +17,11 @@ use nih_plug_egui::{
 
 use crate::{config, patches, shared};
 
+use self::helpers::{
+    axis_x_label, axis_y_label, constrain_curve_points, curve_lut, effective_waveform_zoom,
+    point_value_label, to_normalized_with_note_end, to_screen_with_note_end, waveform_preview_points,
+};
+use self::state::BezierUiState;
 use self::theme as ui_theme;
 
 const MIN_POINT_GAP_X: f32 = 0.01;
@@ -25,6 +32,8 @@ const RESIZE_CORNER_VISUAL_SIZE: f32 = 20.0;
 const RESIZE_CORNER_HIT_RADIUS: f32 = 30.0;
 const RESIZE_SIDE_HIT_RADIUS: f32 = 16.0;
 const AXIS_SUBDIVISIONS: usize = 10;
+const SHIFT_LOCK_X_FREEZE_AFTER_VERTICAL_RELEASE_SECONDS: f64 = 0.250;
+const SHIFT_LOCK_X_REENGAGE_HORIZONTAL_PIXELS: f32 = 4.0;
 const AMP_DB_FLOOR: f32 = -30.0;
 const NOTE_LENGTH_MAX_SLIDER_MIN_MS: f32 = 100.0;
 const NOTE_LENGTH_MAX_SLIDER_MAX_MS: f32 = 5000.0;
@@ -275,94 +284,6 @@ fn glowing_brand_label(ui: &mut egui::Ui, text: &str, scale: f32) {
     );
 }
 
-fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
-    match kind {
-        CurveKind::Amplitude => {
-            let db = AMP_DB_FLOOR + normalized.clamp(0.0, 1.0) * (0.0 - AMP_DB_FLOOR);
-            format!("{:.0} dB", db)
-        }
-        CurveKind::Pitch => {
-            let hz = pitch_hz_from_normalized(normalized);
-            if hz >= 1000.0 {
-                format!("{:.1}k", hz / 1000.0)
-            } else {
-                format!("{:.0}", hz)
-            }
-        }
-    }
-}
-
-fn axis_x_label(time_ms: f32) -> String {
-    if time_ms <= 0.0 {
-        "0ms".to_owned()
-    } else {
-        format!("{:.0}ms", time_ms)
-    }
-}
-
-fn effective_waveform_zoom(waveform_zoom_percent: f32, adaptive_zoom_factor: f32) -> f32 {
-    let app_cfg = config::app_config();
-    let user_zoom = (waveform_zoom_percent / 100.0).clamp(
-        app_cfg.waveform_zoom_min_percent / 100.0,
-        app_cfg.waveform_zoom_max_percent / 100.0,
-    );
-    (user_zoom * adaptive_zoom_factor.max(f32::EPSILON)).max(f32::EPSILON)
-}
-
-fn waveform_preview_points(
-    graph_rect: Rect,
-    amplitude_points: &[Pos2],
-    pitch_points: &[Pos2],
-    tuning_a4_hz: f32,
-    note_end_ms: f32,
-    max_note_length_ms: f32,
-    waveform_zoom_percent: f32,
-    adaptive_zoom_factor: f32,
-) -> Vec<Pos2> {
-    let app_cfg = config::app_config();
-    let pixel_width = graph_rect.width().max(1.0) as usize;
-    let note_end_t = (note_end_ms / max_note_length_ms.max(f32::EPSILON)).clamp(0.0, 1.0);
-    let zoom = effective_waveform_zoom(waveform_zoom_percent, adaptive_zoom_factor);
-    let display_length_t = (note_end_t * zoom).clamp(0.0, 1.0);
-    let active_pixel_width = ((pixel_width as f32 * display_length_t).round() as usize).min(pixel_width);
-    if active_pixel_width == 0 {
-        return Vec::new();
-    }
-
-    let source_seconds = (WAVEFORM_PREVIEW_DURATION_SECONDS * note_end_t.max(f32::EPSILON)).max(0.001);
-    let max_display_hz = ((active_pixel_width as f32 / source_seconds)
-        * WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL)
-        .max(5.0);
-    let tuning_scale = tuning_a4_hz / app_cfg.default_tuning_a4_hz.max(f32::EPSILON);
-    let mut phase = 0.0_f32;
-
-    let mut previous_time_t = 0.0_f32;
-    let raw_points: Vec<Pos2> = (0..active_pixel_width)
-        .map(|col| {
-            let x = (col as f32 + 0.5) / pixel_width as f32;
-            let x_t = x.min(display_length_t);
-            let note_progress_t = (x_t / display_length_t.max(f32::EPSILON)).clamp(0.0, 1.0);
-            let time_t = note_progress_t * note_end_t;
-
-            let amp = envelope_value_amplitude_db(amplitude_points, note_progress_t);
-            let pitch = envelope_value_linear(pitch_points, note_progress_t);
-            let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
-                .clamp(20.0, 22050.0)
-                .min(max_display_hz);
-
-            let dt = ((time_t - previous_time_t).max(0.0)) * WAVEFORM_PREVIEW_DURATION_SECONDS;
-            phase = (phase + std::f32::consts::TAU * hz * dt).rem_euclid(std::f32::consts::TAU);
-            previous_time_t = time_t;
-
-            let sample = phase.sin() * amp;
-            let y = (0.5 + sample * 0.46).clamp(0.0, 1.0);
-            to_screen(Pos2::new(x, y), graph_rect)
-        })
-        .collect();
-
-    raw_points
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TuningStandard {
     A440,
@@ -383,498 +304,6 @@ fn tuning_standard_from_a4_hz(hz: f32) -> TuningStandard {
         TuningStandard::A432
     } else {
         TuningStandard::A440
-    }
-}
-
-fn points_from_patch(raw_points: &[(f32, f32)], fallback: &[Pos2]) -> Vec<Pos2> {
-    let mut points: Vec<Pos2> = raw_points
-        .iter()
-        .map(|(x, y)| Pos2::new(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)))
-        .collect();
-
-    if points.len() < 2 {
-        return fallback.to_vec();
-    }
-
-    points.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap_or(Ordering::Equal));
-    constrain_curve_points(&mut points);
-    points
-}
-
-#[derive(Clone, PartialEq)]
-struct Curve {
-    points: Vec<Pos2>,
-}
-
-#[derive(Clone, PartialEq)]
-struct EditorSnapshot {
-    amplitude_curve: Curve,
-    pitch_curve: Curve,
-    active_curve: CurveKind,
-    tuning_standard: TuningStandard,
-    keytrack_enabled: bool,
-    note_length_ms: f32,
-    note_length_max_ms: f32,
-    waveform_zoom_percent: f32,
-    selected_point: Option<usize>,
-}
-
-#[derive(Clone, PartialEq)]
-struct PatchSnapshot {
-    amplitude_curve: Curve,
-    pitch_curve: Curve,
-    active_curve: CurveKind,
-    tuning_standard: TuningStandard,
-    keytrack_enabled: bool,
-    note_length_ms: f32,
-    note_length_max_ms: f32,
-    waveform_zoom_percent: f32,
-}
-
-impl Curve {
-    fn default_amplitude() -> Self {
-        Self {
-            points: vec![
-                Pos2::new(0.0, 1.0),
-                Pos2::new(0.12, 0.94),
-                Pos2::new(0.42, 0.24),
-                Pos2::new(1.0, 0.0),
-            ],
-        }
-    }
-
-    fn default_pitch() -> Self {
-        Self {
-            points: vec![
-                Pos2::new(0.0, 1.0),
-                Pos2::new(0.08, 0.98),
-                Pos2::new(0.30, 0.30),
-                Pos2::new(1.0, 0.08),
-            ],
-        }
-    }
-}
-
-struct BezierUiState {
-    amplitude_curve: Curve,
-    pitch_curve: Curve,
-    active_curve: CurveKind,
-    tuning_standard: TuningStandard,
-    keytrack_enabled: bool,
-    note_length_ms: f32,
-    note_length_max_ms: f32,
-    base_note_length_max_ms: f32,
-    waveform_zoom_percent: f32,
-    selected_point: Option<usize>,
-    selected_points: Vec<usize>,
-    selection_drag_start: Option<Pos2>,
-    selection_drag_current: Option<Pos2>,
-    shift_locked_point: Option<usize>,
-    undo_stack: Vec<EditorSnapshot>,
-    redo_stack: Vec<EditorSnapshot>,
-    point_drag_snapshot: Option<EditorSnapshot>,
-    brand_logo: Option<TextureHandle>,
-    show_help_popup: bool,
-    available_patches: Vec<String>,
-    selected_patch_name: Option<String>,
-    selected_patch_snapshot: Option<PatchSnapshot>,
-    default_patch_name: Option<String>,
-    new_patch_name: String,
-    patch_status: Option<String>,
-}
-
-impl Default for BezierUiState {
-    fn default() -> Self {
-        let note_length_max_ms = config::app_config().note_length_max_ms;
-        let mut state = Self {
-            amplitude_curve: Curve::default_amplitude(),
-            pitch_curve: Curve::default_pitch(),
-            active_curve: CurveKind::Amplitude,
-            tuning_standard: TuningStandard::A432,
-            keytrack_enabled: false,
-            note_length_ms: note_length_max_ms,
-            note_length_max_ms,
-            base_note_length_max_ms: note_length_max_ms,
-            waveform_zoom_percent: 100.0,
-            selected_point: Some(1),
-            selected_points: vec![1],
-            selection_drag_start: None,
-            selection_drag_current: None,
-            shift_locked_point: None,
-            undo_stack: Vec::new(),
-            redo_stack: Vec::new(),
-            point_drag_snapshot: None,
-            brand_logo: None,
-            show_help_popup: false,
-            available_patches: Vec::new(),
-            selected_patch_name: None,
-            selected_patch_snapshot: None,
-            default_patch_name: None,
-            new_patch_name: String::new(),
-            patch_status: None,
-        };
-
-        if let Err(error) = patches::ensure_default_patch_setup() {
-            state.patch_status = Some(error);
-        }
-        state.refresh_patch_list();
-
-        match patches::get_default_patch_name() {
-            Ok(Some(default_name)) => {
-                state.default_patch_name = Some(default_name.clone());
-                match patches::load_patch(&default_name) {
-                    Ok(patch) => {
-                        state.apply_patch_data(patch);
-                        state.mark_patch_clean(default_name.clone());
-                        state.patch_status = Some(format!("Loaded default patch: {default_name}"));
-                    }
-                    Err(error) => {
-                        state.patch_status = Some(format!("Failed to load default patch: {error}"));
-                    }
-                }
-            }
-            Ok(None) => {}
-            Err(error) => {
-                state.patch_status = Some(format!("Failed to read default patch: {error}"));
-            }
-        }
-
-        state
-    }
-}
-
-impl BezierUiState {
-    fn push_bounded_snapshot(stack: &mut Vec<EditorSnapshot>, snapshot: EditorSnapshot) {
-        stack.push(snapshot);
-        let overflow = stack.len().saturating_sub(HISTORY_STACK_CAP);
-        if overflow > 0 {
-            stack.drain(0..overflow);
-        }
-    }
-
-    fn push_undo_snapshot(&mut self, snapshot: EditorSnapshot) {
-        if self.snapshot() != snapshot {
-            Self::push_bounded_snapshot(&mut self.undo_stack, snapshot);
-            self.redo_stack.clear();
-        }
-    }
-
-    fn snapshot(&self) -> EditorSnapshot {
-        EditorSnapshot {
-            amplitude_curve: self.amplitude_curve.clone(),
-            pitch_curve: self.pitch_curve.clone(),
-            active_curve: self.active_curve,
-            tuning_standard: self.tuning_standard,
-            keytrack_enabled: self.keytrack_enabled,
-            note_length_ms: self.note_length_ms,
-            note_length_max_ms: self.note_length_max_ms,
-            waveform_zoom_percent: self.waveform_zoom_percent,
-            selected_point: self.selected_point,
-        }
-    }
-
-    fn apply_snapshot(&mut self, snapshot: EditorSnapshot) {
-        self.amplitude_curve = snapshot.amplitude_curve;
-        self.pitch_curve = snapshot.pitch_curve;
-        self.active_curve = snapshot.active_curve;
-        self.tuning_standard = snapshot.tuning_standard;
-        self.keytrack_enabled = snapshot.keytrack_enabled;
-        self.note_length_ms = snapshot.note_length_ms;
-        self.note_length_max_ms = snapshot.note_length_max_ms;
-        self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
-        self.selected_point = snapshot.selected_point;
-    }
-
-    fn commit_history_if_changed(&mut self, before: &EditorSnapshot) {
-        self.push_undo_snapshot(before.clone());
-    }
-
-    fn undo(&mut self) -> bool {
-        if let Some(snapshot) = self.undo_stack.pop() {
-            let current = self.snapshot();
-            Self::push_bounded_snapshot(&mut self.redo_stack, current);
-            self.apply_snapshot(snapshot);
-            return true;
-        }
-        false
-    }
-
-    fn redo(&mut self) -> bool {
-        if let Some(snapshot) = self.redo_stack.pop() {
-            let current = self.snapshot();
-            Self::push_bounded_snapshot(&mut self.undo_stack, current);
-            self.apply_snapshot(snapshot);
-            return true;
-        }
-        false
-    }
-
-    fn active_curve(&self) -> &Curve {
-        match self.active_curve {
-            CurveKind::Amplitude => &self.amplitude_curve,
-            CurveKind::Pitch => &self.pitch_curve,
-        }
-    }
-
-    fn active_curve_mut(&mut self) -> &mut Curve {
-        match self.active_curve {
-            CurveKind::Amplitude => &mut self.amplitude_curve,
-            CurveKind::Pitch => &mut self.pitch_curve,
-        }
-    }
-
-    fn refresh_patch_list(&mut self) {
-        match patches::list_patch_names() {
-            Ok(patches) => {
-                self.available_patches = patches;
-            }
-            Err(error) => {
-                self.patch_status = Some(error);
-            }
-        }
-    }
-
-    fn patch_snapshot(&self) -> PatchSnapshot {
-        PatchSnapshot {
-            amplitude_curve: self.amplitude_curve.clone(),
-            pitch_curve: self.pitch_curve.clone(),
-            active_curve: self.active_curve,
-            tuning_standard: self.tuning_standard,
-            keytrack_enabled: self.keytrack_enabled,
-            note_length_ms: self.note_length_ms,
-            note_length_max_ms: self.note_length_max_ms,
-            waveform_zoom_percent: self.waveform_zoom_percent,
-        }
-    }
-
-    fn is_selected_patch_dirty(&self) -> bool {
-        self.selected_patch_snapshot
-            .as_ref()
-            .is_some_and(|saved| self.patch_snapshot() != *saved)
-    }
-
-    fn selected_patch_indicator_text(&self) -> String {
-        match &self.selected_patch_name {
-            Some(name) => {
-                let mut label = name.clone();
-                if self.is_selected_patch_dirty() {
-                    label.push('*');
-                }
-                if self.default_patch_name.as_deref() == Some(name.as_str()) {
-                    label.push_str(" (default)");
-                }
-                label
-            }
-            None => "No patch selected".to_owned(),
-        }
-    }
-
-    fn mark_patch_clean(&mut self, patch_name: String) {
-        self.selected_patch_name = Some(patch_name.clone());
-        self.selected_patch_snapshot = Some(self.patch_snapshot());
-        self.new_patch_name = patch_name;
-    }
-
-    fn to_patch_data(&self, name: String) -> patches::PatchData {
-        patches::PatchData {
-            name,
-            tuning_a4_hz: self.tuning_standard.a4_hz(),
-            keytrack_enabled: self.keytrack_enabled,
-            note_end_ms: self.note_length_ms,
-            max_note_length_ms: self.note_length_max_ms,
-            waveform_zoom_percent: self.waveform_zoom_percent,
-            active_curve: match self.active_curve {
-                CurveKind::Amplitude => "amplitude".to_owned(),
-                CurveKind::Pitch => "pitch".to_owned(),
-            },
-            amplitude_points: self
-                .amplitude_curve
-                .points
-                .iter()
-                .map(|point| (point.x, point.y))
-                .collect(),
-            pitch_points: self
-                .pitch_curve
-                .points
-                .iter()
-                .map(|point| (point.x, point.y))
-                .collect(),
-        }
-    }
-
-    fn apply_patch_data(&mut self, patch: patches::PatchData) {
-        self.amplitude_curve.points =
-            points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
-        self.pitch_curve.points = points_from_patch(&patch.pitch_points, &Curve::default_pitch().points);
-        self.active_curve = if patch.active_curve.eq_ignore_ascii_case("pitch") {
-            CurveKind::Pitch
-        } else {
-            CurveKind::Amplitude
-        };
-        self.tuning_standard = tuning_standard_from_a4_hz(patch.tuning_a4_hz);
-        self.keytrack_enabled = patch.keytrack_enabled;
-
-        self.note_length_max_ms = patch
-            .max_note_length_ms
-            .clamp(NOTE_LENGTH_MAX_SLIDER_MIN_MS, NOTE_LENGTH_MAX_SLIDER_MAX_MS);
-        self.base_note_length_max_ms = self.note_length_max_ms;
-        self.note_length_ms = patch.note_end_ms.clamp(0.0, self.note_length_max_ms);
-
-        let app_cfg = config::app_config();
-        self.waveform_zoom_percent = patch.waveform_zoom_percent.clamp(
-            app_cfg.waveform_zoom_min_percent,
-            app_cfg.waveform_zoom_max_percent,
-        );
-
-        self.selection_drag_start = None;
-        self.selection_drag_current = None;
-        let selected_index = 1.min(self.active_curve().points.len().saturating_sub(1));
-        self.selected_point = Some(selected_index);
-        self.selected_points = vec![selected_index];
-    }
-}
-
-fn to_screen(point: Pos2, rect: Rect) -> Pos2 {
-    Pos2::new(
-        rect.left() + point.x * rect.width(),
-        rect.bottom() - point.y * rect.height(),
-    )
-}
-
-fn to_screen_with_note_end(point: Pos2, rect: Rect, note_end_display_t: f32) -> Pos2 {
-    let note_end_display_t = note_end_display_t.clamp(0.0, 1.0);
-    Pos2::new(
-        rect.left() + point.x * note_end_display_t * rect.width(),
-        rect.bottom() - point.y * rect.height(),
-    )
-}
-
-fn to_normalized_with_note_end(point: Pos2, rect: Rect, note_end_display_t: f32) -> Pos2 {
-    let note_end_display_t = note_end_display_t.clamp(0.0, 1.0).max(f32::EPSILON);
-    let x = ((point.x - rect.left()) / (rect.width() * note_end_display_t)).clamp(0.0, 1.0);
-    let y = ((rect.bottom() - point.y) / rect.height()).clamp(0.0, 1.0);
-    Pos2::new(x, y)
-}
-
-fn envelope_value_linear(points: &[Pos2], t: f32) -> f32 {
-    if points.is_empty() {
-        return 0.0;
-    }
-
-    let t = t.clamp(0.0, 1.0);
-    if t <= points[0].x {
-        return points[0].y.clamp(0.0, 1.0);
-    }
-
-    for pair in points.windows(2) {
-        let left = pair[0];
-        let right = pair[1];
-        if t <= right.x {
-            let span = (right.x - left.x).max(f32::EPSILON);
-            let local_t = ((t - left.x) / span).clamp(0.0, 1.0);
-            return egui::lerp(left.y..=right.y, local_t).clamp(0.0, 1.0);
-        }
-    }
-
-    points.last().map_or(0.0, |p| p.y).clamp(0.0, 1.0)
-}
-
-fn amplitude_floor_linear() -> f32 {
-    10.0_f32.powf(AMP_DB_FLOOR / 20.0)
-}
-
-fn amplitude_db_to_linear(db: f32) -> f32 {
-    10.0_f32.powf(db.clamp(AMP_DB_FLOOR, 0.0) / 20.0)
-}
-
-fn envelope_value_amplitude_db(points: &[Pos2], t: f32) -> f32 {
-    if points.is_empty() {
-        return 0.0;
-    }
-
-    let t = t.clamp(0.0, 1.0);
-    let point_db = |y: f32| amplitude_db(y);
-
-    if t <= points[0].x {
-        return points[0].y.clamp(0.0, 1.0);
-    }
-
-    for pair in points.windows(2) {
-        let left = pair[0];
-        let right = pair[1];
-        if t <= right.x {
-            let span = (right.x - left.x).max(f32::EPSILON);
-            let local_t = ((t - left.x) / span).clamp(0.0, 1.0);
-            let interpolated_db = egui::lerp(point_db(left.y)..=point_db(right.y), local_t);
-            return amplitude_db_to_linear(interpolated_db).clamp(0.0, 1.0);
-        }
-    }
-
-    points.last().map_or(0.0, |p| p.y).clamp(0.0, 1.0)
-}
-
-fn curve_lut(points: &[Pos2]) -> [f32; shared::CURVE_LUT_SIZE] {
-    let mut lut = [0.0; shared::CURVE_LUT_SIZE];
-
-    for (i, value) in lut.iter_mut().enumerate() {
-        let t = i as f32 / (shared::CURVE_LUT_SIZE as f32 - 1.0);
-        *value = envelope_value_linear(points, t);
-    }
-
-    lut
-}
-
-fn amplitude_db(value: f32) -> f32 {
-    (20.0 * value.max(amplitude_floor_linear()).log10()).clamp(AMP_DB_FLOOR, 0.0)
-}
-
-fn pitch_hz_from_normalized(value: f32) -> f32 {
-    let min_hz = 20.0_f32;
-    let max_hz = 20_000.0_f32;
-    min_hz * (max_hz / min_hz).powf(value.clamp(0.0, 1.0))
-}
-
-fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
-    const NOTE_NAMES: [&str; 12] = [
-        "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
-    ];
-
-    let midi_note = (69.0 + 12.0 * (hz / tuning_a4_hz.max(1.0)).log2()).round() as i32;
-    let octave = midi_note / 12 - 1;
-    let note_idx = midi_note.rem_euclid(12) as usize;
-
-    format!("{}{}", NOTE_NAMES[note_idx], octave)
-}
-
-fn point_value_label(kind: CurveKind, point: Pos2, tuning_a4_hz: f32) -> String {
-    match kind {
-        CurveKind::Amplitude => format!("{:.1} dB", amplitude_db(point.y)),
-        CurveKind::Pitch => {
-            let hz = pitch_hz_from_normalized(point.y)
-                * (tuning_a4_hz / config::app_config().default_tuning_a4_hz.max(f32::EPSILON));
-            let note = note_name_from_hz(hz, tuning_a4_hz);
-            format!("{} {:.1}Hz", note, hz)
-        }
-    }
-}
-
-fn constrain_curve_points(points: &mut [Pos2]) {
-    if points.len() < 2 {
-        return;
-    }
-
-    points[0].x = 0.0;
-    points[0].y = points[0].y.clamp(0.0, 1.0);
-
-    let last = points.len() - 1;
-    points[last].x = 1.0;
-    points[last].y = points[last].y.clamp(0.0, 1.0);
-
-    for i in 1..last {
-        let min_x = (points[i - 1].x + MIN_POINT_GAP_X).clamp(0.0, 1.0);
-        let max_x = (points[i + 1].x - MIN_POINT_GAP_X).clamp(0.0, 1.0);
-        points[i].x = points[i].x.clamp(min_x.min(max_x), max_x.max(min_x));
-        points[i].y = points[i].y.clamp(0.0, 1.0);
     }
 }
 
@@ -1252,6 +681,9 @@ pub fn create_testing_editor(
                 }
                 if !shift_down {
                     state.shift_locked_point = None;
+                    state.shift_lock_x_freeze_until_seconds = 0.0;
+                    state.shift_lock_require_horizontal_reengage = false;
+                    state.shift_lock_reengage_anchor_screen_x = None;
                 }
                 let left_axis_padding = (62.0 * ui_scale).clamp(52.0, 120.0);
                 let bottom_axis_padding = (52.0 * ui_scale).clamp(40.0, 110.0);
@@ -1419,11 +851,20 @@ pub fn create_testing_editor(
                 let mut selection_drag_start = state.selection_drag_start;
                 let mut selection_drag_current = state.selection_drag_current;
                 let mut shift_locked_point = state.shift_locked_point;
+                let mut shift_lock_x_freeze_until_seconds = state.shift_lock_x_freeze_until_seconds;
+                let mut shift_lock_require_horizontal_reengage =
+                    state.shift_lock_require_horizontal_reengage;
+                let mut shift_lock_reengage_anchor_screen_x = state.shift_lock_reengage_anchor_screen_x;
                 let mut shift_snap_candidate: Option<usize> = None;
                 let mut remove_selected_requested = graph_has_focus && (cut_shortcut || delete_shortcut);
 
                 let curve_point_count = state.active_curve().points.len();
                 shift_locked_point = shift_locked_point.filter(|&idx| idx < curve_point_count);
+                if shift_locked_point.is_none() {
+                    shift_lock_x_freeze_until_seconds = 0.0;
+                    shift_lock_require_horizontal_reengage = false;
+                    shift_lock_reengage_anchor_screen_x = None;
+                }
                 selected_points.retain(|&idx| idx < curve_point_count);
                 if selected_points.is_empty() {
                     if let Some(idx) = selected_point.filter(|idx| *idx < curve_point_count) {
@@ -1473,6 +914,9 @@ pub fn create_testing_editor(
                             selected_points.push(i);
                             if shift_down {
                                 shift_locked_point = Some(i);
+                                shift_lock_x_freeze_until_seconds = 0.0;
+                                shift_lock_require_horizontal_reengage = false;
+                                shift_lock_reengage_anchor_screen_x = None;
                             }
                         }
 
@@ -1485,6 +929,9 @@ pub fn create_testing_editor(
                             }
                             if shift_down {
                                 shift_locked_point = Some(i);
+                                shift_lock_x_freeze_until_seconds = 0.0;
+                                shift_lock_require_horizontal_reengage = false;
+                                shift_lock_reengage_anchor_screen_x = None;
                             }
                         }
 
@@ -1502,6 +949,9 @@ pub fn create_testing_editor(
 
                         if response.dragged() {
                             graph_response.request_focus();
+                            if shift_down && shift_locked_point == Some(i) {
+                                continue;
+                            }
                             point_dragging_this_frame = true;
                             if let Some(pointer_pos) = response.interact_pointer_pos() {
                                 let mut new_point = to_normalized_with_note_end(
@@ -1518,6 +968,9 @@ pub fn create_testing_editor(
                                 selected_points.push(i);
                                 if shift_down {
                                     shift_locked_point = Some(i);
+                                    shift_lock_x_freeze_until_seconds = 0.0;
+                                    shift_lock_require_horizontal_reengage = false;
+                                    shift_lock_reengage_anchor_screen_x = None;
                                 }
                                 constrain_curve_points(points);
                             }
@@ -1526,6 +979,8 @@ pub fn create_testing_editor(
 
                     if shift_down {
                         let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
+                        let pointer_primary_released =
+                            ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
                         let pointer_primary_clicked = ui.input(|i| i.pointer.primary_clicked());
                         let pointer_pos = ui.input(|i| i.pointer.hover_pos());
 
@@ -1552,6 +1007,9 @@ pub fn create_testing_editor(
                                     shift_snap_candidate = Some(idx);
                                     if pointer_primary_clicked {
                                         shift_locked_point = Some(idx);
+                                        shift_lock_x_freeze_until_seconds = 0.0;
+                                        shift_lock_require_horizontal_reengage = false;
+                                        shift_lock_reengage_anchor_screen_x = None;
                                         selected_point = Some(idx);
                                         selected_points.clear();
                                         selected_points.push(idx);
@@ -1560,16 +1018,45 @@ pub fn create_testing_editor(
                             }
 
                             if let Some(idx) = shift_locked_point.filter(|&idx| idx < points.len()) {
+                                let locked_screen_x =
+                                    to_screen_with_note_end(points[idx], graph_rect, note_end_display_t).x;
+                                let virtual_pointer_pos = Pos2::new(locked_screen_x, pointer_pos.y);
                                 let mapped_point = to_normalized_with_note_end(
-                                    pointer_pos,
+                                    virtual_pointer_pos,
                                     graph_rect,
                                     note_end_display_t,
                                 );
                                 let mut new_point = points[idx];
+                                let now_seconds = ui.input(|i| i.time);
+                                if pointer_primary_released {
+                                    shift_lock_x_freeze_until_seconds =
+                                        now_seconds + SHIFT_LOCK_X_FREEZE_AFTER_VERTICAL_RELEASE_SECONDS;
+                                    shift_lock_require_horizontal_reengage = true;
+                                    shift_lock_reengage_anchor_screen_x = Some(locked_screen_x);
+                                }
                                 if pointer_primary_down {
                                     new_point.y = mapped_point.y;
+                                    shift_lock_require_horizontal_reengage = true;
+                                    shift_lock_reengage_anchor_screen_x = Some(locked_screen_x);
                                 } else {
-                                    new_point.x = mapped_point.x;
+                                    if shift_lock_require_horizontal_reengage {
+                                        if let Some(anchor_x) = shift_lock_reengage_anchor_screen_x {
+                                            if (pointer_pos.x - anchor_x).abs()
+                                                >= SHIFT_LOCK_X_REENGAGE_HORIZONTAL_PIXELS
+                                            {
+                                                shift_lock_require_horizontal_reengage = false;
+                                                shift_lock_reengage_anchor_screen_x = None;
+                                            }
+                                        } else {
+                                            shift_lock_reengage_anchor_screen_x = Some(pointer_pos.x);
+                                        }
+                                    }
+
+                                    if now_seconds >= shift_lock_x_freeze_until_seconds
+                                        && !shift_lock_require_horizontal_reengage
+                                    {
+                                        new_point.x = mapped_point.x;
+                                    }
                                 }
                                 if (new_point.x - points[idx].x).abs() > f32::EPSILON
                                     || (new_point.y - points[idx].y).abs() > f32::EPSILON
@@ -1699,6 +1186,9 @@ pub fn create_testing_editor(
                 state.selection_drag_start = selection_drag_start;
                 state.selection_drag_current = selection_drag_current;
                 state.shift_locked_point = shift_locked_point;
+                state.shift_lock_x_freeze_until_seconds = shift_lock_x_freeze_until_seconds;
+                state.shift_lock_require_horizontal_reengage = shift_lock_require_horizontal_reengage;
+                state.shift_lock_reengage_anchor_screen_x = shift_lock_reengage_anchor_screen_x;
                 let active_points = state.active_curve().points.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
                 shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
