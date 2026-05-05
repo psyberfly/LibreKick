@@ -69,9 +69,18 @@ impl Curve {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum UiPage {
+    Kick,
+    Bass,
+}
+
 pub(super) struct BezierUiState {
+    pub(super) active_page: UiPage,
     pub(super) amplitude_curve: Curve,
     pub(super) pitch_curve: Curve,
+    pub(super) bass_amp_curve: Curve,
+    pub(super) bass_filter_curve: Curve,
     pub(super) active_curve: CurveKind,
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
@@ -80,6 +89,8 @@ pub(super) struct BezierUiState {
     pub(super) base_note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
     pub(super) selected_point: Option<usize>,
+    pub(super) bass_amp_selected_point: Option<usize>,
+    pub(super) bass_filter_selected_point: Option<usize>,
     pub(super) selected_points: Vec<usize>,
     pub(super) selection_drag_start: Option<Pos2>,
     pub(super) selection_drag_current: Option<Pos2>,
@@ -107,8 +118,11 @@ impl Default for BezierUiState {
     fn default() -> Self {
         let note_length_max_ms = config::app_config().note_length_max_ms;
         let mut state = Self {
+            active_page: UiPage::Kick,
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
+            bass_amp_curve: Curve::default_amplitude(),
+            bass_filter_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A432,
             keytrack_enabled: false,
@@ -117,6 +131,8 @@ impl Default for BezierUiState {
             base_note_length_max_ms: note_length_max_ms,
             waveform_zoom_percent: 100.0,
             selected_point: Some(1),
+            bass_amp_selected_point: Some(1),
+            bass_filter_selected_point: Some(1),
             selected_points: vec![1],
             selection_drag_start: None,
             selection_drag_current: None,
