@@ -878,6 +878,7 @@ pub fn create_testing_editor(
                 let mut bend_hover_segment: Option<usize> = None;
                 let mut bend_hover_point: Option<Pos2> = None;
                 let mut bend_hover_value: Option<f32> = None;
+                let mut bend_hover_polyline: Vec<Pos2> = Vec::new();
                 let mut shift_snap_candidate: Option<usize> = None;
                 let mut remove_selected_requested = graph_has_focus && (cut_shortcut || delete_shortcut);
 
@@ -1024,36 +1025,75 @@ pub fn create_testing_editor(
 
                     if bend_modifier_down {
                         if let Some(pointer_pos) = pointer_pos {
-                            let mut best_segment: Option<(usize, f32, Pos2)> = None;
+                            let mut best_segment: Option<(usize, f32, Pos2, Vec<Pos2>)> = None;
                             for seg_idx in 0..points.len().saturating_sub(1) {
-                                let left =
-                                    to_screen_with_note_end(points[seg_idx], graph_rect, note_end_display_t);
-                                let right = to_screen_with_note_end(
-                                    points[seg_idx + 1],
+                                let left_norm = points[seg_idx];
+                                let right_norm = points[seg_idx + 1];
+                                let left_screen =
+                                    to_screen_with_note_end(left_norm, graph_rect, note_end_display_t);
+                                let right_screen =
+                                    to_screen_with_note_end(right_norm, graph_rect, note_end_display_t);
+                                let sample_count =
+                                    ((left_screen.distance(right_screen) / 10.0).ceil() as usize).clamp(8, 48);
+
+                                let mut curve_polyline = Vec::with_capacity(sample_count + 1);
+                                let mut prev_point = to_screen_with_note_end(
+                                    Pos2::new(
+                                        left_norm.x,
+                                        envelope_value_linear(points, bends, left_norm.x),
+                                    ),
                                     graph_rect,
                                     note_end_display_t,
                                 );
-                                let ab = right - left;
-                                let ap = pointer_pos - left;
-                                let denom = ab.dot(ab).max(f32::EPSILON);
-                                let t = (ap.dot(ab) / denom).clamp(0.0, 1.0);
-                                let closest = left + ab * t;
-                                let distance = closest.distance(pointer_pos);
+                                curve_polyline.push(prev_point);
+                                let mut closest_point = prev_point;
+                                let mut distance = f32::INFINITY;
+
+                                for step in 1..=sample_count {
+                                    let local_t = step as f32 / sample_count as f32;
+                                    let sample_t = egui::lerp(left_norm.x..=right_norm.x, local_t);
+                                    let sample_point = to_screen_with_note_end(
+                                        Pos2::new(
+                                            sample_t,
+                                            envelope_value_linear(points, bends, sample_t),
+                                        ),
+                                        graph_rect,
+                                        note_end_display_t,
+                                    );
+                                    curve_polyline.push(sample_point);
+
+                                    let ab = sample_point - prev_point;
+                                    let ap = pointer_pos - prev_point;
+                                    let denom = ab.dot(ab).max(f32::EPSILON);
+                                    let proj_t = (ap.dot(ab) / denom).clamp(0.0, 1.0);
+                                    let projected = prev_point + ab * proj_t;
+                                    let seg_distance = projected.distance(pointer_pos);
+                                    if seg_distance < distance {
+                                        distance = seg_distance;
+                                        closest_point = projected;
+                                    }
+
+                                    prev_point = sample_point;
+                                }
+
                                 if distance <= EDGE_BEND_HIT_RADIUS_PIXELS {
-                                    if let Some((_, best_distance, _)) = best_segment {
+                                    if let Some((_, best_distance, _, _)) = best_segment {
                                         if distance < best_distance {
-                                            best_segment = Some((seg_idx, distance, closest));
+                                            best_segment =
+                                                Some((seg_idx, distance, closest_point, curve_polyline));
                                         }
                                     } else {
-                                        best_segment = Some((seg_idx, distance, closest));
+                                        best_segment =
+                                            Some((seg_idx, distance, closest_point, curve_polyline));
                                     }
                                 }
                             }
 
-                            if let Some((seg_idx, _distance, closest)) = best_segment {
+                            if let Some((seg_idx, _distance, closest, hover_polyline)) = best_segment {
                                 bend_hover_segment = Some(seg_idx);
                                 bend_hover_point = Some(closest);
                                 bend_hover_value = bends.get(seg_idx).copied();
+                                bend_hover_polyline = hover_polyline;
                                 ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
 
                                 if pointer_primary_down
@@ -1080,6 +1120,28 @@ pub fn create_testing_editor(
                                 bend_hover_segment = Some(seg_idx);
                                 bend_hover_point = Some(pointer_pos);
                                 bend_hover_value = Some(bend);
+                                let left_norm = points[seg_idx];
+                                let right_norm = points[seg_idx + 1];
+                                let left_screen =
+                                    to_screen_with_note_end(left_norm, graph_rect, note_end_display_t);
+                                let right_screen =
+                                    to_screen_with_note_end(right_norm, graph_rect, note_end_display_t);
+                                let sample_count =
+                                    ((left_screen.distance(right_screen) / 10.0).ceil() as usize).clamp(8, 48);
+                                let mut hover_polyline = Vec::with_capacity(sample_count + 1);
+                                for step in 0..=sample_count {
+                                    let local_t = step as f32 / sample_count as f32;
+                                    let sample_t = egui::lerp(left_norm.x..=right_norm.x, local_t);
+                                    hover_polyline.push(to_screen_with_note_end(
+                                        Pos2::new(
+                                            sample_t,
+                                            envelope_value_linear(points, bends, sample_t),
+                                        ),
+                                        graph_rect,
+                                        note_end_display_t,
+                                    ));
+                                }
+                                bend_hover_polyline = hover_polyline;
                                 point_dragging_this_frame = true;
                                 ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
                             }
@@ -1386,11 +1448,13 @@ pub fn create_testing_editor(
                     );
                 }
 
-                if let Some(segment) = bend_hover_segment.filter(|seg| *seg + 1 < screen_points.len()) {
-                    painter.line_segment(
-                        [screen_points[segment], screen_points[segment + 1]],
-                        Stroke::new(4.0, Color32::from_rgba_unmultiplied(255, 255, 255, 60)),
-                    );
+                if bend_hover_segment.is_some() && bend_hover_polyline.len() > 1 {
+                    for line in bend_hover_polyline.windows(2) {
+                        painter.line_segment(
+                            [line[0], line[1]],
+                            Stroke::new(4.0, Color32::from_rgba_unmultiplied(255, 255, 255, 60)),
+                        );
+                    }
                 }
 
                 if let (Some(point), Some(value)) = (bend_hover_point, bend_hover_value) {
