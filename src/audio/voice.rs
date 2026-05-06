@@ -1,6 +1,8 @@
 use std::f32::consts::TAU;
 
-use crate::shared::{BassFilterMode, BassWaveform, CURVE_LUT_SIZE};
+use crate::shared::{BassFilterMode, Waveform, CURVE_LUT_SIZE};
+
+use super::oscillator::Oscillator;
 
 #[derive(Clone, Copy)]
 pub struct VoiceParams {
@@ -8,6 +10,7 @@ pub struct VoiceParams {
     pub keytrack_enabled: bool,
     pub tuning_scale: f32,
     pub note_length_ms: f32,
+    pub waveform: Waveform,
 }
 
 #[derive(Clone, Copy)]
@@ -18,13 +21,12 @@ pub struct BassVoiceParams {
     pub base_cutoff_hz: f32,
     pub pitch_hz: f32,
     pub filter_mode: BassFilterMode,
-    pub waveform: BassWaveform,
+    pub waveform: Waveform,
 }
 
 pub struct KickVoice {
     sample_rate: f32,
-    active: bool,
-    phase: f32,
+    oscillator: Oscillator,
     time_seconds: f32,
     hit_gain: f32,
     hit_note_hz: Option<f32>,
@@ -32,8 +34,7 @@ pub struct KickVoice {
 
 pub struct BassVoice {
     sample_rate: f32,
-    active: bool,
-    phase: f32,
+    oscillator: Oscillator,
     time_seconds: f32,
     note_hz: f32,
     velocity: f32,
@@ -46,8 +47,7 @@ impl Default for KickVoice {
     fn default() -> Self {
         Self {
             sample_rate: 44_100.0,
-            active: false,
-            phase: 0.0,
+            oscillator: Oscillator::default(),
             time_seconds: 0.0,
             hit_gain: 1.0,
             hit_note_hz: None,
@@ -59,8 +59,7 @@ impl Default for BassVoice {
     fn default() -> Self {
         Self {
             sample_rate: 44_100.0,
-            active: false,
-            phase: 0.0,
+            oscillator: Oscillator::default(),
             time_seconds: 0.0,
             note_hz: 55.0,
             velocity: 1.0,
@@ -80,23 +79,32 @@ fn pitch_curve_to_hz(value: f32) -> f32 {
 impl KickVoice {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
+        self.oscillator.set_sample_rate(self.sample_rate);
     }
 
-    pub fn trigger(&mut self) {
-        self.trigger_with_velocity(1.0);
+    pub fn trigger(&mut self, retrigger: bool, legato_voice_steal: bool) {
+        self.trigger_with_velocity(1.0, retrigger, legato_voice_steal);
     }
 
-    pub fn trigger_with_velocity(&mut self, velocity: f32) {
-        self.active = true;
-        self.phase = 0.0;
+    pub fn trigger_with_velocity(&mut self, velocity: f32, retrigger: bool, legato_voice_steal: bool) {
+        if !self.oscillator.note_on(retrigger, legato_voice_steal) {
+            return;
+        }
         self.time_seconds = 0.0;
         self.hit_gain = velocity.clamp(0.0, 1.0);
         self.hit_note_hz = None;
     }
 
-    pub fn trigger_with_note_velocity(&mut self, note_hz: f32, velocity: f32) {
-        self.active = true;
-        self.phase = 0.0;
+    pub fn trigger_with_note_velocity(
+        &mut self,
+        note_hz: f32,
+        velocity: f32,
+        retrigger: bool,
+        legato_voice_steal: bool,
+    ) {
+        if !self.oscillator.note_on(retrigger, legato_voice_steal) {
+            return;
+        }
         self.time_seconds = 0.0;
         self.hit_gain = velocity.clamp(0.0, 1.0);
         self.hit_note_hz = Some(note_hz.max(20.0));
@@ -108,13 +116,13 @@ impl KickVoice {
         amp_lut: &[f32; CURVE_LUT_SIZE],
         pitch_lut: &[f32; CURVE_LUT_SIZE],
     ) -> f32 {
-        if !self.active {
+        if !self.oscillator.is_active() {
             return 0.0;
         }
 
         let note_length_seconds = (params.note_length_ms * 0.001).clamp(0.0, 1.0);
         if note_length_seconds <= 0.0 {
-            self.active = false;
+            self.oscillator.note_off();
             return 0.0;
         }
 
@@ -135,16 +143,13 @@ impl KickVoice {
         let amplitude = params.level.clamp(0.0, 1.0) * self.hit_gain * amp_curve;
         let frequency = (base_hz * params.tuning_scale.max(0.5)).max(20.0);
 
-        self.phase += TAU * frequency / self.sample_rate;
-        if self.phase >= TAU {
-            self.phase -= TAU;
-        }
-
-        let sample = self.phase.sin() * amplitude;
+        let sample = self
+            .oscillator
+            .render_sample(params.waveform, frequency, amplitude);
 
         self.time_seconds += 1.0 / self.sample_rate;
         if self.time_seconds >= note_length_seconds || normalized_time >= 1.0 || amplitude < 0.0005 {
-            self.active = false;
+            self.oscillator.note_off();
         }
 
         sample
@@ -154,6 +159,7 @@ impl KickVoice {
 impl BassVoice {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
+        self.oscillator.set_sample_rate(self.sample_rate);
     }
 
     fn reset_filter_state(&mut self) {
@@ -169,23 +175,17 @@ impl BassVoice {
         retrigger: bool,
         legato_voice_steal: bool,
     ) {
-        if self.active && !legato_voice_steal {
+        if !self.oscillator.note_on(retrigger, legato_voice_steal) {
             return;
         }
 
-        let was_active = self.active;
-        self.active = true;
         self.time_seconds = 0.0;
         self.note_hz = note_hz.max(20.0);
         self.velocity = velocity.clamp(0.0, 1.0);
-
-        if retrigger || !was_active {
-            self.phase = 0.0;
-        }
     }
 
     pub fn note_off(&mut self) {
-        self.active = false;
+        self.oscillator.note_off();
         self.reset_filter_state();
     }
 
@@ -195,7 +195,7 @@ impl BassVoice {
         bass_amp_lut: &[f32; CURVE_LUT_SIZE],
         bass_filter_lut: &[f32; CURVE_LUT_SIZE],
     ) -> f32 {
-        if !self.active {
+        if !self.oscillator.is_active() {
             return 0.0;
         }
 
@@ -210,21 +210,9 @@ impl BassVoice {
         let amplitude = params.level.clamp(0.0, 1.0) * self.velocity * amp_env;
         let frequency = (params.pitch_hz * params.tuning_scale.max(0.5)).clamp(20.0, 20_000.0);
 
-        self.phase += frequency / self.sample_rate;
-        if self.phase >= 1.0 {
-            self.phase -= 1.0;
-        }
-        let raw = match params.waveform {
-            BassWaveform::Saw => (2.0 * self.phase - 1.0) * amplitude,
-            BassWaveform::Square => {
-                if self.phase < 0.5 {
-                    amplitude
-                } else {
-                    -amplitude
-                }
-            }
-            BassWaveform::Sine => (self.phase * TAU).sin() * amplitude,
-        };
+        let raw = self
+            .oscillator
+            .render_sample(params.waveform, frequency, amplitude);
 
         let base_cutoff = params.base_cutoff_hz.clamp(20.0, 8_000.0);
         let cutoff_hz = (base_cutoff * (0.25 + cutoff_env * 0.75)).clamp(20.0, 8_000.0);

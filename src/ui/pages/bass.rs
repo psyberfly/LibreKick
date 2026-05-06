@@ -1,8 +1,8 @@
 use nih_plug_egui::egui::{self, Align2, Color32, RichText, Sense, Stroke, Vec2};
 
 use crate::ui::{
-    components::{envelope_editor, waveform_preview},
-    helpers::{curve_lut, note_name_from_hz, waveform_preview_points},
+    components::{envelope_editor, oscillator_panel, panel, waveform_preview},
+    helpers::{curve_lut, waveform_preview_points},
     state::BezierUiState,
 };
 use crate::shared;
@@ -23,60 +23,17 @@ pub(crate) fn render(
     ui.separator();
 
     ui.columns(2, |columns| {
-        columns[0].group(|ui| {
-            ui.set_min_height((220.0 * ui_scale).max(180.0));
-            ui.label(RichText::new("Oscillator").strong());
-            ui.separator();
-            ui.label("Waveform");
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut state.bass_waveform, shared::BassWaveform::Saw, "Saw");
-                ui.add_enabled_ui(false, |ui| {
-                    ui.selectable_value(
-                        &mut state.bass_waveform,
-                        shared::BassWaveform::Square,
-                        "Square",
-                    );
-                    ui.selectable_value(
-                        &mut state.bass_waveform,
-                        shared::BassWaveform::Sine,
-                        "Sine",
-                    );
-                });
-            });
-            ui.add_space(6.0 * ui_scale);
-            ui.label("Sub Level");
-            let mut sub_level = 0.5_f32;
-            ui.add_enabled(false, egui::Slider::new(&mut sub_level, 0.0..=1.0));
-
-            ui.add_space(6.0 * ui_scale);
-            ui.label("Pitch");
-            let bass_note_label = note_name_from_hz(state.bass_pitch_hz, state.tuning_standard.a4_hz());
-            let pitch_changed = ui
-                .add(
-                    egui::Slider::new(&mut state.bass_pitch_hz, 20.0..=2000.0)
-                        .text("Hz")
-                        .logarithmic(true),
-                )
-                .changed();
-            if pitch_changed {
-                state.bass_pitch_hz = state.bass_pitch_hz.clamp(20.0, 2_000.0);
-            }
-            ui.label(format!("{} {:.2}Hz", bass_note_label, state.bass_pitch_hz));
-
-            ui.add_space(6.0 * ui_scale);
-            ui.label("Note Length");
-            let bass_note_length_changed = ui
-                .add(egui::Slider::new(&mut state.bass_note_length_ms, 1.0..=1000.0).text("ms"))
-                .changed();
-            if bass_note_length_changed {
-                state.bass_note_length_ms = state.bass_note_length_ms.clamp(1.0, 1000.0);
-            }
-
-            ui.add_space(6.0 * ui_scale);
-            ui.checkbox(&mut state.bass_retrigger, "Retrigger");
-            ui.checkbox(
-                &mut state.bass_legato_voice_steal,
-                "Legato (voice steal)",
+        panel::render(&mut columns[0], "Oscillator", ui_scale, 220.0 * ui_scale, |ui| {
+            oscillator_panel::render(
+                ui,
+                ui_scale,
+                oscillator_panel::OscillatorPanelModel {
+                    waveform: &mut state.bass_waveform,
+                    retrigger: &mut state.bass_retrigger,
+                    legato_voice_steal: &mut state.bass_legato_voice_steal,
+                    pitch_hz: Some(&mut state.bass_pitch_hz),
+                    note_length_ms: Some(&mut state.bass_note_length_ms),
+                },
             );
 
             ui.add_space(8.0 * ui_scale);
@@ -90,10 +47,7 @@ pub(crate) fn render(
             );
         });
 
-        columns[1].group(|ui| {
-            ui.set_min_height((220.0 * ui_scale).max(180.0));
-            ui.label(RichText::new("Filter").strong());
-            ui.separator();
+        panel::render(&mut columns[1], "Filter", ui_scale, 220.0 * ui_scale, |ui| {
             let filter_mode_label = match state.bass_filter_mode {
                 shared::BassFilterMode::LowPass => "Low-pass",
                 shared::BassFilterMode::HighPass => "High-pass",

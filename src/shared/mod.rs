@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use crate::config;
 
 pub const CURVE_LUT_SIZE: usize = 256;
+pub const OSCILLOSCOPE_BUFFER_SIZE: usize = 2048;
 
 #[derive(Clone, Copy)]
 pub enum CurveKind {
@@ -10,8 +11,29 @@ pub enum CurveKind {
     Pitch,
 }
 
+pub fn set_kick_waveform(shared: &SharedStateHandle, waveform: Waveform) {
+    if let Ok(mut state) = shared.lock() {
+        state.kick_waveform = waveform;
+    }
+}
+
+pub fn set_kick_retrigger(shared: &SharedStateHandle, kick_retrigger: bool) {
+    if let Ok(mut state) = shared.lock() {
+        state.kick_retrigger = kick_retrigger;
+    }
+}
+
+pub fn set_kick_legato_voice_steal(
+    shared: &SharedStateHandle,
+    kick_legato_voice_steal: bool,
+) {
+    if let Ok(mut state) = shared.lock() {
+        state.kick_legato_voice_steal = kick_legato_voice_steal;
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum BassWaveform {
+pub enum Waveform {
     Saw,
     Square,
     Sine,
@@ -22,6 +44,22 @@ pub enum BassFilterMode {
     LowPass,
     HighPass,
     BandPass,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OscilloscopeSignal {
+    Kick,
+    Bass,
+    Sum,
+}
+
+#[derive(Clone)]
+pub struct OscilloscopeSnapshot {
+    pub kick: [f32; OSCILLOSCOPE_BUFFER_SIZE],
+    pub bass: [f32; OSCILLOSCOPE_BUFFER_SIZE],
+    pub sum: [f32; OSCILLOSCOPE_BUFFER_SIZE],
+    pub len: usize,
+    pub sequence: u64,
 }
 
 pub fn set_bass_amp_lut(shared: &SharedStateHandle, lut: [f32; CURVE_LUT_SIZE]) {
@@ -44,13 +82,16 @@ pub struct SharedSnapshot {
     pub bass_filter_lut: [f32; CURVE_LUT_SIZE],
     pub keytrack_enabled: bool,
     pub note_length_ms: f32,
+    pub kick_waveform: Waveform,
+    pub kick_retrigger: bool,
+    pub kick_legato_voice_steal: bool,
     pub bass_note_length_ms: f32,
     pub bass_cutoff_hz: f32,
     pub bass_pitch_hz: f32,
     pub bass_retrigger: bool,
     pub bass_legato_voice_steal: bool,
     pub bass_filter_mode: BassFilterMode,
-    pub bass_waveform: BassWaveform,
+    pub bass_waveform: Waveform,
     pub trigger_counter: u64,
 }
 
@@ -61,13 +102,21 @@ pub(crate) struct SharedState {
     bass_filter_lut: [f32; CURVE_LUT_SIZE],
     keytrack_enabled: bool,
     note_length_ms: f32,
+    kick_waveform: Waveform,
+    kick_retrigger: bool,
+    kick_legato_voice_steal: bool,
     bass_note_length_ms: f32,
     bass_cutoff_hz: f32,
     bass_pitch_hz: f32,
     bass_retrigger: bool,
     bass_legato_voice_steal: bool,
     bass_filter_mode: BassFilterMode,
-    bass_waveform: BassWaveform,
+    bass_waveform: Waveform,
+    osc_kick: [f32; OSCILLOSCOPE_BUFFER_SIZE],
+    osc_bass: [f32; OSCILLOSCOPE_BUFFER_SIZE],
+    osc_sum: [f32; OSCILLOSCOPE_BUFFER_SIZE],
+    osc_len: usize,
+    osc_sequence: u64,
     trigger_counter: u64,
 }
 
@@ -81,13 +130,21 @@ impl Default for SharedState {
             bass_filter_lut: [0.0; CURVE_LUT_SIZE],
             keytrack_enabled: false,
             note_length_ms: app_cfg.note_length_max_ms,
+            kick_waveform: Waveform::Sine,
+            kick_retrigger: true,
+            kick_legato_voice_steal: true,
             bass_note_length_ms: app_cfg.note_length_max_ms,
             bass_cutoff_hz: 120.0,
             bass_pitch_hz: 55.0,
             bass_retrigger: true,
             bass_legato_voice_steal: false,
             bass_filter_mode: BassFilterMode::LowPass,
-            bass_waveform: BassWaveform::Saw,
+            bass_waveform: Waveform::Saw,
+            osc_kick: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
+            osc_bass: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
+            osc_sum: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
+            osc_len: 0,
+            osc_sequence: 0,
             trigger_counter: 0,
         }
     }
@@ -176,9 +233,53 @@ pub fn set_bass_legato_voice_steal(
     }
 }
 
-pub fn set_bass_waveform(shared: &SharedStateHandle, waveform: BassWaveform) {
+pub fn set_bass_waveform(shared: &SharedStateHandle, waveform: Waveform) {
     if let Ok(mut state) = shared.lock() {
         state.bass_waveform = waveform;
+    }
+}
+
+pub fn publish_oscilloscope_signal_block(
+    shared: &SharedStateHandle,
+    signal: OscilloscopeSignal,
+    samples: &[f32],
+) {
+    if let Ok(mut state) = shared.lock() {
+        let len = samples.len().min(OSCILLOSCOPE_BUFFER_SIZE);
+        let target = match signal {
+            OscilloscopeSignal::Kick => &mut state.osc_kick,
+            OscilloscopeSignal::Bass => &mut state.osc_bass,
+            OscilloscopeSignal::Sum => &mut state.osc_sum,
+        };
+        target[..len].copy_from_slice(&samples[..len]);
+        state.osc_len = state.osc_len.max(len);
+    }
+}
+
+pub fn commit_oscilloscope_frame(shared: &SharedStateHandle) {
+    if let Ok(mut state) = shared.lock() {
+        state.osc_len = state.osc_len.min(OSCILLOSCOPE_BUFFER_SIZE);
+        state.osc_sequence = state.osc_sequence.wrapping_add(1);
+    }
+}
+
+pub fn oscilloscope_snapshot(shared: &SharedStateHandle) -> OscilloscopeSnapshot {
+    if let Ok(state) = shared.lock() {
+        return OscilloscopeSnapshot {
+            kick: state.osc_kick,
+            bass: state.osc_bass,
+            sum: state.osc_sum,
+            len: state.osc_len,
+            sequence: state.osc_sequence,
+        };
+    }
+
+    OscilloscopeSnapshot {
+        kick: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
+        bass: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
+        sum: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
+        len: 0,
+        sequence: 0,
     }
 }
 
@@ -192,6 +293,9 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             bass_filter_lut: state.bass_filter_lut,
             keytrack_enabled: state.keytrack_enabled,
             note_length_ms: state.note_length_ms,
+            kick_waveform: state.kick_waveform,
+            kick_retrigger: state.kick_retrigger,
+            kick_legato_voice_steal: state.kick_legato_voice_steal,
             bass_note_length_ms: state.bass_note_length_ms,
             bass_cutoff_hz: state.bass_cutoff_hz,
             bass_pitch_hz: state.bass_pitch_hz,
@@ -222,13 +326,16 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         bass_filter_lut,
         keytrack_enabled: false,
         note_length_ms: app_cfg.note_length_max_ms,
+        kick_waveform: Waveform::Sine,
+        kick_retrigger: true,
+        kick_legato_voice_steal: true,
         bass_note_length_ms: app_cfg.note_length_max_ms,
         bass_cutoff_hz: 120.0,
         bass_pitch_hz: 55.0,
         bass_retrigger: true,
         bass_legato_voice_steal: false,
         bass_filter_mode: BassFilterMode::LowPass,
-        bass_waveform: BassWaveform::Saw,
+        bass_waveform: Waveform::Saw,
         trigger_counter: 0,
     }
 }

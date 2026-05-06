@@ -1,3 +1,4 @@
+mod oscillator;
 mod voice;
 
 use nih_plug::prelude::*;
@@ -50,7 +51,10 @@ impl KickEngine {
         let shared_snapshot = shared::snapshot(shared_handle);
 
         if params.trigger_active && !self.last_trigger_param {
-            self.voice.trigger();
+            self.voice.trigger(
+                shared_snapshot.kick_retrigger,
+                shared_snapshot.kick_legato_voice_steal,
+            );
         }
         self.last_trigger_param = params.trigger_active;
 
@@ -59,16 +63,24 @@ impl KickEngine {
                 self.voice.trigger_with_note_velocity(
                     note_hz,
                     params.midi_velocity.clamp(0.0, 1.0),
+                    shared_snapshot.kick_retrigger,
+                    shared_snapshot.kick_legato_voice_steal,
                 );
             } else {
-                self.voice
-                    .trigger_with_velocity(params.midi_velocity.clamp(0.0, 1.0));
+                self.voice.trigger_with_velocity(
+                    params.midi_velocity.clamp(0.0, 1.0),
+                    shared_snapshot.kick_retrigger,
+                    shared_snapshot.kick_legato_voice_steal,
+                );
             }
         }
 
         if shared_snapshot.trigger_counter != self.last_shared_trigger_counter {
             self.last_shared_trigger_counter = shared_snapshot.trigger_counter;
-            self.voice.trigger();
+            self.voice.trigger(
+                shared_snapshot.kick_retrigger,
+                shared_snapshot.kick_legato_voice_steal,
+            );
         }
 
         let tuning_scale = 1.0;
@@ -78,6 +90,7 @@ impl KickEngine {
             keytrack_enabled: shared_snapshot.keytrack_enabled,
             tuning_scale,
             note_length_ms: shared_snapshot.note_length_ms,
+            waveform: shared_snapshot.kick_waveform,
         };
 
         let bass_voice_params = BassVoiceParams {
@@ -92,6 +105,10 @@ impl KickEngine {
 
         let mut bass_event_index = 0usize;
         let bass_event_count = params.bass_event_count.min(params.bass_events.len());
+        let mut osc_kick = [0.0_f32; shared::OSCILLOSCOPE_BUFFER_SIZE];
+        let mut osc_bass = [0.0_f32; shared::OSCILLOSCOPE_BUFFER_SIZE];
+        let mut osc_sum = [0.0_f32; shared::OSCILLOSCOPE_BUFFER_SIZE];
+        let mut osc_len = 0usize;
 
         for (sample_index, mut channel_samples) in buffer.iter_samples().enumerate() {
             while bass_event_index < bass_event_count {
@@ -131,9 +148,35 @@ impl KickEngine {
             );
             let limited_sample = (kick_sample + bass_sample).clamp(-1.0, 1.0);
 
+            if sample_index < shared::OSCILLOSCOPE_BUFFER_SIZE {
+                osc_kick[sample_index] = kick_sample;
+                osc_bass[sample_index] = bass_sample;
+                osc_sum[sample_index] = limited_sample;
+                osc_len = sample_index + 1;
+            }
+
             for output in channel_samples.iter_mut() {
                 *output = limited_sample;
             }
+        }
+
+        if osc_len > 0 {
+            shared::publish_oscilloscope_signal_block(
+                shared_handle,
+                shared::OscilloscopeSignal::Kick,
+                &osc_kick[..osc_len],
+            );
+            shared::publish_oscilloscope_signal_block(
+                shared_handle,
+                shared::OscilloscopeSignal::Bass,
+                &osc_bass[..osc_len],
+            );
+            shared::publish_oscilloscope_signal_block(
+                shared_handle,
+                shared::OscilloscopeSignal::Sum,
+                &osc_sum[..osc_len],
+            );
+            shared::commit_oscilloscope_frame(shared_handle);
         }
 
         ProcessStatus::Normal

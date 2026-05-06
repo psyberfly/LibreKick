@@ -25,6 +25,9 @@ pub(super) struct EditorSnapshot {
     pub(super) active_curve: CurveKind,
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
+    pub(super) kick_waveform: shared::Waveform,
+    pub(super) kick_retrigger: bool,
+    pub(super) kick_legato_voice_steal: bool,
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
@@ -38,6 +41,9 @@ pub(super) struct PatchSnapshot {
     pub(super) active_curve: CurveKind,
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
+    pub(super) kick_waveform: shared::Waveform,
+    pub(super) kick_retrigger: bool,
+    pub(super) kick_legato_voice_steal: bool,
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
@@ -74,6 +80,7 @@ pub(super) enum UiPage {
     Kick,
     Bass,
     Settings,
+    Oscilloscope,
 }
 
 pub(super) struct BezierUiState {
@@ -85,6 +92,9 @@ pub(super) struct BezierUiState {
     pub(super) active_curve: CurveKind,
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
+    pub(super) kick_waveform: shared::Waveform,
+    pub(super) kick_retrigger: bool,
+    pub(super) kick_legato_voice_steal: bool,
     pub(super) note_length_ms: f32,
     pub(super) bass_note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
@@ -93,7 +103,14 @@ pub(super) struct BezierUiState {
     pub(super) bass_retrigger: bool,
     pub(super) bass_legato_voice_steal: bool,
     pub(super) bass_filter_mode: shared::BassFilterMode,
-    pub(super) bass_waveform: shared::BassWaveform,
+    pub(super) bass_waveform: shared::Waveform,
+    pub(super) osc_hold: bool,
+    pub(super) osc_zoom_x: f32,
+    pub(super) osc_zoom_y: f32,
+    pub(super) osc_show_kick: bool,
+    pub(super) osc_show_bass: bool,
+    pub(super) osc_show_sum: bool,
+    pub(super) osc_snapshot: shared::OscilloscopeSnapshot,
     pub(super) base_note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
     pub(super) selected_point: Option<usize>,
@@ -134,6 +151,9 @@ impl Default for BezierUiState {
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A432,
             keytrack_enabled: false,
+            kick_waveform: shared::Waveform::Sine,
+            kick_retrigger: true,
+            kick_legato_voice_steal: true,
             note_length_ms: note_length_max_ms,
             bass_note_length_ms: 220.0,
             note_length_max_ms,
@@ -142,7 +162,20 @@ impl Default for BezierUiState {
             bass_retrigger: true,
             bass_legato_voice_steal: false,
             bass_filter_mode: shared::BassFilterMode::LowPass,
-            bass_waveform: shared::BassWaveform::Saw,
+            bass_waveform: shared::Waveform::Saw,
+            osc_hold: false,
+            osc_zoom_x: 1.0,
+            osc_zoom_y: 1.0,
+            osc_show_kick: true,
+            osc_show_bass: true,
+            osc_show_sum: true,
+            osc_snapshot: shared::OscilloscopeSnapshot {
+                kick: [0.0; shared::OSCILLOSCOPE_BUFFER_SIZE],
+                bass: [0.0; shared::OSCILLOSCOPE_BUFFER_SIZE],
+                sum: [0.0; shared::OSCILLOSCOPE_BUFFER_SIZE],
+                len: 0,
+                sequence: 0,
+            },
             base_note_length_max_ms: note_length_max_ms,
             waveform_zoom_percent: 100.0,
             selected_point: Some(1),
@@ -223,6 +256,9 @@ impl BezierUiState {
             active_curve: self.active_curve,
             tuning_standard: self.tuning_standard,
             keytrack_enabled: self.keytrack_enabled,
+            kick_waveform: self.kick_waveform,
+            kick_retrigger: self.kick_retrigger,
+            kick_legato_voice_steal: self.kick_legato_voice_steal,
             note_length_ms: self.note_length_ms,
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
@@ -236,6 +272,9 @@ impl BezierUiState {
         self.active_curve = snapshot.active_curve;
         self.tuning_standard = snapshot.tuning_standard;
         self.keytrack_enabled = snapshot.keytrack_enabled;
+        self.kick_waveform = snapshot.kick_waveform;
+        self.kick_retrigger = snapshot.kick_retrigger;
+        self.kick_legato_voice_steal = snapshot.kick_legato_voice_steal;
         self.note_length_ms = snapshot.note_length_ms;
         self.note_length_max_ms = snapshot.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
@@ -298,6 +337,9 @@ impl BezierUiState {
             active_curve: self.active_curve,
             tuning_standard: self.tuning_standard,
             keytrack_enabled: self.keytrack_enabled,
+            kick_waveform: self.kick_waveform,
+            kick_retrigger: self.kick_retrigger,
+            kick_legato_voice_steal: self.kick_legato_voice_steal,
             note_length_ms: self.note_length_ms,
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,

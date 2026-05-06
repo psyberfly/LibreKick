@@ -1407,8 +1407,10 @@ pub fn create_testing_editor(
                 });
                 } else if state.active_page == UiPage::Bass {
                     pages::bass::render(ui, ui_scale, state, &shared_for_ui);
-                } else {
+                } else if state.active_page == UiPage::Settings {
                     pages::settings::render(ui, ui_scale, state);
+                } else {
+                    pages::oscilloscope::render(ui, ui_scale, state, &shared_for_ui);
                 }
                 });
                 });
@@ -1429,6 +1431,7 @@ pub fn create_testing_editor(
                             ui.selectable_value(&mut state.active_page, UiPage::Kick, "Kick");
                             ui.selectable_value(&mut state.active_page, UiPage::Bass, "Bass");
                             ui.selectable_value(&mut state.active_page, UiPage::Settings, "Settings");
+                            ui.selectable_value(&mut state.active_page, UiPage::Oscilloscope, "Oscilloscope");
                         });
                     },
                 );

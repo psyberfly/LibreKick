@@ -1,6 +1,7 @@
 use nih_plug_egui::egui;
 
 use crate::{config, patches, shared};
+use crate::ui::components::{oscillator_panel, panel};
 
 use super::super::{
     apply_ui_text_scale, brand_title_logo, CurveKind, APP_THEME,
@@ -165,6 +166,25 @@ pub(crate) fn render_controls(
     }
 
     ui.add_space(8.0 * ui_scale);
+    panel::render(ui, "Oscillator", ui_scale, 150.0 * ui_scale, |ui| {
+        oscillator_panel::render(
+            ui,
+            ui_scale,
+            oscillator_panel::OscillatorPanelModel {
+                waveform: &mut state.kick_waveform,
+                retrigger: &mut state.kick_retrigger,
+                legato_voice_steal: &mut state.kick_legato_voice_steal,
+                pitch_hz: None,
+                note_length_ms: Some(&mut state.note_length_ms),
+            },
+        );
+    });
+    ui.add_space(8.0 * ui_scale);
+
+    shared::set_kick_waveform(shared_for_ui, state.kick_waveform);
+    shared::set_kick_retrigger(shared_for_ui, state.kick_retrigger);
+    shared::set_kick_legato_voice_steal(shared_for_ui, state.kick_legato_voice_steal);
+
     ui.horizontal(|ui| {
         ui.label("Curve:");
         ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
