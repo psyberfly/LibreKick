@@ -68,6 +68,9 @@ Important behavior:
 ## CONTRIBUTING 
 **NOTICE**: In order to stay free and compliant with its GPL licence, this software requires all of its contributors to write original source code and not use AI generated code; AI can be used personally, for research. 
 
+## TODO
+1. Make VoiceParams a single type: remove KickVoiceParams and BassVoiceParams and use VoiceParams instead. Make settings common across voice params.
+
 ## Architecture
 
 1. `src/lib.rs` (plugin entry)
