@@ -28,6 +28,23 @@ Or build it yourself for a different target and format:
 3. `./build.sh <target> <format>`
 4. `./install.sh <target> <format>` installs the VST into your configured system VST location; ready to use via your DAW.
 
+## MIDI NOTE ROUTING (SINGLE INSTRUMENT CHANNEL)
+
+LibreKick listens on one instrument MIDI channel and splits incoming notes by pitch range:
+
+- Kick zone: MIDI notes `12..23` (C0..B0)
+- Bass zone: MIDI notes `24..35` (C1..B1)
+- Bass alternate zone: MIDI notes `48..59` (C3..B3)
+
+Notes in the kick zone trigger the kick voice. Notes in the bass zones trigger the bass voice.
+
+Important behavior:
+
+- Both voices are driven from the same MIDI input channel; no separate channel setup is required.
+- Bass note length is constrained per note by MIDI note duration and the Bass page `Note Length` control.
+- Bass `Retrigger` is oscillator phase retrigger only.
+- Bass `Legato (voice steal)` controls overlapping-note handling for the bass voice.
+
 ## KEY BINDINGS
 
 - `Ctrl/Cmd + Z`: Undo
@@ -56,34 +73,33 @@ Or build it yourself for a different target and format:
 1. `src/lib.rs` (plugin entry)
 - Defines plugin metadata, I/O layout, and MIDI capability (`MidiConfig::Basic`).
 - Owns shared state handle and `KickEngine` instance.
-- Parses host `NoteOn` events (note + velocity) and forwards trigger data to DSP.
+- Collects/routes incoming MIDI into kick/bass control zones and forwards routed events to DSP.
 
 2. `src/ui/mod.rs` (editor + curve design)
-- Egui-based curve editor inside `ResizableWindow`.
-- Two curves: amplitude envelope and pitch envelope.
-- Converts curve points to LUTs and publishes them to shared state.
-- Sends manual trigger events and tuning selection (`A=440` / `A=432`).
-- Renders waveform preview behind envelope overlays.
+- Egui-based multi-page editor (`Kick`, `Bass`, `Settings`) inside `ResizableWindow`.
+- Kick page edits kick amp/pitch curves; Bass page edits bass amp/filter curves and oscillator/filter controls.
+- Settings page contains global tuning reference (`A=440` / `A=432`) for note-name display.
+- Converts envelope curves to LUTs and publishes all current UI parameters to shared state.
 
 3. `src/shared/mod.rs` (UI ↔ DSP contract)
 - Thread-safe shared snapshot containing:
-  - amplitude LUT
-  - pitch LUT
+  - kick amp/pitch LUTs
+  - bass amp/filter LUTs
+  - bass oscillator/filter params (`pitch_hz`, `cutoff_hz`, waveform, filter mode)
+  - bass note behavior flags (`retrigger`, `legato voice steal`)
   - trigger counter
-  - tuning reference (`tuning_a4_hz`)
 - UI writes updates; audio thread reads atomic snapshots.
 
 4. `src/audio/mod.rs` (engine wrapper)
-- Owns voice state and trigger edge tracking.
-- Combines parameter values + shared snapshot + MIDI trigger input.
-- Passes resolved per-block parameters into voice render loop.
+- Owns kick and bass voice state.
+- Combines plugin params + shared snapshot + routed MIDI events.
+- Applies bass note events sample-accurately (using event timing) for note-on/off handling.
 - Applies final output limiter (`clamp(-1.0, 1.0)`).
 
-5. `src/audio/voice.rs` (one-shot synth voice)
-- One active kick voice with phase/time state.
-- Supports velocity-sensitive triggering.
-- Supports MIDI note-based base pitch per hit.
-- Applies pitch envelope, amplitude envelope, tuning scale, and decay.
+5. `src/audio/voice.rs` (synthesis voices)
+- Kick voice: envelope-driven one-shot synth with velocity and optional key tracking.
+- Bass voice: oscillator + selectable filter (`LowPass`, `HighPass`, `BandPass`) with amp/filter envelopes.
+- Bass voice supports monophonic note handling with `Retrigger` (phase) and `Legato (voice steal)` behavior.
 
 6. `scripts/` (dev/build workflow)
 - Target-aware script dispatch (`TARGET` in `config.env`).
@@ -96,26 +112,27 @@ Audio processing flow per block:
 
 1. Event intake
 - Host MIDI events are read in `process()`.
-- `NoteOn` sets trigger, velocity, and note frequency (Hz).
+- MIDI notes are split into kick and bass zones on one instrument channel.
+- Bass note-on/off events are buffered with timing offsets for sample-accurate application.
 
-2. Trigger resolution
-- A hit can be triggered from:
+2. Kick trigger resolution
+- A kick hit can be triggered from:
   - MIDI note-on
   - Trigger parameter edge
   - UI trigger button (shared trigger counter)
 
 3. Shared snapshot read
 - Audio thread reads latest shared snapshot once per block:
-  - amp LUT
-  - pitch LUT
-  - tuning reference frequency
+  - kick/bass LUTs
+  - bass oscillator/filter parameters
+  - bass note behavior flags
 
 4. Voice synthesis per sample
-- Envelope position comes from elapsed hit time and decay.
-- Amplitude comes from level × velocity × amp LUT.
-- Frequency comes from base frequency (MIDI note if present, else parameter) + pitch drop × pitch LUT.
-- Global tuning scale (`tuning_a4_hz / 440`) is applied.
-- Sample is generated as sine oscillator output.
+- Kick and bass samples are generated every frame.
+- Kick uses envelope LUTs and velocity-sensitive one-shot synthesis.
+- Bass uses absolute `Hz` pitch control, selected waveform, selected filter mode, and amp/filter envelope LUTs.
+- Bass note-off events stop the bass voice, confining notes to MIDI duration plus configured bass note-length cap.
+- Global tuning selection is used for note-name reference in UI only (not DSP pitch scaling).
 
 5. Output stage
 - Mono sample is copied to all output channels.
