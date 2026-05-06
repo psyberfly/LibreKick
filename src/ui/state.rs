@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use nih_plug_egui::egui::{Pos2, TextureHandle};
 
-use crate::{config, patches};
+use crate::{config, patches, shared};
 
 use super::{
     helpers::{constrain_curve_points, normalize_segment_bends},
@@ -73,6 +73,7 @@ impl Curve {
 pub(super) enum UiPage {
     Kick,
     Bass,
+    Settings,
 }
 
 pub(super) struct BezierUiState {
@@ -85,7 +86,14 @@ pub(super) struct BezierUiState {
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
     pub(super) note_length_ms: f32,
+    pub(super) bass_note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
+    pub(super) bass_cutoff_hz: f32,
+    pub(super) bass_pitch_hz: f32,
+    pub(super) bass_retrigger: bool,
+    pub(super) bass_legato_voice_steal: bool,
+    pub(super) bass_filter_mode: shared::BassFilterMode,
+    pub(super) bass_waveform: shared::BassWaveform,
     pub(super) base_note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
     pub(super) selected_point: Option<usize>,
@@ -127,7 +135,14 @@ impl Default for BezierUiState {
             tuning_standard: TuningStandard::A432,
             keytrack_enabled: false,
             note_length_ms: note_length_max_ms,
+            bass_note_length_ms: 220.0,
             note_length_max_ms,
+            bass_cutoff_hz: 120.0,
+            bass_pitch_hz: 55.0,
+            bass_retrigger: true,
+            bass_legato_voice_steal: false,
+            bass_filter_mode: shared::BassFilterMode::LowPass,
+            bass_waveform: shared::BassWaveform::Saw,
             base_note_length_max_ms: note_length_max_ms,
             waveform_zoom_percent: 100.0,
             selected_point: Some(1),

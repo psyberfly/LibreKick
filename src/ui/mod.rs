@@ -1189,7 +1189,6 @@ pub fn create_testing_editor(
                 let active_points = state.active_curve().points.clone();
                 let active_bends = state.active_curve().bends.clone();
                 let tuning_a4_hz = state.tuning_standard.a4_hz();
-                shared::set_tuning_a4_hz(&shared_for_ui, tuning_a4_hz);
                 shared::set_keytrack_enabled(&shared_for_ui, state.keytrack_enabled);
                 state.note_length_ms = note_end_ms.clamp(0.0, max_note_length_ms);
                 shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
@@ -1406,8 +1405,10 @@ pub fn create_testing_editor(
                     state.commit_history_if_changed(&snapshot_before);
                 }
                 });
+                } else if state.active_page == UiPage::Bass {
+                    pages::bass::render(ui, ui_scale, state, &shared_for_ui);
                 } else {
-                    pages::bass::render(ui, ui_scale, state);
+                    pages::settings::render(ui, ui_scale, state);
                 }
                 });
                 });
@@ -1427,6 +1428,7 @@ pub fn create_testing_editor(
                             ui.separator();
                             ui.selectable_value(&mut state.active_page, UiPage::Kick, "Kick");
                             ui.selectable_value(&mut state.active_page, UiPage::Bass, "Bass");
+                            ui.selectable_value(&mut state.active_page, UiPage::Settings, "Settings");
                         });
                     },
                 );

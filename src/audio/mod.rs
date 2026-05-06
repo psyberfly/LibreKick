@@ -2,12 +2,9 @@ mod voice;
 
 use nih_plug::prelude::*;
 
-use crate::{config, shared};
+use crate::{midi::RoutedMidiEvent, shared};
 
-use self::voice::{KickVoice, VoiceParams};
-
-const USE_TUNING_SAFETY_MARGIN: bool = true;
-const TUNING_SAFETY_MARGIN_HZ: f32 = 48.0;
+use self::voice::{BassVoice, BassVoiceParams, KickVoice, VoiceParams};
 
 #[derive(Clone, Copy)]
 pub struct KickDspParams {
@@ -16,10 +13,13 @@ pub struct KickDspParams {
     pub midi_trigger: bool,
     pub midi_velocity: f32,
     pub midi_note_hz: Option<f32>,
+    pub bass_events: [Option<RoutedMidiEvent>; 6],
+    pub bass_event_count: usize,
 }
 
 pub struct KickEngine {
     voice: KickVoice,
+    bass_voice: BassVoice,
     last_trigger_param: bool,
     last_shared_trigger_counter: u64,
 }
@@ -28,6 +28,7 @@ impl Default for KickEngine {
     fn default() -> Self {
         Self {
             voice: KickVoice::default(),
+            bass_voice: BassVoice::default(),
             last_trigger_param: false,
             last_shared_trigger_counter: 0,
         }
@@ -37,6 +38,7 @@ impl Default for KickEngine {
 impl KickEngine {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.voice.set_sample_rate(sample_rate);
+        self.bass_voice.set_sample_rate(sample_rate);
     }
 
     pub fn process(
@@ -69,15 +71,7 @@ impl KickEngine {
             self.voice.trigger();
         }
 
-        let app_cfg = config::app_config();
-        let default_tuning = app_cfg.default_tuning_a4_hz.max(f32::EPSILON);
-        let mut safe_tuning = shared_snapshot.tuning_a4_hz.max(f32::EPSILON);
-        if USE_TUNING_SAFETY_MARGIN {
-            let min_tuning = (default_tuning - TUNING_SAFETY_MARGIN_HZ).max(f32::EPSILON);
-            let max_tuning = default_tuning + TUNING_SAFETY_MARGIN_HZ;
-            safe_tuning = safe_tuning.clamp(min_tuning, max_tuning);
-        }
-        let tuning_scale = safe_tuning / default_tuning;
+        let tuning_scale = 1.0;
 
         let voice_params = VoiceParams {
             level: params.level,
@@ -86,13 +80,56 @@ impl KickEngine {
             note_length_ms: shared_snapshot.note_length_ms,
         };
 
-        for mut channel_samples in buffer.iter_samples() {
-            let sample = self.voice.next_sample(
+        let bass_voice_params = BassVoiceParams {
+            level: params.level,
+            tuning_scale,
+            note_length_ms: shared_snapshot.bass_note_length_ms,
+            base_cutoff_hz: shared_snapshot.bass_cutoff_hz,
+            pitch_hz: shared_snapshot.bass_pitch_hz,
+            filter_mode: shared_snapshot.bass_filter_mode,
+            waveform: shared_snapshot.bass_waveform,
+        };
+
+        let mut bass_event_index = 0usize;
+        let bass_event_count = params.bass_event_count.min(params.bass_events.len());
+
+        for (sample_index, mut channel_samples) in buffer.iter_samples().enumerate() {
+            while bass_event_index < bass_event_count {
+                let Some(event) = params.bass_events[bass_event_index] else {
+                    bass_event_index += 1;
+                    continue;
+                };
+
+                if event.timing > sample_index as u32 {
+                    break;
+                }
+
+                if event.is_note_on {
+                    let note_hz = 440.0 * 2.0_f32.powf((event.note as f32 - 69.0) / 12.0);
+                    self.bass_voice.note_on(
+                        note_hz,
+                        event.velocity.clamp(0.0, 1.0),
+                        shared_snapshot.bass_retrigger,
+                        shared_snapshot.bass_legato_voice_steal,
+                    );
+                } else {
+                    self.bass_voice.note_off();
+                }
+
+                bass_event_index += 1;
+            }
+
+            let kick_sample = self.voice.next_sample(
                 voice_params,
                 &shared_snapshot.amp_lut,
                 &shared_snapshot.pitch_lut,
             );
-            let limited_sample = sample.clamp(-1.0, 1.0);
+            let bass_sample = self.bass_voice.next_sample(
+                bass_voice_params,
+                &shared_snapshot.bass_amp_lut,
+                &shared_snapshot.bass_filter_lut,
+            );
+            let limited_sample = (kick_sample + bass_sample).clamp(-1.0, 1.0);
 
             for output in channel_samples.iter_mut() {
                 *output = limited_sample;

@@ -3,7 +3,7 @@ use nih_plug_egui::egui;
 use crate::{config, patches, shared};
 
 use super::super::{
-    apply_ui_text_scale, brand_title_logo, CurveKind, TuningStandard, APP_THEME,
+    apply_ui_text_scale, brand_title_logo, CurveKind, APP_THEME,
     NOTE_LENGTH_MAX_SLIDER_MAX_MS, NOTE_LENGTH_MAX_SLIDER_MIN_MS,
 };
 use super::super::state::BezierUiState;
@@ -169,10 +169,6 @@ pub(crate) fn render_controls(
         ui.label("Curve:");
         ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
         ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
-        ui.separator();
-        ui.label("Tuning:");
-        ui.selectable_value(&mut state.tuning_standard, TuningStandard::A440, "A=440");
-        ui.selectable_value(&mut state.tuning_standard, TuningStandard::A432, "A=432");
         ui.separator();
         ui.checkbox(&mut state.keytrack_enabled, "Keytrack");
         ui.separator();
