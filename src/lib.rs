@@ -10,7 +10,7 @@ mod patches;
 mod shared;
 mod ui;
 
-struct LibreKick {
+pub struct LibreKick {
     params: Arc<LibreKickParams>,
     engine: audio::KickEngine,
     shared: shared::SharedStateHandle,

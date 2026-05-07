@@ -26,6 +26,8 @@ Or build it yourself for a different target and format:
 1. `cd /scripts`:
 2. `cp sample.env config.env`. Update your `config.env` file to your local needs. Refer `sample.env` for info about building for other operating systems and formats.
 3. `./build.sh <target> <format>`
+   - Standalone Linux executable: `./build.sh linux desktop`
+   - Linux CLAP plugin: `./build.sh linux clap3`
 4. `./install.sh <target> <format>` installs the VST into your configured system VST location; ready to use via your DAW.
 
 ## MIDI NOTE ROUTING (SINGLE INSTRUMENT CHANNEL)
