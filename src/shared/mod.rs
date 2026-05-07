@@ -11,9 +11,9 @@ pub enum CurveKind {
     Pitch,
 }
 
-pub fn set_kick_waveform(shared: &SharedStateHandle, waveform: Waveform) {
+pub fn set_kick_oscillator_waveform(shared: &SharedStateHandle, waveform: Waveform) {
     if let Ok(mut state) = shared.lock() {
-        state.kick_waveform = waveform;
+        state.kick_oscillator_waveform = waveform;
     }
 }
 
@@ -82,7 +82,7 @@ pub struct SharedSnapshot {
     pub bass_filter_lut: [f32; CURVE_LUT_SIZE],
     pub keytrack_enabled: bool,
     pub note_length_ms: f32,
-    pub kick_waveform: Waveform,
+    pub kick_oscillator_waveform: Waveform,
     pub kick_retrigger: bool,
     pub kick_legato_voice_steal: bool,
     pub bass_note_length_ms: f32,
@@ -91,7 +91,7 @@ pub struct SharedSnapshot {
     pub bass_retrigger: bool,
     pub bass_legato_voice_steal: bool,
     pub bass_filter_mode: BassFilterMode,
-    pub bass_waveform: Waveform,
+    pub bass_oscillator_waveform: Waveform,
     pub trigger_counter: u64,
 }
 
@@ -102,7 +102,7 @@ pub(crate) struct SharedState {
     bass_filter_lut: [f32; CURVE_LUT_SIZE],
     keytrack_enabled: bool,
     note_length_ms: f32,
-    kick_waveform: Waveform,
+    kick_oscillator_waveform: Waveform,
     kick_retrigger: bool,
     kick_legato_voice_steal: bool,
     bass_note_length_ms: f32,
@@ -111,7 +111,7 @@ pub(crate) struct SharedState {
     bass_retrigger: bool,
     bass_legato_voice_steal: bool,
     bass_filter_mode: BassFilterMode,
-    bass_waveform: Waveform,
+    bass_oscillator_waveform: Waveform,
     osc_kick: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_bass: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_sum: [f32; OSCILLOSCOPE_BUFFER_SIZE],
@@ -130,7 +130,7 @@ impl Default for SharedState {
             bass_filter_lut: [0.0; CURVE_LUT_SIZE],
             keytrack_enabled: false,
             note_length_ms: app_cfg.note_length_max_ms,
-            kick_waveform: Waveform::Sine,
+            kick_oscillator_waveform: Waveform::Sine,
             kick_retrigger: true,
             kick_legato_voice_steal: true,
             bass_note_length_ms: app_cfg.note_length_max_ms,
@@ -139,7 +139,7 @@ impl Default for SharedState {
             bass_retrigger: true,
             bass_legato_voice_steal: false,
             bass_filter_mode: BassFilterMode::LowPass,
-            bass_waveform: Waveform::Saw,
+            bass_oscillator_waveform: Waveform::Saw,
             osc_kick: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_bass: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_sum: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
@@ -233,9 +233,9 @@ pub fn set_bass_legato_voice_steal(
     }
 }
 
-pub fn set_bass_waveform(shared: &SharedStateHandle, waveform: Waveform) {
+pub fn set_bass_oscillator_waveform(shared: &SharedStateHandle, waveform: Waveform) {
     if let Ok(mut state) = shared.lock() {
-        state.bass_waveform = waveform;
+        state.bass_oscillator_waveform = waveform;
     }
 }
 
@@ -293,7 +293,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             bass_filter_lut: state.bass_filter_lut,
             keytrack_enabled: state.keytrack_enabled,
             note_length_ms: state.note_length_ms,
-            kick_waveform: state.kick_waveform,
+            kick_oscillator_waveform: state.kick_oscillator_waveform,
             kick_retrigger: state.kick_retrigger,
             kick_legato_voice_steal: state.kick_legato_voice_steal,
             bass_note_length_ms: state.bass_note_length_ms,
@@ -302,7 +302,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             bass_retrigger: state.bass_retrigger,
             bass_legato_voice_steal: state.bass_legato_voice_steal,
             bass_filter_mode: state.bass_filter_mode,
-            bass_waveform: state.bass_waveform,
+            bass_oscillator_waveform: state.bass_oscillator_waveform,
             trigger_counter: state.trigger_counter,
         };
     }
@@ -326,7 +326,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         bass_filter_lut,
         keytrack_enabled: false,
         note_length_ms: app_cfg.note_length_max_ms,
-        kick_waveform: Waveform::Sine,
+        kick_oscillator_waveform: Waveform::Sine,
         kick_retrigger: true,
         kick_legato_voice_steal: true,
         bass_note_length_ms: app_cfg.note_length_max_ms,
@@ -335,7 +335,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         bass_retrigger: true,
         bass_legato_voice_steal: false,
         bass_filter_mode: BassFilterMode::LowPass,
-        bass_waveform: Waveform::Saw,
+        bass_oscillator_waveform: Waveform::Saw,
         trigger_counter: 0,
     }
 }

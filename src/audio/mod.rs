@@ -90,7 +90,7 @@ impl KickEngine {
             keytrack_enabled: shared_snapshot.keytrack_enabled,
             tuning_scale,
             note_length_ms: shared_snapshot.note_length_ms,
-            waveform: shared_snapshot.kick_waveform,
+            waveform: shared_snapshot.kick_oscillator_waveform,
         };
 
         let bass_voice_params = BassVoiceParams {
@@ -100,7 +100,7 @@ impl KickEngine {
             base_cutoff_hz: shared_snapshot.bass_cutoff_hz,
             pitch_hz: shared_snapshot.bass_pitch_hz,
             filter_mode: shared_snapshot.bass_filter_mode,
-            waveform: shared_snapshot.bass_waveform,
+            waveform: shared_snapshot.bass_oscillator_waveform,
         };
 
         let mut bass_event_index = 0usize;

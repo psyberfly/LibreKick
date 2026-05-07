@@ -171,7 +171,7 @@ pub(crate) fn render_controls(
             ui,
             ui_scale,
             oscillator_panel::OscillatorPanelModel {
-                waveform: &mut state.kick_waveform,
+                waveform: &mut state.kick_oscillator_waveform,
                 retrigger: &mut state.kick_retrigger,
                 legato_voice_steal: &mut state.kick_legato_voice_steal,
                 pitch_hz: None,
@@ -181,7 +181,7 @@ pub(crate) fn render_controls(
     });
     ui.add_space(8.0 * ui_scale);
 
-    shared::set_kick_waveform(shared_for_ui, state.kick_waveform);
+    shared::set_kick_oscillator_waveform(shared_for_ui, state.kick_oscillator_waveform);
     shared::set_kick_retrigger(shared_for_ui, state.kick_retrigger);
     shared::set_kick_legato_voice_steal(shared_for_ui, state.kick_legato_voice_steal);
 

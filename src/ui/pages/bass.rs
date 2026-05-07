@@ -28,7 +28,7 @@ pub(crate) fn render(
                 ui,
                 ui_scale,
                 oscillator_panel::OscillatorPanelModel {
-                    waveform: &mut state.bass_waveform,
+                    waveform: &mut state.bass_oscillator_waveform,
                     retrigger: &mut state.bass_retrigger,
                     legato_voice_steal: &mut state.bass_legato_voice_steal,
                     pitch_hz: Some(&mut state.bass_pitch_hz),
@@ -134,7 +134,7 @@ pub(crate) fn render(
     shared::set_bass_pitch_hz(shared_for_ui, state.bass_pitch_hz);
     shared::set_bass_retrigger(shared_for_ui, state.bass_retrigger);
     shared::set_bass_legato_voice_steal(shared_for_ui, state.bass_legato_voice_steal);
-    shared::set_bass_waveform(shared_for_ui, state.bass_waveform);
+    shared::set_bass_oscillator_waveform(shared_for_ui, state.bass_oscillator_waveform);
     waveform_preview::draw(
         &painter,
         graph_rect,
