@@ -223,7 +223,7 @@ pub(super) fn pitch_hz_from_normalized(value: f32) -> f32 {
     min_hz * (max_hz / min_hz).powf(value.clamp(0.0, 1.0))
 }
 
-pub(super) fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
+pub(crate) fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
     const NOTE_NAMES: [&str; 12] = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     ];

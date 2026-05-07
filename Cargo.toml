@@ -8,11 +8,13 @@ repository = "https://github.com/psyberfly/LibreKick"
 
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
 
 [dependencies]
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs"] } # Core plugin framework (VST3/CLAP)
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs", "standalone"] } # Core plugin framework (VST3/CLAP/Standalone)
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" } # Egui editor integration for plugin UI
+clap = "=4.5.20" # Pin for Cargo 1.83 compatibility when standalone feature resolves clap
+clap_derive = "=4.5.18" # Keep derive macro edition compatible with Cargo 1.83
 image = { version = "0.24.9", default-features = false, features = ["png"] } # Decode embedded PNG logo for UI header (Cargo 1.83 compatible)
 time = "=0.3.36" # Time crate pin for Cargo compatibility
 time-core = "=0.1.2" # Matching low-level time dependency pin

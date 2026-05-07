@@ -22,7 +22,7 @@ fi
 
 if ! is_supported_format "$FORMAT"; then
   echo "Unsupported format: $FORMAT"
-  echo "Supported formats: vst3, clap3, au"
+  echo "Supported formats: vst3, clap3, desktop, au"
   exit 1
 fi
 
@@ -32,7 +32,7 @@ if [[ "$FORMAT" == "au" && "$TARGET" != "darwin" ]]; then
 fi
 
 if [[ "$MODE" != "single" && "$MODE" != "full" ]]; then
-  echo "Usage: $0 <target> [single|full] [clap3|vst3|au]"
+  echo "Usage: $0 <target> [single|full] [clap3|vst3|desktop|au]"
   exit 1
 fi
 
@@ -51,6 +51,27 @@ fi
 if [[ ! -e "$PLUGIN_ARTIFACT" ]]; then
   echo "Plugin artifact not found: $PLUGIN_ARTIFACT"
   echo "Run: bash $ROOT_DIR/scripts/build.sh $TARGET $FORMAT"
+  exit 1
+fi
+
+if [[ "$FORMAT" == "desktop" ]]; then
+  DESKTOP_CANDIDATES=(
+    "$CANONICAL_PLUGIN_BINARY"
+    "$CANONICAL_PLUGIN_ARTIFACT"
+    "$PLUGIN_BINARY"
+    "$PLUGIN_ARTIFACT"
+  )
+
+  for candidate in "${DESKTOP_CANDIDATES[@]}"; do
+    if [[ -n "$candidate" && -f "$candidate" ]]; then
+      chmod +x "$candidate" || true
+      echo "Starting standalone desktop executable: $candidate"
+      exec "$candidate"
+    fi
+  done
+
+  echo "Desktop executable not found in expected bundle outputs."
+  echo "Run: bash $ROOT_DIR/scripts/build.sh $TARGET desktop"
   exit 1
 fi
 
