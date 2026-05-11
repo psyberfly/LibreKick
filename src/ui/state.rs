@@ -81,6 +81,7 @@ pub(super) enum UiPage {
     Bass,
     Settings,
     Oscilloscope,
+    Logs,
 }
 
 pub(super) struct BezierUiState {

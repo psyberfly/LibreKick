@@ -4,6 +4,7 @@ use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 
 mod audio;
+pub mod common;
 mod config;
 mod midi;
 mod patches;

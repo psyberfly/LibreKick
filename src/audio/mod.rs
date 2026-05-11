@@ -3,7 +3,11 @@ mod voice;
 
 use nih_plug::prelude::*;
 
-use crate::{midi::RoutedMidiEvent, shared};
+use crate::{
+    common::logger::LOGGER,
+    midi::RoutedMidiEvent,
+    shared,
+};
 
 use self::voice::{BassVoice, BassVoiceParams, KickVoice, VoiceParams};
 
@@ -51,6 +55,7 @@ impl KickEngine {
         let shared_snapshot = shared::snapshot(shared_handle);
 
         if params.trigger_active && !self.last_trigger_param {
+            LOGGER.debug("kick trigger via trigger_active rising edge");
             self.voice.trigger(
                 shared_snapshot.kick_retrigger,
                 shared_snapshot.kick_legato_voice_steal,
@@ -59,6 +64,10 @@ impl KickEngine {
         self.last_trigger_param = params.trigger_active;
 
         if params.midi_trigger {
+            LOGGER.debug(format!(
+                "kick trigger via MIDI velocity={:.3} note_hz={:?}",
+                params.midi_velocity, params.midi_note_hz
+            ));
             if let Some(note_hz) = params.midi_note_hz {
                 self.voice.trigger_with_note_velocity(
                     note_hz,
@@ -77,6 +86,7 @@ impl KickEngine {
 
         if shared_snapshot.trigger_counter != self.last_shared_trigger_counter {
             self.last_shared_trigger_counter = shared_snapshot.trigger_counter;
+            LOGGER.debug("kick trigger via shared::request_trigger counter");
             self.voice.trigger(
                 shared_snapshot.kick_retrigger,
                 shared_snapshot.kick_legato_voice_steal,

@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::common::logger::LOGGER;
 use crate::config;
 
 pub const CURVE_LUT_SIZE: usize = 256;
@@ -32,14 +33,14 @@ pub fn set_kick_legato_voice_steal(
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Waveform {
     Saw,
     Square,
     Sine,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BassFilterMode {
     LowPass,
     HighPass,
@@ -176,8 +177,13 @@ pub fn set_curve_lut(shared: &SharedStateHandle, kind: CurveKind, lut: [f32; CUR
 }
 
 pub fn request_trigger(shared: &SharedStateHandle) {
+    LOGGER.entering("shared::request_trigger", "{}".to_owned());
     if let Ok(mut state) = shared.lock() {
         state.trigger_counter = state.trigger_counter.wrapping_add(1);
+        LOGGER.debug(format!("trigger_counter={}", state.trigger_counter));
+        LOGGER.leaving("shared::request_trigger");
+    } else {
+        LOGGER.error("shared::request_trigger failed to acquire state lock");
     }
 }
 
