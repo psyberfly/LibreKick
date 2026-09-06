@@ -1,16 +1,18 @@
 use nih_plug_egui::egui::{self, Align, Layout, Vec2};
 
-use super::nav_menu;
+use super::{menu_bar, nav_menu};
 use crate::ui::state::BezierUiState;
 
-/// Renders the main scaffold: nav menu on the right (natural width),
-/// page content on the left (remaining width).
+/// Renders the main scaffold: menu bar on top, nav menu on the right
+/// (natural width), page content on the left (remaining width).
 pub(crate) fn render(
     ui: &mut egui::Ui,
     ui_scale: f32,
     state: &mut BezierUiState,
     page_content: impl FnOnce(&mut egui::Ui, &mut BezierUiState),
 ) {
+    menu_bar::render(ui, ui_scale, state);
+
     let section_gap = (10.0 * ui_scale).max(8.0);
     let available = ui.available_size_before_wrap();
     let section_height = available.y.max(320.0 * ui_scale);

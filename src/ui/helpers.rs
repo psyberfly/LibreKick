@@ -5,7 +5,7 @@ use nih_plug_egui::egui::{self, Pos2, Rect};
 use crate::{config, shared};
 
 use super::{
-    CurveKind, AMP_DB_FLOOR, MIN_POINT_GAP_X, WAVEFORM_PREVIEW_DURATION_SECONDS,
+    state::CurveKind, AMP_DB_FLOOR, MIN_POINT_GAP_X, WAVEFORM_PREVIEW_DURATION_SECONDS,
     WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL,
 };
 
@@ -24,6 +24,76 @@ pub(super) fn axis_y_label(kind: CurveKind, normalized: f32, base_pitch_hz: f32)
             }
         }
     }
+}
+
+/// Polls keyboard shortcuts for the curve editor.
+/// Returns (undo, redo, cut, delete).
+pub(super) fn poll_editor_shortcuts(ui: &egui::Ui) -> (bool, bool, bool, bool) {
+    let (undo_shortcut, redo_shortcut) = ui.input(|i| {
+        let mut undo = false;
+        let mut redo = false;
+
+        for event in &i.events {
+            if let egui::Event::Key {
+                key,
+                pressed,
+                modifiers,
+                ..
+            } = event
+            {
+                if !*pressed {
+                    continue;
+                }
+
+                let modifier_down = modifiers.ctrl || modifiers.command;
+                if !modifier_down {
+                    continue;
+                }
+
+                if *key == egui::Key::Z {
+                    if modifiers.shift {
+                        redo = true;
+                    } else {
+                        undo = true;
+                    }
+                } else if *key == egui::Key::Y {
+                    redo = true;
+                }
+            }
+        }
+
+        (undo, redo)
+    });
+    let (cut_shortcut, delete_shortcut) = ui.input(|i| {
+        let mut cut = false;
+        let mut delete = false;
+
+        for event in &i.events {
+            match event {
+                egui::Event::Cut => {
+                    cut = true;
+                }
+                egui::Event::Key {
+                    key,
+                    pressed,
+                    modifiers,
+                    ..
+                } if *pressed => {
+                    if *key == egui::Key::X && (modifiers.ctrl || modifiers.command) {
+                        cut = true;
+                    }
+                    if *key == egui::Key::Delete || *key == egui::Key::Backspace {
+                        delete = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (cut, delete)
+    });
+
+    (undo_shortcut, redo_shortcut, cut_shortcut, delete_shortcut)
 }
 
 pub(super) fn axis_x_label(time_ms: f32) -> String {

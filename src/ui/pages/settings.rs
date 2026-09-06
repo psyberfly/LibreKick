@@ -3,7 +3,7 @@ use nih_plug_egui::egui::{self, RichText};
 use crate::ui::state::BezierUiState;
 use crate::{config, patches};
 
-use super::super::TuningStandard;
+use super::super::state::TuningStandard;
 
 pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState) {
     ui.add_space(8.0 * ui_scale);

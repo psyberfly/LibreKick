@@ -4,13 +4,40 @@ use nih_plug_egui::egui::{Pos2, TextureHandle};
 
 use crate::{config, patches, shared};
 
-use super::{
-    helpers::{constrain_curve_points, normalize_segment_bends},
-    tuning_standard_from_a4_hz,
-    CurveKind,
-    TuningStandard,
-    HISTORY_STACK_CAP, NOTE_LENGTH_MAX_SLIDER_MAX_MS, NOTE_LENGTH_MAX_SLIDER_MIN_MS,
-};
+use super::helpers::{constrain_curve_points, normalize_segment_bends};
+
+pub(super) const HISTORY_STACK_CAP: usize = 200;
+pub(super) const NOTE_LENGTH_MAX_SLIDER_MIN_MS: f32 = 100.0;
+pub(super) const NOTE_LENGTH_MAX_SLIDER_MAX_MS: f32 = 5000.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CurveKind {
+    Amplitude,
+    Pitch,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum TuningStandard {
+    A440,
+    A432,
+}
+
+impl TuningStandard {
+    pub(super) fn a4_hz(self) -> f32 {
+        match self {
+            TuningStandard::A440 => 440.0,
+            TuningStandard::A432 => 432.0,
+        }
+    }
+}
+
+pub(super) fn tuning_standard_from_a4_hz(hz: f32) -> TuningStandard {
+    if (hz - 432.0).abs() <= (hz - 440.0).abs() {
+        TuningStandard::A432
+    } else {
+        TuningStandard::A440
+    }
+}
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Curve {

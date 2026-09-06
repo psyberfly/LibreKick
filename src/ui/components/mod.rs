@@ -1,4 +1,6 @@
+pub(crate) mod brand;
 pub(crate) mod envelope_editor;
+pub(crate) mod menu_bar;
 pub(crate) mod nav_menu;
 pub(crate) mod oscilloscope;
 pub(crate) mod oscillator_panel;
