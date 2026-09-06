@@ -1,164 +1,103 @@
-mod oscillator;
-mod voice;
+mod core;
+pub mod devices;
 
 use nih_plug::prelude::*;
 
 use crate::{
-    common::logger::LOGGER,
-    midi::RoutedMidiEvent,
-    shared,
+    interface::{AudioEnginePort, OscilloscopeSignal, OSCILLOSCOPE_BUFFER_SIZE},
+    midi::MidiFrameInput,
 };
 
-use self::voice::{BassVoice, BassVoiceParams, KickVoice, VoiceParams};
+use self::{
+    core::device::{ControlledDevice, Device},
+    devices::{
+        bass::BassDevice,
+        kick::KickDevice,
+    },
+};
 
-#[derive(Clone, Copy)]
-pub struct KickDspParams {
-    pub level: f32,
-    pub trigger_active: bool,
-    pub midi_trigger: bool,
-    pub midi_velocity: f32,
-    pub midi_note_hz: Option<f32>,
-    pub bass_events: [Option<RoutedMidiEvent>; 6],
-    pub bass_event_count: usize,
+pub const DRUM_MACHINE_BOUNCE_SAMPLE_RATE: u32 = 48_000;
+
+pub struct AudioEngine {
+    kick: KickDevice,
+    bass: BassDevice,
 }
 
-pub struct KickEngine {
-    voice: KickVoice,
-    bass_voice: BassVoice,
-    last_trigger_param: bool,
-    last_shared_trigger_counter: u64,
+pub fn bounce_current_patch(engine_port: &dyn AudioEnginePort, duration_seconds: f32) -> Vec<f32> {
+    let mut engine = AudioEngine::default();
+    engine.set_sample_rate(DRUM_MACHINE_BOUNCE_SAMPLE_RATE as f32);
+    let kick_snapshot = engine_port.kick_snapshot();
+    let bass_snapshot = engine_port.bass_snapshot();
+    engine.sync_devices_from_snapshot(&kick_snapshot, &bass_snapshot, 1.0);
+    engine.kick.trigger_with_velocity(1.0);
+    engine.bass.note_on_with_velocity(bass_snapshot.bass_pitch_hz, 1.0);
+
+    let total = (duration_seconds.clamp(0.25, 10.0) * DRUM_MACHINE_BOUNCE_SAMPLE_RATE as f32) as usize;
+    let note_off_at = ((bass_snapshot.bass_note_length_ms * 0.001) * DRUM_MACHINE_BOUNCE_SAMPLE_RATE as f32) as usize;
+    let mut samples = Vec::with_capacity(total);
+    for index in 0..total {
+        if index == note_off_at {
+            engine.bass.note_off_public();
+        }
+        let sample = (engine.kick.next_sample() + engine.bass.next_sample()).clamp(-1.0, 1.0);
+        samples.push(sample);
+    }
+    samples
 }
 
-impl Default for KickEngine {
+impl Default for AudioEngine {
     fn default() -> Self {
         Self {
-            voice: KickVoice::default(),
-            bass_voice: BassVoice::default(),
-            last_trigger_param: false,
-            last_shared_trigger_counter: 0,
+            kick: KickDevice::default(),
+            bass: BassDevice::default(),
         }
     }
 }
 
-impl KickEngine {
+impl AudioEngine {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.voice.set_sample_rate(sample_rate);
-        self.bass_voice.set_sample_rate(sample_rate);
+        self.kick.set_sample_rate(sample_rate);
+        self.bass.set_sample_rate(sample_rate);
+    }
+
+    fn sync_devices_from_snapshot(
+        &mut self,
+        kick_snapshot: &crate::interface::KickSnapshot,
+        bass_snapshot: &crate::interface::BassSnapshot,
+        level: f32,
+    ) {
+        self.kick.apply_snapshot(kick_snapshot, level);
+        self.bass.apply_snapshot(bass_snapshot, level);
     }
 
     pub fn process(
         &mut self,
         buffer: &mut Buffer,
-        params: KickDspParams,
-        shared_handle: &shared::SharedStateHandle,
+        level: f32,
+        trigger_active: bool,
+        midi_input: MidiFrameInput,
+        engine_port: &impl AudioEnginePort,
     ) -> ProcessStatus {
-        let shared_snapshot = shared::snapshot(shared_handle);
+        let kick_snapshot = engine_port.kick_snapshot();
+        let bass_snapshot = engine_port.bass_snapshot();
+        self.sync_devices_from_snapshot(&kick_snapshot, &bass_snapshot, level);
+        self.kick
+            .process_input_frame(trigger_active, &midi_input, kick_snapshot.trigger_counter);
+        self.bass.begin_input_frame();
 
-        if params.trigger_active && !self.last_trigger_param {
-            LOGGER.debug("kick trigger via trigger_active rising edge");
-            self.voice.trigger(
-                shared_snapshot.kick_retrigger,
-                shared_snapshot.kick_legato_voice_steal,
-            );
-        }
-        self.last_trigger_param = params.trigger_active;
-
-        if params.midi_trigger {
-            LOGGER.debug(format!(
-                "kick trigger via MIDI velocity={:.3} note_hz={:?}",
-                params.midi_velocity, params.midi_note_hz
-            ));
-            if let Some(note_hz) = params.midi_note_hz {
-                self.voice.trigger_with_note_velocity(
-                    note_hz,
-                    params.midi_velocity.clamp(0.0, 1.0),
-                    shared_snapshot.kick_retrigger,
-                    shared_snapshot.kick_legato_voice_steal,
-                );
-            } else {
-                self.voice.trigger_with_velocity(
-                    params.midi_velocity.clamp(0.0, 1.0),
-                    shared_snapshot.kick_retrigger,
-                    shared_snapshot.kick_legato_voice_steal,
-                );
-            }
-        }
-
-        if shared_snapshot.trigger_counter != self.last_shared_trigger_counter {
-            self.last_shared_trigger_counter = shared_snapshot.trigger_counter;
-            LOGGER.debug("kick trigger via shared::request_trigger counter");
-            self.voice.trigger(
-                shared_snapshot.kick_retrigger,
-                shared_snapshot.kick_legato_voice_steal,
-            );
-        }
-
-        let tuning_scale = 1.0;
-
-        let voice_params = VoiceParams {
-            level: params.level,
-            keytrack_enabled: shared_snapshot.keytrack_enabled,
-            tuning_scale,
-            note_length_ms: shared_snapshot.note_length_ms,
-            waveform: shared_snapshot.kick_oscillator_waveform,
-        };
-
-        let bass_voice_params = BassVoiceParams {
-            level: params.level,
-            tuning_scale,
-            note_length_ms: shared_snapshot.bass_note_length_ms,
-            base_cutoff_hz: shared_snapshot.bass_cutoff_hz,
-            pitch_hz: shared_snapshot.bass_pitch_hz,
-            filter_mode: shared_snapshot.bass_filter_mode,
-            waveform: shared_snapshot.bass_oscillator_waveform,
-        };
-
-        let mut bass_event_index = 0usize;
-        let bass_event_count = params.bass_event_count.min(params.bass_events.len());
-        let mut osc_kick = [0.0_f32; shared::OSCILLOSCOPE_BUFFER_SIZE];
-        let mut osc_bass = [0.0_f32; shared::OSCILLOSCOPE_BUFFER_SIZE];
-        let mut osc_sum = [0.0_f32; shared::OSCILLOSCOPE_BUFFER_SIZE];
+        let mut osc_kick = [0.0_f32; OSCILLOSCOPE_BUFFER_SIZE];
+        let mut osc_bass = [0.0_f32; OSCILLOSCOPE_BUFFER_SIZE];
+        let mut osc_sum = [0.0_f32; OSCILLOSCOPE_BUFFER_SIZE];
         let mut osc_len = 0usize;
 
         for (sample_index, mut channel_samples) in buffer.iter_samples().enumerate() {
-            while bass_event_index < bass_event_count {
-                let Some(event) = params.bass_events[bass_event_index] else {
-                    bass_event_index += 1;
-                    continue;
-                };
+            self.bass.process_input_for_sample(sample_index, &midi_input);
 
-                if event.timing > sample_index as u32 {
-                    break;
-                }
-
-                if event.is_note_on {
-                    let note_hz = 440.0 * 2.0_f32.powf((event.note as f32 - 69.0) / 12.0);
-                    self.bass_voice.note_on(
-                        note_hz,
-                        event.velocity.clamp(0.0, 1.0),
-                        shared_snapshot.bass_retrigger,
-                        shared_snapshot.bass_legato_voice_steal,
-                    );
-                } else {
-                    self.bass_voice.note_off();
-                }
-
-                bass_event_index += 1;
-            }
-
-            let kick_sample = self.voice.next_sample(
-                voice_params,
-                &shared_snapshot.amp_lut,
-                &shared_snapshot.pitch_lut,
-            );
-            let bass_sample = self.bass_voice.next_sample(
-                bass_voice_params,
-                &shared_snapshot.bass_amp_lut,
-                &shared_snapshot.bass_filter_lut,
-            );
+            let kick_sample = self.kick.next_sample();
+            let bass_sample = self.bass.next_sample();
             let limited_sample = (kick_sample + bass_sample).clamp(-1.0, 1.0);
 
-            if sample_index < shared::OSCILLOSCOPE_BUFFER_SIZE {
+            if sample_index < OSCILLOSCOPE_BUFFER_SIZE {
                 osc_kick[sample_index] = kick_sample;
                 osc_bass[sample_index] = bass_sample;
                 osc_sum[sample_index] = limited_sample;
@@ -171,22 +110,16 @@ impl KickEngine {
         }
 
         if osc_len > 0 {
-            shared::publish_oscilloscope_signal_block(
-                shared_handle,
-                shared::OscilloscopeSignal::Kick,
+            engine_port.publish_oscilloscope_signal_block(
+                OscilloscopeSignal::Kick,
                 &osc_kick[..osc_len],
             );
-            shared::publish_oscilloscope_signal_block(
-                shared_handle,
-                shared::OscilloscopeSignal::Bass,
+            engine_port.publish_oscilloscope_signal_block(
+                OscilloscopeSignal::Bass,
                 &osc_bass[..osc_len],
             );
-            shared::publish_oscilloscope_signal_block(
-                shared_handle,
-                shared::OscilloscopeSignal::Sum,
-                &osc_sum[..osc_len],
-            );
-            shared::commit_oscilloscope_frame(shared_handle);
+            engine_port.publish_oscilloscope_signal_block(OscilloscopeSignal::Sum, &osc_sum[..osc_len]);
+            engine_port.commit_oscilloscope_frame();
         }
 
         ProcessStatus::Normal

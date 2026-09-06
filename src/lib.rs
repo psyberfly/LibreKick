@@ -1,19 +1,24 @@
 use std::sync::Arc;
 
 use nih_plug::prelude::*;
-use nih_plug_egui::EguiState;
+use nih_plug_vizia::ViziaState;
 
 mod audio;
 pub mod common;
 mod config;
+mod input;
+pub mod interface;
 mod midi;
 mod patches;
 mod shared;
-mod ui;
+mod ui_vizia;
+
+use crate::input::EngineInputAdapter;
 
 pub struct LibreKick {
     params: Arc<LibreKickParams>,
-    engine: audio::KickEngine,
+    engine: audio::AudioEngine,
+    input_adapter: input::MidiInputAdapter,
     shared: shared::SharedStateHandle,
 }
 
@@ -25,13 +30,12 @@ struct LibreKickParams {
     #[id = "level"]
     level: FloatParam,
 
-    #[persist = "editor-state-v3"]
-    editor_state: Arc<EguiState>,
+    #[persist = "editor-state-vizia-v1"]
+    editor_state: Arc<ViziaState>,
 }
 
 impl Default for LibreKickParams {
     fn default() -> Self {
-        let ui_cfg = config::ui_config();
         Self {
             trigger: BoolParam::new("Trigger", false),
             level: FloatParam::new(
@@ -39,10 +43,7 @@ impl Default for LibreKickParams {
                 0.8,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
-            editor_state: EguiState::from_size(
-                ui_cfg.base_editor_width as u32,
-                ui_cfg.base_editor_height as u32,
-            ),
+            editor_state: ui_vizia::default_state(),
         }
     }
 }
@@ -53,7 +54,8 @@ impl Default for LibreKick {
 
         Self {
             params: Arc::new(LibreKickParams::default()),
-            engine: audio::KickEngine::default(),
+            engine: audio::AudioEngine::default(),
+            input_adapter: input::MidiInputAdapter,
             shared,
         }
     }
@@ -88,7 +90,7 @@ impl Plugin for LibreKick {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        ui::create_testing_editor(self.params.editor_state.clone(), self.shared.clone())
+        ui_vizia::create_app_scaffold_editor(self.params.editor_state.clone(), self.shared.clone())
     }
 
     fn initialize(
@@ -107,7 +109,7 @@ impl Plugin for LibreKick {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-        let midi_input = midi::collect_midi_input(context);
+        let midi_input = self.input_adapter.collect_frame_input(context);
 
         for index in 0..midi_input.bass_event_count {
             let Some(event) = midi_input.bass_events[index] else {
@@ -133,17 +135,13 @@ impl Plugin for LibreKick {
             }
         }
 
-        let dsp_params = audio::KickDspParams {
-            level: self.params.level.value(),
-            trigger_active: self.params.trigger.value(),
-            midi_trigger: midi_input.trigger,
-            midi_velocity: midi_input.velocity,
-            midi_note_hz: midi_input.note_hz,
-            bass_events: midi_input.bass_events,
-            bass_event_count: midi_input.bass_event_count,
-        };
-
-        self.engine.process(buffer, dsp_params, &self.shared)
+        self.engine.process(
+            buffer,
+            self.params.level.value(),
+            self.params.trigger.value(),
+            midi_input,
+            &self.shared,
+        )
     }
 }
 

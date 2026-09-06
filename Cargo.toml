@@ -12,7 +12,7 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["assert_process_allocs", "standalone"] } # Core plugin framework (VST3/CLAP/Standalone)
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" } # Egui editor integration for plugin UI
+nih_plug_vizia = { git = "https://github.com/robbert-vdh/nih-plug.git" } # Vizia editor integration for plugin UI
 clap = "=4.5.20" # Pin for Cargo 1.83 compatibility when standalone feature resolves clap
 clap_derive = "=4.5.18" # Keep derive macro edition compatible with Cargo 1.83
 libc = "0.2" # Local timezone offset fallback for log timestamp conversion
@@ -20,3 +20,5 @@ image = { version = "0.24.9", default-features = false, features = ["png"] } # D
 time = "=0.3.36" # Time crate pin for Cargo compatibility
 time-core = "=0.1.2" # Matching low-level time dependency pin
 time-macros = "=0.2.18" # Matching time macro dependency pin
+indexmap = "=2.7.0" # Pin to avoid edition2024-only releases on Cargo 1.83
+unicode-segmentation = "=1.12.0" # Pin to keep MSRV compatible with rustc 1.83

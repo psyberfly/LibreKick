@@ -25,6 +25,7 @@ impl LogType {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct LogSnapshot {
     pub lines: Vec<String>,
     pub sequence: u64,

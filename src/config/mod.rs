@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub min_editor_height: f32,
     pub note_length_max_ms: f32,
     pub default_tuning_a4_hz: f32,
+    pub default_sample_rate: f32,
     pub waveform_zoom_min_percent: f32,
     pub waveform_zoom_max_percent: f32,
     pub waveform_zoom_step_percent: f32,
@@ -111,12 +112,13 @@ pub fn patches_dir() -> &'static str {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            base_editor_width: 1274.0,
-            base_editor_height: 728.0,
+            base_editor_width: 2880.0,
+            base_editor_height: 1620.0,
             min_editor_width: 520.0,
             min_editor_height: 320.0,
             note_length_max_ms: 1000.0,
             default_tuning_a4_hz: 432.0,
+            default_sample_rate: 44100.0,
             waveform_zoom_min_percent: 1.0,
             waveform_zoom_max_percent: 200.0,
             waveform_zoom_step_percent: 5.0,
@@ -170,6 +172,11 @@ fn parse_app_config() -> AppConfig {
             "DEFAULT_TUNING_A4_HZ" => {
                 if let Ok(parsed) = value.parse::<f32>() {
                     config.default_tuning_a4_hz = parsed;
+                }
+            }
+            "DEFAULT_SAMPLE_RATE" => {
+                if let Ok(parsed) = value.parse::<f32>() {
+                    config.default_sample_rate = parsed;
                 }
             }
             "WAVEFORM_ZOOM_MIN_PERCENT" => {

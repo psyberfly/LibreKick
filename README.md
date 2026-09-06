@@ -80,10 +80,13 @@ Important behavior:
 - Owns shared state handle and `KickEngine` instance.
 - Collects/routes incoming MIDI into kick/bass control zones and forwards routed events to DSP.
 
-2. `src/ui/mod.rs` (editor + curve design)
-- Egui-based multi-page editor (`Kick`, `Bass`, `Settings`) inside `ResizableWindow`.
-- Kick page edits kick amp/pitch curves; Bass page edits bass amp/filter curves and oscillator/filter controls.
-- Settings page contains global tuning reference (`A=440` / `A=432`) for note-name display.
+2. `src/ui_vizia/mod.rs` (editor + curve design)
+- Vizia-based multi-page editor (`Kick`, `Bass`, `Drum Machine`, `Settings`, `Oscilloscope`, `Logs`).
+- Kick and Bass pages use interactive signal-shaper views for amp/pitch/filter envelopes.
+- Drum Machine page bounces the current synth patch to audio tracks and arranges step patterns.
+- Settings page contains the global tuning reference (`A=440` / `A=432`) and max note length.
+- Oscilloscope page visualizes kick, bass, and sum audio output with hold and zoom controls.
+- Logs page displays and clears the in-app log output.
 - Converts envelope curves to LUTs and publishes all current UI parameters to shared state.
 
 3. `src/shared/mod.rs` (UI ↔ DSP contract)
@@ -142,3 +145,14 @@ Audio processing flow per block:
 5. Output stage
 - Mono sample is copied to all output channels.
 - Final sample is hard-limited to `[-1.0, 1.0]`.
+
+
+## New Clean Architecture 
+
+Audio (input-agnostic) short plan:
+
+1. Rename `UiCommand` to `EngineCommand` so controls are not tied to GUI naming.
+2. Add input adapters (`GUI`, `MIDI`, `Terminal`, `Gamepad`) that all emit the same engine commands/events.
+3. Keep `audio/*` pure DSP + device state (`Params`/`Event`), with no UI-framework or host-specific types.
+4. Split `shared/*` into smaller modules (state, commands, oscilloscope transport) for easier maintenance.
+5. Add focused tests for command-to-audio behavior so interface swaps do not change sound behavior.
