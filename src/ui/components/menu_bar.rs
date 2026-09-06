@@ -1,13 +1,20 @@
+use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui;
 
-use crate::{config, patches};
+use crate::{config, patches, LibreKickParams};
 use crate::ui::components::brand;
 use crate::ui::state::BezierUiState;
 use crate::ui::theme::{apply_ui_text_scale, APP_THEME};
 
 /// Renders the top menu bar shown on every page: brand logo, version,
 /// help button, and the patch selector.
-pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState) {
+pub(crate) fn render(
+    ui: &mut egui::Ui,
+    ui_scale: f32,
+    state: &mut BezierUiState,
+    params: &LibreKickParams,
+    setter: &ParamSetter,
+) {
     ui.add_space(6.0 * ui_scale);
     ui.horizontal(|ui| {
         brand::brand_title_logo(ui, state.brand_logo.as_ref(), ui_scale);
@@ -43,7 +50,14 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState
                                 let before = state.snapshot();
                                 match patches::load_patch(&patch_name) {
                                     Ok(patch) => {
-                                        state.apply_patch_data(patch);
+                                        let (kick_level, bass_level) =
+                                            state.apply_patch_data(patch);
+                                        if let Some(level) = kick_level {
+                                            setter.set_parameter(&params.kick_level, level);
+                                        }
+                                        if let Some(level) = bass_level {
+                                            setter.set_parameter(&params.bass_level, level);
+                                        }
                                         state.mark_patch_clean(patch_name.clone());
                                         state.commit_history_if_changed(&before);
                                         state.patch_status = Some(format!("Loaded patch: {patch_name}"));
@@ -68,7 +82,11 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState
                         .clicked()
                     {
                         let patch_name = state.new_patch_name.trim().to_owned();
-                        let patch_data = state.to_patch_data(patch_name.clone());
+                        let patch_data = state.to_patch_data(
+                            patch_name.clone(),
+                            params.kick_level.value(),
+                            params.bass_level.value(),
+                        );
                         match patches::save_patch(&patch_data) {
                             Ok(()) => {
                                 state.mark_patch_clean(patch_name.clone());

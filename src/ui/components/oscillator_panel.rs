@@ -1,6 +1,8 @@
+use nih_plug::prelude::{FloatParam, ParamSetter};
 use nih_plug_egui::egui;
 
 use crate::shared;
+use crate::ui::helpers::float_param_slider;
 
 pub(crate) struct OscillatorPanelModel<'a> {
     pub(crate) waveform: &'a mut shared::Waveform,
@@ -8,6 +10,8 @@ pub(crate) struct OscillatorPanelModel<'a> {
     pub(crate) legato_voice_steal: &'a mut bool,
     pub(crate) pitch_hz: Option<&'a mut f32>,
     pub(crate) note_length_ms: Option<&'a mut f32>,
+    /// Optional level parameter (param + setter) rendered left of the pitch slider.
+    pub(crate) level: Option<(&'a FloatParam, &'a ParamSetter<'a>)>,
 }
 
 pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, model: OscillatorPanelModel<'_>) {
@@ -18,20 +22,34 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, model: OscillatorPanelMod
         ui.selectable_value(model.waveform, shared::Waveform::Square, "Square");
     });
 
-    if let Some(pitch_hz) = model.pitch_hz {
+    if model.level.is_some() || model.pitch_hz.is_some() {
         ui.add_space(6.0 * ui_scale);
-        ui.label("Pitch");
-        let changed = ui
-            .add(
-                egui::Slider::new(pitch_hz, 20.0..=2000.0)
-                    .text("Hz")
-                    .logarithmic(true),
-            )
-            .changed();
-        if changed {
-            *pitch_hz = (*pitch_hz).clamp(20.0, 2_000.0);
-        }
-        ui.label(format!("{:.2}Hz", *pitch_hz));
+        ui.horizontal(|ui| {
+            if let Some((param, setter)) = model.level {
+                ui.vertical(|ui| {
+                    ui.label("Level");
+                    float_param_slider(ui, setter, param, "");
+                });
+            }
+            if let Some(pitch_hz) = model.pitch_hz {
+                ui.vertical(|ui| {
+                    ui.label("Pitch");
+                    ui.horizontal(|ui| {
+                        let changed = ui
+                            .add(
+                                egui::Slider::new(pitch_hz, 20.0..=2000.0)
+                                    .text("Hz")
+                                    .logarithmic(true),
+                            )
+                            .changed();
+                        if changed {
+                            *pitch_hz = (*pitch_hz).clamp(20.0, 2_000.0);
+                        }
+                        ui.label(format!("{:.2}Hz", *pitch_hz));
+                    });
+                });
+            }
+        });
     }
 
     if let Some(note_length_ms) = model.note_length_ms {

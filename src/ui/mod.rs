@@ -14,7 +14,7 @@ use nih_plug_egui::{
     EguiState,
 };
 
-use crate::{config, shared};
+use crate::{config, shared, LibreKickParams};
 
 use self::components::brand;
 use self::helpers::poll_editor_shortcuts;
@@ -31,6 +31,7 @@ const AMP_DB_FLOOR: f32 = -30.0;
 pub fn create_testing_editor(
     editor_state: Arc<EguiState>,
     shared_state: shared::SharedStateHandle,
+    params: Arc<LibreKickParams>,
 ) -> Option<Box<dyn Editor>> {
     let ui_cfg = config::ui_config();
     let resizable_state = editor_state.clone();
@@ -48,7 +49,7 @@ pub fn create_testing_editor(
             _ctx.set_fonts(fonts);
             state.brand_logo = brand::brand_logo_texture(_ctx);
         },
-        move |_ctx, _setter, state| {
+        move |_ctx, setter, state| {
             ResizableWindow::new("kick-plugin-resize")
                 .min_size(Vec2::new(ui_cfg.min_editor_width, ui_cfg.min_editor_height))
                 .show(_ctx, &resizable_state, |ui| {
@@ -69,7 +70,7 @@ pub fn create_testing_editor(
                 let app_cfg = config::app_config();
                 apply_widget_style(ui, ui_scale);
                 apply_ui_text_scale(ui, ui_scale);
-                components::scaffold::render(ui, ui_scale, state, |ui, state| {
+                components::scaffold::render(ui, ui_scale, state, &params, setter, |ui, state| {
                 if state.active_page == UiPage::Kick {
                 pages::kick::render(ui, |ui| {
                 pages::kick::render_controls(
@@ -78,6 +79,8 @@ pub fn create_testing_editor(
                     state,
                     app_cfg,
                     &shared_for_ui,
+                    &params,
+                    setter,
                     &mut history_action_applied,
                 );
                 pages::kick::render_editor(
@@ -93,7 +96,7 @@ pub fn create_testing_editor(
                 );
                 });
                 } else if state.active_page == UiPage::Bass {
-                    pages::bass::render(ui, ui_scale, state, &shared_for_ui);
+                    pages::bass::render(ui, ui_scale, state, &shared_for_ui, &params, setter);
                 } else if state.active_page == UiPage::Settings {
                     pages::settings::render(ui, ui_scale, state);
                 } else if state.active_page == UiPage::Oscilloscope {

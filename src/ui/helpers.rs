@@ -1,5 +1,6 @@
 use std::f32::consts::TAU;
 
+use nih_plug::prelude::{FloatParam, ParamSetter};
 use nih_plug_egui::egui::{self, Pos2, Rect};
 
 use crate::{config, shared};
@@ -24,6 +25,32 @@ pub(super) fn axis_y_label(kind: CurveKind, normalized: f32, base_pitch_hz: f32)
             }
         }
     }
+}
+
+/// Renders a slider bound to a float parameter, sending proper
+/// begin/set/end parameter gestures so DAW automation stays in sync.
+pub(crate) fn float_param_slider(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    param: &FloatParam,
+    label: &str,
+) -> egui::Response {
+    let mut value = param.value();
+    let mut slider = egui::Slider::new(&mut value, 0.0..=1.0);
+    if !label.is_empty() {
+        slider = slider.text(label);
+    }
+    let response = ui.add(slider);
+    if response.drag_started() {
+        setter.begin_set_parameter(param);
+    }
+    if response.changed() {
+        setter.set_parameter(param, value);
+    }
+    if response.drag_stopped() {
+        setter.end_set_parameter(param);
+    }
+    response
 }
 
 /// Polls keyboard shortcuts for the curve editor.

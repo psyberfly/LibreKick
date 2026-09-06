@@ -13,7 +13,8 @@ use self::voice::{BassVoice, BassVoiceParams, KickVoice, VoiceParams};
 
 #[derive(Clone, Copy)]
 pub struct KickDspParams {
-    pub level: f32,
+    pub kick_level: f32,
+    pub bass_level: f32,
     pub trigger_active: bool,
     pub midi_trigger: bool,
     pub midi_velocity: f32,
@@ -96,7 +97,7 @@ impl KickEngine {
         let tuning_scale = 1.0;
 
         let voice_params = VoiceParams {
-            level: params.level,
+            level: params.kick_level,
             keytrack_enabled: shared_snapshot.keytrack_enabled,
             tuning_scale,
             note_length_ms: shared_snapshot.note_length_ms,
@@ -105,7 +106,7 @@ impl KickEngine {
         };
 
         let bass_voice_params = BassVoiceParams {
-            level: params.level,
+            level: params.bass_level,
             tuning_scale,
             note_length_ms: shared_snapshot.bass_note_length_ms,
             base_cutoff_hz: shared_snapshot.bass_cutoff_hz,

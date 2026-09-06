@@ -1,17 +1,21 @@
 use nih_plug_egui::egui::{self, Align2, Color32, RichText, Sense, Stroke, Vec2};
 
+use nih_plug::prelude::ParamSetter;
+
 use crate::ui::{
     components::{envelope_editor, oscillator_panel, panel, waveform_preview},
     helpers::{curve_lut, waveform_preview_points},
     state::BezierUiState,
 };
-use crate::shared;
+use crate::{shared, LibreKickParams};
 
 pub(crate) fn render(
     ui: &mut egui::Ui,
     ui_scale: f32,
     state: &mut BezierUiState,
     shared_for_ui: &shared::SharedStateHandle,
+    params: &LibreKickParams,
+    setter: &ParamSetter,
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Bass");
@@ -33,6 +37,7 @@ pub(crate) fn render(
                     legato_voice_steal: &mut state.bass_legato_voice_steal,
                     pitch_hz: Some(&mut state.bass_pitch_hz),
                     note_length_ms: Some(&mut state.bass_note_length_ms),
+                    level: Some((&params.bass_level, setter)),
                 },
             );
 

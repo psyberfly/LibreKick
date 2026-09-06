@@ -37,6 +37,8 @@ pub struct KickPatchData {
     pub retrigger: bool,
     pub legato_voice_steal: bool,
     pub pitch_hz: f32,
+    /// Kick level (K Level macro). `None` for patches saved before level support.
+    pub level: Option<f32>,
 }
 
 /// Bass instrument settings stored inside a patch file.
@@ -53,6 +55,8 @@ pub struct BassPatchData {
     pub amp_bends: Vec<f32>,
     pub filter_points: Vec<(f32, f32)>,
     pub filter_bends: Vec<f32>,
+    /// Bass level (B Level macro). `None` for patches saved before level support.
+    pub level: Option<f32>,
 }
 
 pub fn set_default_patch_name(name: &str) -> Result<(), String> {
@@ -252,12 +256,14 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut bass_amp_bends: Option<Vec<f32>> = None;
     let mut bass_filter_points: Option<Vec<(f32, f32)>> = None;
     let mut bass_filter_bends: Option<Vec<f32>> = None;
+    let mut bass_level: Option<f32> = None;
 
     let mut kick_seen = false;
     let mut kick_oscillator_waveform: Option<String> = None;
     let mut kick_retrigger: Option<bool> = None;
     let mut kick_legato_voice_steal: Option<bool> = None;
     let mut kick_pitch_hz: Option<f32> = None;
+    let mut kick_level: Option<f32> = None;
 
     for raw_line in raw.lines() {
         let line = raw_line.trim();
@@ -352,6 +358,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 bass_seen = true;
                 bass_filter_bends = Some(parse_bends(value, "bass_filter_bends")?);
             }
+            "bass_level" => {
+                bass_seen = true;
+                bass_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
             "kick_oscillator_waveform" => {
                 kick_seen = true;
                 kick_oscillator_waveform = Some(value.to_owned());
@@ -367,6 +377,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             "kick_pitch_hz" => {
                 kick_seen = true;
                 kick_pitch_hz = value.parse::<f32>().ok();
+            }
+            "kick_level" => {
+                kick_seen = true;
+                kick_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
             }
             _ => {}
         }
@@ -404,6 +418,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 amp_bends: bass_amp_bends.unwrap_or_default(),
                 filter_points: bass_filter_points.unwrap_or_default(),
                 filter_bends: bass_filter_bends.unwrap_or_default(),
+                level: bass_level,
             })
         } else {
             None
@@ -415,6 +430,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 retrigger: kick_retrigger.unwrap_or(true),
                 legato_voice_steal: kick_legato_voice_steal.unwrap_or(true),
                 pitch_hz: kick_pitch_hz.unwrap_or(55.0),
+                level: kick_level,
             })
         } else {
             None
@@ -492,6 +508,9 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
             "bass_filter_bends={}",
             bends_to_string(&bass.filter_bends)
         ));
+        if let Some(level) = bass.level {
+            lines.push(format!("bass_level={level}"));
+        }
     }
 
     if let Some(kick) = &patch.kick {
@@ -499,6 +518,9 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("kick_retrigger={}", kick.retrigger));
         lines.push(format!("kick_legato_voice_steal={}", kick.legato_voice_steal));
         lines.push(format!("kick_pitch_hz={}", kick.pitch_hz));
+        if let Some(level) = kick.level {
+            lines.push(format!("kick_level={level}"));
+        }
     }
 
     let serialized = lines.join("\n");

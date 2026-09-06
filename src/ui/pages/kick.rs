@@ -1,6 +1,8 @@
 use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
-use crate::{config, shared};
+use nih_plug::prelude::ParamSetter;
+
+use crate::{config, shared, LibreKickParams};
 use crate::ui::components::{
     oscillator_panel, panel, waveform_preview as shared_waveform_preview,
 };
@@ -30,6 +32,8 @@ pub(crate) fn render_controls(
     state: &mut BezierUiState,
     app_cfg: &config::AppConfig,
     shared_for_ui: &shared::SharedStateHandle,
+    params: &LibreKickParams,
+    setter: &ParamSetter,
     history_action_applied: &mut bool,
 ) {
     ui.add_space(8.0 * ui_scale);
@@ -52,6 +56,7 @@ pub(crate) fn render_controls(
                 legato_voice_steal: &mut state.kick_legato_voice_steal,
                 pitch_hz: Some(&mut state.kick_pitch_hz),
                 note_length_ms: Some(&mut state.note_length_ms),
+                level: Some((&params.kick_level, setter)),
             },
         );
     });

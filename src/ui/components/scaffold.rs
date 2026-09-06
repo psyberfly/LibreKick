@@ -1,7 +1,9 @@
+use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui::{self, Align, Layout, Vec2};
 
 use super::{menu_bar, nav_menu};
 use crate::ui::state::BezierUiState;
+use crate::LibreKickParams;
 
 /// Renders the main scaffold: menu bar on top, nav menu on the right
 /// (natural width), page content on the left (remaining width).
@@ -9,9 +11,11 @@ pub(crate) fn render(
     ui: &mut egui::Ui,
     ui_scale: f32,
     state: &mut BezierUiState,
+    params: &LibreKickParams,
+    setter: &ParamSetter,
     page_content: impl FnOnce(&mut egui::Ui, &mut BezierUiState),
 ) {
-    menu_bar::render(ui, ui_scale, state);
+    menu_bar::render(ui, ui_scale, state, params, setter);
 
     let section_gap = (10.0 * ui_scale).max(8.0);
     let available = ui.available_size_before_wrap();

@@ -441,7 +441,12 @@ impl BezierUiState {
         self.new_patch_name = patch_name;
     }
 
-    pub(super) fn to_patch_data(&self, name: String) -> patches::PatchData {
+    pub(super) fn to_patch_data(
+        &self,
+        name: String,
+        kick_level: f32,
+        bass_level: f32,
+    ) -> patches::PatchData {
         patches::PatchData {
             name,
             tuning_a4_hz: self.tuning_standard.a4_hz(),
@@ -490,6 +495,7 @@ impl BezierUiState {
                     .map(|point| (point.x, point.y))
                     .collect(),
                 filter_bends: self.bass_filter_curve.bends.clone(),
+                level: Some(bass_level),
             }),
             kick: Some(patches::KickPatchData {
                 oscillator_waveform: waveform_to_patch(self.kick_oscillator_waveform)
@@ -497,11 +503,18 @@ impl BezierUiState {
                 retrigger: self.kick_retrigger,
                 legato_voice_steal: self.kick_legato_voice_steal,
                 pitch_hz: self.kick_pitch_hz,
+                level: Some(kick_level),
             }),
         }
     }
 
-    pub(super) fn apply_patch_data(&mut self, patch: patches::PatchData) {
+    /// Applies patch data to the UI state. Returns the (kick, bass) levels
+    /// stored in the patch, if any, so the caller can forward them to the
+    /// corresponding plugin parameters.
+    pub(super) fn apply_patch_data(
+        &mut self,
+        patch: patches::PatchData,
+    ) -> (Option<f32>, Option<f32>) {
         self.amplitude_curve.points =
             points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
         self.amplitude_curve.bends = bends_from_patch(&patch.amplitude_bends, self.amplitude_curve.points.len());
@@ -527,6 +540,7 @@ impl BezierUiState {
             app_cfg.waveform_zoom_max_percent,
         );
 
+        let bass_level = patch.bass.as_ref().and_then(|bass| bass.level);
         if let Some(bass) = patch.bass {
             if let Some(waveform) = waveform_from_patch(&bass.oscillator_waveform) {
                 self.bass_oscillator_waveform = waveform;
@@ -553,6 +567,7 @@ impl BezierUiState {
                 bends_from_patch(&bass.filter_bends, self.bass_filter_curve.points.len());
         }
 
+        let kick_level = patch.kick.as_ref().and_then(|kick| kick.level);
         if let Some(kick) = patch.kick {
             if let Some(waveform) = waveform_from_patch(&kick.oscillator_waveform) {
                 self.kick_oscillator_waveform = waveform;
@@ -567,6 +582,8 @@ impl BezierUiState {
         let selected_index = 1.min(self.active_curve().points.len().saturating_sub(1));
         self.selected_point = Some(selected_index);
         self.selected_points = vec![selected_index];
+
+        (kick_level, bass_level)
     }
 }
 
