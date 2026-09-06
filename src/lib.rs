@@ -4,25 +4,29 @@ use nih_plug::prelude::*;
 use nih_plug_egui::EguiState;
 
 mod audio;
+pub mod common;
 mod config;
 mod midi;
 mod patches;
 mod shared;
 mod ui;
 
-struct LibreKick {
+pub struct LibreKick {
     params: Arc<LibreKickParams>,
     engine: audio::KickEngine,
     shared: shared::SharedStateHandle,
 }
 
 #[derive(Params)]
-struct LibreKickParams {
+pub(crate) struct LibreKickParams {
     #[id = "trigger"]
-    trigger: BoolParam,
+    pub trigger: BoolParam,
 
     #[id = "level"]
-    level: FloatParam,
+    pub kick_level: FloatParam,
+
+    #[id = "bass_level"]
+    pub bass_level: FloatParam,
 
     #[persist = "editor-state-v3"]
     editor_state: Arc<EguiState>,
@@ -33,8 +37,13 @@ impl Default for LibreKickParams {
         let ui_cfg = config::ui_config();
         Self {
             trigger: BoolParam::new("Trigger", false),
-            level: FloatParam::new(
-                "Level",
+            kick_level: FloatParam::new(
+                "K Level",
+                0.8,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            bass_level: FloatParam::new(
+                "B Level",
                 0.8,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
@@ -75,7 +84,7 @@ impl Plugin for LibreKick {
     }];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
-    const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
+    const MIDI_OUTPUT: MidiConfig = MidiConfig::Basic;
 
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
@@ -87,7 +96,11 @@ impl Plugin for LibreKick {
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        ui::create_testing_editor(self.params.editor_state.clone(), self.shared.clone())
+        ui::create_testing_editor(
+            self.params.editor_state.clone(),
+            self.shared.clone(),
+            self.params.clone(),
+        )
     }
 
     fn initialize(
@@ -108,12 +121,39 @@ impl Plugin for LibreKick {
     ) -> ProcessStatus {
         let midi_input = midi::collect_midi_input(context);
 
+        for index in 0..midi_input.bass_event_count {
+            let Some(event) = midi_input.bass_events[index] else {
+                continue;
+            };
+
+            if event.is_note_on {
+                let _ = context.send_event(NoteEvent::NoteOn {
+                    timing: event.timing,
+                    voice_id: event.voice_id,
+                    channel: event.channel,
+                    note: event.note,
+                    velocity: event.velocity,
+                });
+            } else {
+                let _ = context.send_event(NoteEvent::NoteOff {
+                    timing: event.timing,
+                    voice_id: event.voice_id,
+                    channel: event.channel,
+                    note: event.note,
+                    velocity: event.velocity,
+                });
+            }
+        }
+
         let dsp_params = audio::KickDspParams {
-            level: self.params.level.value(),
+            kick_level: self.params.kick_level.value(),
+            bass_level: self.params.bass_level.value(),
             trigger_active: self.params.trigger.value(),
             midi_trigger: midi_input.trigger,
             midi_velocity: midi_input.velocity,
             midi_note_hz: midi_input.note_hz,
+            bass_events: midi_input.bass_events,
+            bass_event_count: midi_input.bass_event_count,
         };
 
         self.engine.process(buffer, dsp_params, &self.shared)

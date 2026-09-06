@@ -33,6 +33,15 @@ trim_string() {
   printf '%s' "$value"
 }
 
+executable_extension_for_target() {
+  local target="${1,,}"
+  case "$target" in
+    linux|darwin) echo "" ;;
+    windows) echo ".exe" ;;
+    *) return 1 ;;
+  esac
+}
+
 canonical_bundle_artifact_path_for() {
   local target="${1,,}"
   local format=""
@@ -89,6 +98,9 @@ canonical_bundle_binary_path_for() {
     clap3)
       echo "$artifact"
       ;;
+    desktop)
+      echo "$artifact"
+      ;;
     au)
       if [[ "$target" != "darwin" ]]; then
         echo ""
@@ -110,6 +122,11 @@ release_bundle_basename_for() {
   case "$format" in
     vst3) echo "${PLUGIN_NAME}_${target}_${arch}.vst3" ;;
     clap3) echo "${PLUGIN_NAME}_${target}_${arch}.clap" ;;
+    desktop)
+      local exe_ext=""
+      exe_ext="$(executable_extension_for_target "$target")"
+      echo "${PLUGIN_NAME}_${target}_${arch}${exe_ext}"
+      ;;
     au)
       if [[ "$target" != "darwin" ]]; then
         echo ""
@@ -128,6 +145,11 @@ install_bundle_basename_for() {
   case "$format" in
     vst3) echo "${PLUGIN_NAME}.vst3" ;;
     clap3) echo "${PLUGIN_NAME}.clap" ;;
+    desktop)
+      local exe_ext=""
+      exe_ext="$(executable_extension_for_target "${TARGET:-linux}")"
+      echo "${PLUGIN_NAME}${exe_ext}"
+      ;;
     au) echo "${PLUGIN_NAME}.component" ;;
     *) return 1 ;;
   esac
@@ -138,6 +160,7 @@ normalize_format() {
   case "$format" in
     vst3) echo "vst3" ;;
     clap|clap3) echo "clap3" ;;
+    desktop) echo "desktop" ;;
     au) echo "au" ;;
     *) return 1 ;;
   esac
@@ -219,7 +242,7 @@ for _format in "${FORMAT_LIST_RAW[@]}"; do
     FORMAT_LIST+=("$normalized")
   else
     echo "Unsupported format in config: $_format"
-    echo "Supported formats: vst3, clap3, au"
+    echo "Supported formats: vst3, clap3, desktop, au"
     exit 1
   fi
 done
@@ -236,6 +259,7 @@ TARGET="${TARGET_LIST[0]}"
 FORMAT="${FORMAT_LIST[0]}"
 
 PLUGIN_BINARY_BASENAME="liblibrekick"
+STANDALONE_BINARY_BASENAME="librekick"
 
 binary_filename_for_target() {
   local target="${1,,}"
@@ -259,6 +283,28 @@ cargo_binary_path_for_target() {
   echo "$output_dir/$(binary_filename_for_target "$target")"
 }
 
+standalone_binary_filename_for_target() {
+  local target="${1,,}"
+  local exe_ext=""
+  exe_ext="$(executable_extension_for_target "$target")"
+  echo "${STANDALONE_BINARY_BASENAME}${exe_ext}"
+}
+
+cargo_standalone_binary_path_for_target() {
+  local target="${1,,}"
+  local target_triple=""
+  local output_dir=""
+
+  target_triple="$(target_triple_for "$target")"
+  if [[ -n "$target_triple" ]]; then
+    output_dir="$ROOT_DIR/target/$target_triple/$BUILD_PROFILE"
+  else
+    output_dir="$ROOT_DIR/target/$BUILD_PROFILE"
+  fi
+
+  echo "$output_dir/$(standalone_binary_filename_for_target "$target")"
+}
+
 format_output_root_for() {
   local format=""
   local build_base=""
@@ -269,6 +315,7 @@ format_output_root_for() {
   case "$format" in
     vst3) echo "$ROOT_DIR/${build_base}/vst3" ;;
     clap3) echo "$ROOT_DIR/${build_base}/clap" ;;
+    desktop) echo "$ROOT_DIR/${build_base}/desktop" ;;
     au) echo "$ROOT_DIR/${build_base}/au" ;;
     *) return 1 ;;
   esac
@@ -306,6 +353,9 @@ bundle_binary_path_for() {
     clap3)
       echo "$artifact"
       ;;
+    desktop)
+      echo "$artifact"
+      ;;
     au)
       if [[ "$target" != "darwin" ]]; then
         echo ""
@@ -325,12 +375,15 @@ install_root_for() {
   case "$target:$format" in
     linux:vst3) echo "${VST3_INSTALL_PATH_LINUX:-${VST_INSTALL_PATH:-$HOME/.vst3}}" ;;
     linux:clap3) echo "${CLAP_INSTALL_PATH_LINUX:-$HOME/.clap}" ;;
+    linux:desktop) echo "" ;;
     linux:au) echo "" ;;
     darwin:vst3) echo "${VST3_INSTALL_PATH_DARWIN:-$HOME/Library/Audio/Plug-Ins/VST3}" ;;
     darwin:clap3) echo "${CLAP_INSTALL_PATH_DARWIN:-$HOME/Library/Audio/Plug-Ins/CLAP}" ;;
+    darwin:desktop) echo "" ;;
     darwin:au) echo "${AU_INSTALL_PATH_DARWIN:-$HOME/Library/Audio/Plug-Ins/Components}" ;;
     windows:vst3) echo "${VST3_INSTALL_PATH_WINDOWS:-$HOME/AppData/Local/Common Files/VST3}" ;;
     windows:clap3) echo "${CLAP_INSTALL_PATH_WINDOWS:-$HOME/.clap}" ;;
+    windows:desktop) echo "" ;;
     windows:au) echo "" ;;
     *) echo "" ;;
   esac

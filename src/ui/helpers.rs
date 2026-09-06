@@ -1,22 +1,23 @@
 use std::f32::consts::TAU;
 
+use nih_plug::prelude::{FloatParam, ParamSetter};
 use nih_plug_egui::egui::{self, Pos2, Rect};
 
 use crate::{config, shared};
 
 use super::{
-    CurveKind, AMP_DB_FLOOR, MIN_POINT_GAP_X, WAVEFORM_PREVIEW_DURATION_SECONDS,
+    state::CurveKind, AMP_DB_FLOOR, MIN_POINT_GAP_X, WAVEFORM_PREVIEW_DURATION_SECONDS,
     WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL,
 };
 
-pub(super) fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
+pub(super) fn axis_y_label(kind: CurveKind, normalized: f32, base_pitch_hz: f32) -> String {
     match kind {
         CurveKind::Amplitude => {
             let db = AMP_DB_FLOOR + normalized.clamp(0.0, 1.0) * (0.0 - AMP_DB_FLOOR);
             format!("{db:.0} dB")
         }
         CurveKind::Pitch => {
-            let hz = pitch_hz_from_normalized(normalized);
+            let hz = base_pitch_hz * pitch_ratio_from_normalized(normalized);
             if hz >= 1000.0 {
                 format!("{:.1}k", hz / 1000.0)
             } else {
@@ -24,6 +25,102 @@ pub(super) fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
             }
         }
     }
+}
+
+/// Renders a slider bound to a float parameter, sending proper
+/// begin/set/end parameter gestures so DAW automation stays in sync.
+pub(crate) fn float_param_slider(
+    ui: &mut egui::Ui,
+    setter: &ParamSetter,
+    param: &FloatParam,
+    label: &str,
+) -> egui::Response {
+    let mut value = param.value();
+    let mut slider = egui::Slider::new(&mut value, 0.0..=1.0);
+    if !label.is_empty() {
+        slider = slider.text(label);
+    }
+    let response = ui.add(slider);
+    if response.drag_started() {
+        setter.begin_set_parameter(param);
+    }
+    if response.changed() {
+        setter.set_parameter(param, value);
+    }
+    if response.drag_stopped() {
+        setter.end_set_parameter(param);
+    }
+    response
+}
+
+/// Polls keyboard shortcuts for the curve editor.
+/// Returns (undo, redo, cut, delete).
+pub(super) fn poll_editor_shortcuts(ui: &egui::Ui) -> (bool, bool, bool, bool) {
+    let (undo_shortcut, redo_shortcut) = ui.input(|i| {
+        let mut undo = false;
+        let mut redo = false;
+
+        for event in &i.events {
+            if let egui::Event::Key {
+                key,
+                pressed,
+                modifiers,
+                ..
+            } = event
+            {
+                if !*pressed {
+                    continue;
+                }
+
+                let modifier_down = modifiers.ctrl || modifiers.command;
+                if !modifier_down {
+                    continue;
+                }
+
+                if *key == egui::Key::Z {
+                    if modifiers.shift {
+                        redo = true;
+                    } else {
+                        undo = true;
+                    }
+                } else if *key == egui::Key::Y {
+                    redo = true;
+                }
+            }
+        }
+
+        (undo, redo)
+    });
+    let (cut_shortcut, delete_shortcut) = ui.input(|i| {
+        let mut cut = false;
+        let mut delete = false;
+
+        for event in &i.events {
+            match event {
+                egui::Event::Cut => {
+                    cut = true;
+                }
+                egui::Event::Key {
+                    key,
+                    pressed,
+                    modifiers,
+                    ..
+                } if *pressed => {
+                    if *key == egui::Key::X && (modifiers.ctrl || modifiers.command) {
+                        cut = true;
+                    }
+                    if *key == egui::Key::Delete || *key == egui::Key::Backspace {
+                        delete = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (cut, delete)
+    });
+
+    (undo_shortcut, redo_shortcut, cut_shortcut, delete_shortcut)
 }
 
 pub(super) fn axis_x_label(time_ms: f32) -> String {
@@ -50,6 +147,7 @@ pub(super) fn waveform_preview_points(
     pitch_points: &[Pos2],
     pitch_bends: &[f32],
     tuning_a4_hz: f32,
+    base_pitch_hz: f32,
     note_end_ms: f32,
     max_note_length_ms: f32,
     waveform_zoom_percent: f32,
@@ -81,7 +179,7 @@ pub(super) fn waveform_preview_points(
 
             let amp = envelope_value_amplitude_db(amplitude_points, amplitude_bends, note_progress_t);
             let pitch = envelope_value_linear(pitch_points, pitch_bends, note_progress_t);
-            let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
+            let hz = (base_pitch_hz * pitch_ratio_from_normalized(pitch) * tuning_scale)
                 .clamp(20.0, 22050.0)
                 .min(max_display_hz);
 
@@ -223,7 +321,13 @@ pub(super) fn pitch_hz_from_normalized(value: f32) -> f32 {
     min_hz * (max_hz / min_hz).powf(value.clamp(0.0, 1.0))
 }
 
-pub(super) fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
+/// Pitch envelope value as a multiplier above the base pitch: 1x at the
+/// bottom of the curve, 1000x at the top.
+pub(super) fn pitch_ratio_from_normalized(value: f32) -> f32 {
+    pitch_hz_from_normalized(value) / 20.0
+}
+
+pub(crate) fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
     const NOTE_NAMES: [&str; 12] = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
     ];
@@ -235,11 +339,17 @@ pub(super) fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
     format!("{}{}", NOTE_NAMES[note_idx], octave)
 }
 
-pub(super) fn point_value_label(kind: CurveKind, point: Pos2, tuning_a4_hz: f32) -> String {
+pub(super) fn point_value_label(
+    kind: CurveKind,
+    point: Pos2,
+    tuning_a4_hz: f32,
+    base_pitch_hz: f32,
+) -> String {
     match kind {
         CurveKind::Amplitude => format!("{:.1} dB", amplitude_db(point.y)),
         CurveKind::Pitch => {
-            let hz = pitch_hz_from_normalized(point.y)
+            let hz = base_pitch_hz
+                * pitch_ratio_from_normalized(point.y)
                 * (tuning_a4_hz / config::app_config().default_tuning_a4_hz.max(f32::EPSILON));
             let note = note_name_from_hz(hz, tuning_a4_hz);
             format!("{} {:.1}Hz", note, hz)

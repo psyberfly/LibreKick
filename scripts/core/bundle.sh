@@ -21,7 +21,7 @@ fi
 
 if ! is_supported_format "$FORMAT"; then
   echo "Unsupported format: $FORMAT"
-  echo "Supported formats: vst3, clap3, au"
+  echo "Supported formats: vst3, clap3, desktop, au"
   exit 1
 fi
 
@@ -30,12 +30,17 @@ if [[ "$FORMAT" == "au" && "$TARGET" != "darwin" ]]; then
   exit 0
 fi
 
-BINARY_SRC="$(cargo_binary_path_for_target "$TARGET")"
 BUNDLE_ARTIFACT="$(bundle_artifact_path_for "$TARGET" "$FORMAT")"
 BINARY_DST="$(bundle_binary_path_for "$TARGET" "$FORMAT")"
 BINARY_DST_DIR="$(dirname "$BINARY_DST")"
 CANONICAL_BUNDLE_ARTIFACT="$(canonical_bundle_artifact_path_for "$TARGET" "$FORMAT")"
 CANONICAL_BINARY_DST="$(canonical_bundle_binary_path_for "$TARGET" "$FORMAT")"
+
+if [[ "$FORMAT" == "desktop" ]]; then
+  BINARY_SRC="$(cargo_standalone_binary_path_for_target "$TARGET")"
+else
+  BINARY_SRC="$(cargo_binary_path_for_target "$TARGET")"
+fi
 
 if [[ ! -f "$BINARY_SRC" ]]; then
   echo "Missing binary: $BINARY_SRC"
@@ -57,6 +62,19 @@ case "$FORMAT" in
     fi
     ;;
   clap3)
+    mkdir -p "$(dirname "$BUNDLE_ARTIFACT")"
+    rm -f "$BUNDLE_ARTIFACT"
+    cp "$BINARY_SRC" "$BUNDLE_ARTIFACT"
+    chmod +x "$BUNDLE_ARTIFACT"
+
+    if [[ -n "$CANONICAL_BUNDLE_ARTIFACT" && "$CANONICAL_BUNDLE_ARTIFACT" != "$BUNDLE_ARTIFACT" ]]; then
+      rm -f "$CANONICAL_BUNDLE_ARTIFACT"
+      cp "$BINARY_SRC" "$CANONICAL_BUNDLE_ARTIFACT"
+      chmod +x "$CANONICAL_BUNDLE_ARTIFACT"
+      echo "Created (compat): $CANONICAL_BUNDLE_ARTIFACT"
+    fi
+    ;;
+  desktop)
     mkdir -p "$(dirname "$BUNDLE_ARTIFACT")"
     rm -f "$BUNDLE_ARTIFACT"
     cp "$BINARY_SRC" "$BUNDLE_ARTIFACT"

@@ -11,9 +11,22 @@ const DEFAULT_PATCH_NAME_FILE: &str = ".default_patch_name";
 
 include!(concat!(env!("OUT_DIR"), "/embedded_seed_patches.rs"));
 
+/// Maximum length of a patch description, in characters.
+pub const PATCH_DESCRIPTION_MAX_CHARS: usize = 300;
+
+/// Strips line breaks and caps the description at `PATCH_DESCRIPTION_MAX_CHARS`.
+pub(crate) fn sanitize_patch_description(raw: &str) -> String {
+    raw.replace(['\n', '\r'], " ")
+        .chars()
+        .take(PATCH_DESCRIPTION_MAX_CHARS)
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 pub struct PatchData {
     pub name: String,
+    /// Free-form patch description shown in the menu bar. Empty when unset.
+    pub description: String,
     pub tuning_a4_hz: f32,
     pub keytrack_enabled: bool,
     pub note_end_ms: f32,
@@ -24,6 +37,39 @@ pub struct PatchData {
     pub amplitude_bends: Vec<f32>,
     pub pitch_points: Vec<(f32, f32)>,
     pub pitch_bends: Vec<f32>,
+    /// Bass instrument settings. `None` for patches saved before bass support.
+    pub bass: Option<BassPatchData>,
+    /// Kick oscillator settings. `None` for patches saved before kick support.
+    pub kick: Option<KickPatchData>,
+}
+
+/// Kick oscillator settings stored inside a patch file.
+#[derive(Clone, Debug)]
+pub struct KickPatchData {
+    pub oscillator_waveform: String,
+    pub retrigger: bool,
+    pub legato_voice_steal: bool,
+    pub pitch_hz: f32,
+    /// Kick level (K Level macro). `None` for patches saved before level support.
+    pub level: Option<f32>,
+}
+
+/// Bass instrument settings stored inside a patch file.
+#[derive(Clone, Debug)]
+pub struct BassPatchData {
+    pub oscillator_waveform: String,
+    pub retrigger: bool,
+    pub legato_voice_steal: bool,
+    pub note_length_ms: f32,
+    pub pitch_hz: f32,
+    pub cutoff_hz: f32,
+    pub filter_mode: String,
+    pub amp_points: Vec<(f32, f32)>,
+    pub amp_bends: Vec<f32>,
+    pub filter_points: Vec<(f32, f32)>,
+    pub filter_bends: Vec<f32>,
+    /// Bass level (B Level macro). `None` for patches saved before level support.
+    pub level: Option<f32>,
 }
 
 pub fn set_default_patch_name(name: &str) -> Result<(), String> {
@@ -200,6 +246,7 @@ fn parse_bends(raw: &str, label: &str) -> Result<Vec<f32>, String> {
 
 fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, String> {
     let mut patch_name: Option<String> = None;
+    let mut description: Option<String> = None;
     let mut tuning_a4_hz: Option<f32> = None;
     let mut keytrack_enabled: Option<bool> = None;
     let mut note_end_ms: Option<f32> = None;
@@ -210,6 +257,27 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut amplitude_bends: Option<Vec<f32>> = None;
     let mut pitch_points: Option<Vec<(f32, f32)>> = None;
     let mut pitch_bends: Option<Vec<f32>> = None;
+
+    let mut bass_seen = false;
+    let mut bass_oscillator_waveform: Option<String> = None;
+    let mut bass_retrigger: Option<bool> = None;
+    let mut bass_legato_voice_steal: Option<bool> = None;
+    let mut bass_note_length_ms: Option<f32> = None;
+    let mut bass_pitch_hz: Option<f32> = None;
+    let mut bass_cutoff_hz: Option<f32> = None;
+    let mut bass_filter_mode: Option<String> = None;
+    let mut bass_amp_points: Option<Vec<(f32, f32)>> = None;
+    let mut bass_amp_bends: Option<Vec<f32>> = None;
+    let mut bass_filter_points: Option<Vec<(f32, f32)>> = None;
+    let mut bass_filter_bends: Option<Vec<f32>> = None;
+    let mut bass_level: Option<f32> = None;
+
+    let mut kick_seen = false;
+    let mut kick_oscillator_waveform: Option<String> = None;
+    let mut kick_retrigger: Option<bool> = None;
+    let mut kick_legato_voice_steal: Option<bool> = None;
+    let mut kick_pitch_hz: Option<f32> = None;
+    let mut kick_level: Option<f32> = None;
 
     for raw_line in raw.lines() {
         let line = raw_line.trim();
@@ -226,6 +294,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
 
         match key {
             "name" => patch_name = Some(value.to_owned()),
+            "description" => description = Some(sanitize_patch_description(value)),
             "tuning_a4_hz" => {
                 tuning_a4_hz =
                     Some(value.parse::<f32>().map_err(|_| "Invalid tuning_a4_hz".to_owned())?)
@@ -256,6 +325,78 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             "amplitude_bends" => amplitude_bends = Some(parse_bends(value, "amplitude_bends")?),
             "pitch_points" => pitch_points = Some(parse_points(value, "pitch_points")?),
             "pitch_bends" => pitch_bends = Some(parse_bends(value, "pitch_bends")?),
+            "bass_oscillator_waveform" => {
+                bass_seen = true;
+                bass_oscillator_waveform = Some(value.to_owned());
+            }
+            "bass_retrigger" => {
+                bass_seen = true;
+                bass_retrigger = value.parse::<bool>().ok();
+            }
+            "bass_legato_voice_steal" => {
+                bass_seen = true;
+                bass_legato_voice_steal = value.parse::<bool>().ok();
+            }
+            "bass_note_length_ms" => {
+                bass_seen = true;
+                bass_note_length_ms = value.parse::<f32>().ok();
+            }
+            "bass_pitch_hz" => {
+                bass_seen = true;
+                bass_pitch_hz = value.parse::<f32>().ok();
+            }
+            "bass_cutoff_hz" => {
+                bass_seen = true;
+                bass_cutoff_hz = value.parse::<f32>().ok();
+            }
+            "bass_filter_mode" => {
+                bass_seen = true;
+                bass_filter_mode = Some(value.to_owned());
+            }
+            "bass_amp_points" => {
+                bass_seen = true;
+                if !value.is_empty() {
+                    bass_amp_points = Some(parse_points(value, "bass_amp_points")?);
+                }
+            }
+            "bass_amp_bends" => {
+                bass_seen = true;
+                bass_amp_bends = Some(parse_bends(value, "bass_amp_bends")?);
+            }
+            "bass_filter_points" => {
+                bass_seen = true;
+                if !value.is_empty() {
+                    bass_filter_points = Some(parse_points(value, "bass_filter_points")?);
+                }
+            }
+            "bass_filter_bends" => {
+                bass_seen = true;
+                bass_filter_bends = Some(parse_bends(value, "bass_filter_bends")?);
+            }
+            "bass_level" => {
+                bass_seen = true;
+                bass_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
+            "kick_oscillator_waveform" => {
+                kick_seen = true;
+                kick_oscillator_waveform = Some(value.to_owned());
+            }
+            "kick_retrigger" => {
+                kick_seen = true;
+                kick_retrigger = value.parse::<bool>().ok();
+            }
+            "kick_legato_voice_steal" => {
+                kick_seen = true;
+                kick_legato_voice_steal = value.parse::<bool>().ok();
+            }
+            "kick_pitch_hz" => {
+                kick_seen = true;
+                kick_pitch_hz = value.parse::<f32>().ok();
+            }
+            "kick_level" => {
+                kick_seen = true;
+                kick_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
             _ => {}
         }
     }
@@ -266,6 +407,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             .filter(|name| !name.is_empty())
             .or_else(|| fallback_name.map(sanitize_patch_name).filter(|name| !name.is_empty()))
             .ok_or_else(|| "Missing patch name".to_owned())?,
+        description: description.unwrap_or_default(),
         tuning_a4_hz: tuning_a4_hz.ok_or_else(|| "Missing tuning_a4_hz".to_owned())?,
         keytrack_enabled: keytrack_enabled.unwrap_or(false),
         note_end_ms: note_end_ms.ok_or_else(|| "Missing note_end_ms".to_owned())?,
@@ -278,6 +420,37 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
         amplitude_bends: amplitude_bends.unwrap_or_default(),
         pitch_points: pitch_points.ok_or_else(|| "Missing pitch_points".to_owned())?,
         pitch_bends: pitch_bends.unwrap_or_default(),
+        bass: if bass_seen {
+            Some(BassPatchData {
+                oscillator_waveform: bass_oscillator_waveform
+                    .unwrap_or_else(|| "saw".to_owned()),
+                retrigger: bass_retrigger.unwrap_or(true),
+                legato_voice_steal: bass_legato_voice_steal.unwrap_or(false),
+                note_length_ms: bass_note_length_ms.unwrap_or(220.0),
+                pitch_hz: bass_pitch_hz.unwrap_or(55.0),
+                cutoff_hz: bass_cutoff_hz.unwrap_or(120.0),
+                filter_mode: bass_filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
+                amp_points: bass_amp_points.unwrap_or_default(),
+                amp_bends: bass_amp_bends.unwrap_or_default(),
+                filter_points: bass_filter_points.unwrap_or_default(),
+                filter_bends: bass_filter_bends.unwrap_or_default(),
+                level: bass_level,
+            })
+        } else {
+            None
+        },
+        kick: if kick_seen {
+            Some(KickPatchData {
+                oscillator_waveform: kick_oscillator_waveform
+                    .unwrap_or_else(|| "sine".to_owned()),
+                retrigger: kick_retrigger.unwrap_or(true),
+                legato_voice_steal: kick_legato_voice_steal.unwrap_or(true),
+                pitch_hz: kick_pitch_hz.unwrap_or(55.0),
+                level: kick_level,
+            })
+        } else {
+            None
+        },
     })
 }
 
@@ -319,8 +492,9 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
     ensure_patches_dir()?;
 
     let path = patch_file_path(&patch.name)?;
-    let serialized = [
+    let mut lines = vec![
         format!("name={}", patch.name),
+        format!("description={}", sanitize_patch_description(&patch.description)),
         format!("tuning_a4_hz={}", patch.tuning_a4_hz),
         format!("keytrack_enabled={}", patch.keytrack_enabled),
         format!("note_end_ms={}", patch.note_end_ms),
@@ -331,8 +505,42 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         format!("amplitude_bends={}", bends_to_string(&patch.amplitude_bends)),
         format!("pitch_points={}", points_to_string(&patch.pitch_points)),
         format!("pitch_bends={}", bends_to_string(&patch.pitch_bends)),
-    ]
-    .join("\n");
+    ];
+
+    if let Some(bass) = &patch.bass {
+        lines.push(format!("bass_oscillator_waveform={}", bass.oscillator_waveform));
+        lines.push(format!("bass_retrigger={}", bass.retrigger));
+        lines.push(format!("bass_legato_voice_steal={}", bass.legato_voice_steal));
+        lines.push(format!("bass_note_length_ms={}", bass.note_length_ms));
+        lines.push(format!("bass_pitch_hz={}", bass.pitch_hz));
+        lines.push(format!("bass_cutoff_hz={}", bass.cutoff_hz));
+        lines.push(format!("bass_filter_mode={}", bass.filter_mode));
+        lines.push(format!("bass_amp_points={}", points_to_string(&bass.amp_points)));
+        lines.push(format!("bass_amp_bends={}", bends_to_string(&bass.amp_bends)));
+        lines.push(format!(
+            "bass_filter_points={}",
+            points_to_string(&bass.filter_points)
+        ));
+        lines.push(format!(
+            "bass_filter_bends={}",
+            bends_to_string(&bass.filter_bends)
+        ));
+        if let Some(level) = bass.level {
+            lines.push(format!("bass_level={level}"));
+        }
+    }
+
+    if let Some(kick) = &patch.kick {
+        lines.push(format!("kick_oscillator_waveform={}", kick.oscillator_waveform));
+        lines.push(format!("kick_retrigger={}", kick.retrigger));
+        lines.push(format!("kick_legato_voice_steal={}", kick.legato_voice_steal));
+        lines.push(format!("kick_pitch_hz={}", kick.pitch_hz));
+        if let Some(level) = kick.level {
+            lines.push(format!("kick_level={level}"));
+        }
+    }
+
+    let serialized = lines.join("\n");
 
     fs::write(&path, serialized)
         .map_err(|error| format!("Failed to save patch '{}': {error}", path.display()))
@@ -344,4 +552,80 @@ pub fn load_patch(name: &str) -> Result<PatchData, String> {
         .map_err(|error| format!("Failed to load patch '{}': {error}", path.display()))?;
 
     parse_patch(&raw, Some(name))
+}
+
+pub const SETTINGS_FILE_NAME: &str = "user.librekick_settings";
+
+/// UI-level settings persisted between sessions (not part of patches).
+#[derive(Clone, Debug)]
+pub struct UiSettingsData {
+    pub tuning_a4_hz: f32,
+    pub display_scale: f32,
+}
+
+fn settings_file_path() -> PathBuf {
+    patches_dir_path().join(SETTINGS_FILE_NAME)
+}
+
+pub fn save_settings(settings: &UiSettingsData) -> Result<(), String> {
+    ensure_patches_dir()?;
+
+    let path = settings_file_path();
+    let serialized = [
+        format!("tuning_a4_hz={}", settings.tuning_a4_hz),
+        format!("display_scale={}", settings.display_scale),
+    ]
+    .join("\n");
+
+    fs::write(&path, serialized)
+        .map_err(|error| format!("Failed to save settings '{}': {error}", path.display()))
+}
+
+pub fn load_settings() -> Result<Option<UiSettingsData>, String> {
+    ensure_patches_dir()?;
+
+    let path = settings_file_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to load settings '{}': {error}", path.display()))?;
+
+    let mut tuning_a4_hz = None;
+    let mut display_scale = None;
+
+    for raw_line in raw.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+
+        match key.trim() {
+            "tuning_a4_hz" => {
+                tuning_a4_hz = value
+                    .trim()
+                    .parse::<f32>()
+                    .map_err(|_| "Invalid tuning_a4_hz in settings".to_owned())
+                    .ok()
+            }
+            "display_scale" => {
+                display_scale = value
+                    .trim()
+                    .parse::<f32>()
+                    .map_err(|_| "Invalid display_scale in settings".to_owned())
+                    .ok()
+            }
+            _ => {}
+        }
+    }
+
+    Ok(Some(UiSettingsData {
+        tuning_a4_hz: tuning_a4_hz.unwrap_or(432.0),
+        display_scale: display_scale.unwrap_or(1.0).clamp(0.5, 2.0),
+    }))
 }

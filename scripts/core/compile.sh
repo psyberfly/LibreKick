@@ -21,7 +21,7 @@ fi
 
 if ! is_supported_format "$FORMAT"; then
   echo "Unsupported format: $FORMAT"
-  echo "Supported formats: vst3, clap3, au"
+  echo "Supported formats: vst3, clap3, desktop, au"
   exit 1
 fi
 

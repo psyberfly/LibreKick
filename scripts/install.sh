@@ -21,7 +21,7 @@ for format in "${REQUESTED_FORMATS_RAW[@]}"; do
     REQUESTED_FORMATS+=("$normalized_format")
   else
     echo "Unsupported format: $format"
-    echo "Supported formats: vst3, clap3, au"
+    echo "Supported formats: vst3, clap3, desktop, au"
     exit 1
   fi
 done

@@ -23,13 +23,13 @@ fi
 
 if ! FORMAT_NAME="$(normalize_format "$FORMAT_NAME")"; then
   echo "Unsupported format: $FORMAT_NAME"
-  echo "Supported formats: vst3, clap3, au"
+  echo "Supported formats: vst3, clap3, desktop, au"
   exit 1
 fi
 
 if [[ "$MODE" != "single" && "$MODE" != "full" ]]; then
-  echo "Usage: $0 [single|full] [target] [clap3|vst3|au]"
-  echo "   or: $0 [target] [clap3|vst3|au] [single|full]"
+  echo "Usage: $0 [single|full] [target] [clap3|vst3|desktop|au]"
+  echo "   or: $0 [target] [clap3|vst3|desktop|au] [single|full]"
   exit 1
 fi
 
@@ -46,13 +46,17 @@ fi
 
 PLUGIN_ARTIFACT="$(bundle_artifact_path_for "$TARGET_NAME" "$FORMAT_NAME")"
 PLUGIN_BINARY="$(bundle_binary_path_for "$TARGET_NAME" "$FORMAT_NAME")"
-SOURCE_BINARY="$(cargo_binary_path_for_target "$TARGET_NAME")"
+if [[ "$FORMAT_NAME" == "desktop" ]]; then
+  SOURCE_BINARY="$(cargo_standalone_binary_path_for_target "$TARGET_NAME")"
+else
+  SOURCE_BINARY="$(cargo_binary_path_for_target "$TARGET_NAME")"
+fi
 
 if [[ ! -f "$SOURCE_BINARY" ]]; then
-  echo "Release binary not found. Running full build first..."
+  echo "Build binary not found. Running full build first..."
   "$SCRIPT_DIR/build.sh" "$TARGET_NAME" "$FORMAT_NAME"
 elif [[ ! -e "$PLUGIN_ARTIFACT" ]] || [[ ! -e "$PLUGIN_BINARY" ]] || [[ "$SOURCE_BINARY" -nt "$PLUGIN_BINARY" ]]; then
-  echo "Bundled plugin is missing or stale. Refreshing bundle first..."
+  echo "Bundled artifact is missing or stale. Refreshing bundle first..."
   "$SCRIPT_DIR/build.sh" "$TARGET_NAME" "$FORMAT_NAME"
 fi
 
