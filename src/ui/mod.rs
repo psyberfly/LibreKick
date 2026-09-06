@@ -10,7 +10,7 @@ use nih_plug::prelude::Editor;
 use nih_plug_egui::{
     create_egui_editor,
     egui::{
-        self, Align2, Color32, ColorImage, FontId, Pos2, Rect, RichText, Sense, Stroke,
+        self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke,
         TextureHandle, TextureOptions, Vec2,
     },
     resizable_window::ResizableWindow,
@@ -185,12 +185,6 @@ fn apply_ui_text_scale(ui: &mut egui::Ui, scale: f32) {
     .into();
     ui.ctx().set_style(style.clone());
     ui.set_style(style);
-}
-
-fn section(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    ui.group(|ui| {
-        add_contents(ui);
-    });
 }
 
 fn brand_logo_texture(ctx: &egui::Context) -> Option<TextureHandle> {
@@ -419,7 +413,8 @@ pub fn create_testing_editor(
                     history_action_applied |= state.redo();
                 }
 
-                let ui_scale = ui_scale_from_size(ui.available_size_before_wrap());
+                let ui_scale = ui_scale_from_size(ui.available_size_before_wrap())
+                    * state.display_scale;
                 let app_cfg = config::app_config();
                 let mut point_dragging_this_frame = false;
                 {
@@ -443,20 +438,8 @@ pub fn create_testing_editor(
                         Stroke::new(1.0, APP_THEME.active_button_border());
                     style.visuals.widgets.hovered.fg_stroke.color = Color32::WHITE;
                 }
-                ui.scope(|ui| {
                 apply_ui_text_scale(ui, ui_scale);
-                let section_gap = (10.0 * ui_scale).max(8.0);
-                let available = ui.available_size_before_wrap();
-                let menu_width = ((available.x - section_gap) / 6.0).max(140.0 * ui_scale);
-                let main_width = (available.x - section_gap - menu_width).max(460.0 * ui_scale);
-                let section_height = available.y.max(320.0 * ui_scale);
-
-                ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(
-                    Vec2::new(main_width, section_height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                section(ui, |ui| {
+                components::scaffold::render(ui, ui_scale, state, |ui, state| {
                 if state.active_page == UiPage::Kick {
                 pages::kick::render(ui, |ui| {
                 pages::kick::render_controls(
@@ -1414,31 +1397,6 @@ pub fn create_testing_editor(
                 } else {
                     pages::logs::render(ui, ui_scale, state);
                 }
-                });
-                });
-                ui.add_space(section_gap);
-                ui.allocate_ui_with_layout(
-                    Vec2::new(menu_width, section_height),
-                    egui::Layout::top_down(egui::Align::Min),
-                    |ui| {
-                        section(ui, |ui| {
-                            apply_ui_text_scale(ui, ui_scale);
-                            ui.add_space(8.0 * ui_scale);
-                            ui.label(
-                                RichText::new("Sections")
-                                    .strong()
-                                    .color(APP_THEME.axis_title()),
-                            );
-                            ui.separator();
-                            ui.selectable_value(&mut state.active_page, UiPage::Kick, "Kick");
-                            ui.selectable_value(&mut state.active_page, UiPage::Bass, "Bass");
-                            ui.selectable_value(&mut state.active_page, UiPage::Settings, "Settings");
-                            ui.selectable_value(&mut state.active_page, UiPage::Oscilloscope, "Oscilloscope");
-                            ui.selectable_value(&mut state.active_page, UiPage::Logs, "Logs");
-                        });
-                    },
-                );
-                });
                 });
             });
         },

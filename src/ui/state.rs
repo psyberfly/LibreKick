@@ -47,6 +47,15 @@ pub(super) struct PatchSnapshot {
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
+    pub(super) bass_amp_curve: Curve,
+    pub(super) bass_filter_curve: Curve,
+    pub(super) bass_oscillator_waveform: shared::Waveform,
+    pub(super) bass_retrigger: bool,
+    pub(super) bass_legato_voice_steal: bool,
+    pub(super) bass_note_length_ms: f32,
+    pub(super) bass_pitch_hz: f32,
+    pub(super) bass_cutoff_hz: f32,
+    pub(super) bass_filter_mode: shared::BassFilterMode,
 }
 
 impl Curve {
@@ -138,6 +147,8 @@ pub(super) struct BezierUiState {
     pub(super) default_patch_name: Option<String>,
     pub(super) new_patch_name: String,
     pub(super) patch_status: Option<String>,
+    /// User-adjustable display scale multiplier (1.0 = automatic from window size).
+    pub(super) display_scale: f32,
 }
 
 impl Default for BezierUiState {
@@ -203,6 +214,7 @@ impl Default for BezierUiState {
             default_patch_name: None,
             new_patch_name: String::new(),
             patch_status: None,
+            display_scale: 1.0,
         };
 
         if let Err(error) = patches::ensure_default_patch_setup() {
@@ -227,6 +239,17 @@ impl Default for BezierUiState {
             Ok(None) => {}
             Err(error) => {
                 state.patch_status = Some(format!("Failed to read default patch: {error}"));
+            }
+        }
+
+        match patches::load_settings() {
+            Ok(Some(settings)) => {
+                state.tuning_standard = tuning_standard_from_a4_hz(settings.tuning_a4_hz);
+                state.display_scale = settings.display_scale;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                state.patch_status = Some(format!("Failed to load settings: {error}"));
             }
         }
 
@@ -344,6 +367,15 @@ impl BezierUiState {
             note_length_ms: self.note_length_ms,
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
+            bass_amp_curve: self.bass_amp_curve.clone(),
+            bass_filter_curve: self.bass_filter_curve.clone(),
+            bass_oscillator_waveform: self.bass_oscillator_waveform,
+            bass_retrigger: self.bass_retrigger,
+            bass_legato_voice_steal: self.bass_legato_voice_steal,
+            bass_note_length_ms: self.bass_note_length_ms,
+            bass_pitch_hz: self.bass_pitch_hz,
+            bass_cutoff_hz: self.bass_cutoff_hz,
+            bass_filter_mode: self.bass_filter_mode,
         }
     }
 
@@ -401,6 +433,30 @@ impl BezierUiState {
                 .map(|point| (point.x, point.y))
                 .collect(),
             pitch_bends: self.pitch_curve.bends.clone(),
+            bass: Some(patches::BassPatchData {
+                oscillator_waveform: waveform_to_patch(self.bass_oscillator_waveform)
+                    .to_owned(),
+                retrigger: self.bass_retrigger,
+                legato_voice_steal: self.bass_legato_voice_steal,
+                note_length_ms: self.bass_note_length_ms,
+                pitch_hz: self.bass_pitch_hz,
+                cutoff_hz: self.bass_cutoff_hz,
+                filter_mode: bass_filter_mode_to_patch(self.bass_filter_mode).to_owned(),
+                amp_points: self
+                    .bass_amp_curve
+                    .points
+                    .iter()
+                    .map(|point| (point.x, point.y))
+                    .collect(),
+                amp_bends: self.bass_amp_curve.bends.clone(),
+                filter_points: self
+                    .bass_filter_curve
+                    .points
+                    .iter()
+                    .map(|point| (point.x, point.y))
+                    .collect(),
+                filter_bends: self.bass_filter_curve.bends.clone(),
+            }),
         }
     }
 
@@ -430,11 +486,71 @@ impl BezierUiState {
             app_cfg.waveform_zoom_max_percent,
         );
 
+        if let Some(bass) = patch.bass {
+            if let Some(waveform) = waveform_from_patch(&bass.oscillator_waveform) {
+                self.bass_oscillator_waveform = waveform;
+            }
+            self.bass_retrigger = bass.retrigger;
+            self.bass_legato_voice_steal = bass.legato_voice_steal;
+            self.bass_note_length_ms = bass.note_length_ms.clamp(1.0, 1000.0);
+            self.bass_pitch_hz = bass.pitch_hz.clamp(20.0, 2_000.0);
+            self.bass_cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
+            if let Some(mode) = bass_filter_mode_from_patch(&bass.filter_mode) {
+                self.bass_filter_mode = mode;
+            }
+            self.bass_amp_curve.points = points_from_patch(
+                &bass.amp_points,
+                &Curve::default_amplitude().points,
+            );
+            self.bass_amp_curve.bends =
+                bends_from_patch(&bass.amp_bends, self.bass_amp_curve.points.len());
+            self.bass_filter_curve.points = points_from_patch(
+                &bass.filter_points,
+                &Curve::default_pitch().points,
+            );
+            self.bass_filter_curve.bends =
+                bends_from_patch(&bass.filter_bends, self.bass_filter_curve.points.len());
+        }
+
         self.selection_drag_start = None;
         self.selection_drag_current = None;
         let selected_index = 1.min(self.active_curve().points.len().saturating_sub(1));
         self.selected_point = Some(selected_index);
         self.selected_points = vec![selected_index];
+    }
+}
+
+fn waveform_to_patch(waveform: shared::Waveform) -> &'static str {
+    match waveform {
+        shared::Waveform::Sine => "sine",
+        shared::Waveform::Saw => "saw",
+        shared::Waveform::Square => "square",
+    }
+}
+
+fn waveform_from_patch(raw: &str) -> Option<shared::Waveform> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "sine" => Some(shared::Waveform::Sine),
+        "saw" => Some(shared::Waveform::Saw),
+        "square" => Some(shared::Waveform::Square),
+        _ => None,
+    }
+}
+
+fn bass_filter_mode_to_patch(mode: shared::BassFilterMode) -> &'static str {
+    match mode {
+        shared::BassFilterMode::LowPass => "lowpass",
+        shared::BassFilterMode::HighPass => "highpass",
+        shared::BassFilterMode::BandPass => "bandpass",
+    }
+}
+
+fn bass_filter_mode_from_patch(raw: &str) -> Option<shared::BassFilterMode> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "lowpass" | "low" => Some(shared::BassFilterMode::LowPass),
+        "highpass" | "high" => Some(shared::BassFilterMode::HighPass),
+        "bandpass" | "bp" => Some(shared::BassFilterMode::BandPass),
+        _ => None,
     }
 }
 

@@ -26,7 +26,7 @@ pub(crate) fn render_controls(
         brand_title_logo(ui, state.brand_logo.as_ref(), ui_scale);
         ui.add_space(6.0 * ui_scale);
         ui.label(
-            egui::RichText::new("Prototype")
+            egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
                 .strong()
                 .color(APP_THEME.axis_title()),
         );

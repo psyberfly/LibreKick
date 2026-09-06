@@ -35,3 +35,7 @@ pub fn pitch_edge_color() -> Color32 {
 pub fn accent_color() -> Color32 {
     Color32::from_rgb(220, 64, 64)
 }
+
+pub fn axis_title_color() -> Color32 {
+    Color32::from_rgb(185, 191, 198)
+}
