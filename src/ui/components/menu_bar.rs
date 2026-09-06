@@ -55,9 +55,11 @@ pub(crate) fn render(
                                             state.apply_patch_data(patch);
                                         if let Some(level) = kick_level {
                                             setter.set_parameter(&params.kick_level, level);
+                                            state.kick_level = level;
                                         }
                                         if let Some(level) = bass_level {
                                             setter.set_parameter(&params.bass_level, level);
+                                            state.bass_level = level;
                                         }
                                         state.mark_patch_clean(patch_name.clone());
                                         state.commit_history_if_changed(&before);
@@ -75,6 +77,18 @@ pub(crate) fn render(
                     }
 
                     ui.separator();
+                    ui.label("Description");
+                    let desc_response = ui.add(
+                        egui::TextEdit::singleline(&mut state.patch_description)
+                            .desired_width(280.0 * ui_scale)
+                            .hint_text("Patch description…"),
+                    );
+                    if desc_response.changed() {
+                        state.patch_description =
+                            patches::sanitize_patch_description(&state.patch_description);
+                    }
+
+                    ui.separator();
                     ui.label("Save Patch");
                     ui.text_edit_singleline(&mut state.new_patch_name);
                     let can_save_patch = !state.new_patch_name.trim().is_empty();
@@ -83,11 +97,7 @@ pub(crate) fn render(
                         .clicked()
                     {
                         let patch_name = state.new_patch_name.trim().to_owned();
-                        let patch_data = state.to_patch_data(
-                            patch_name.clone(),
-                            params.kick_level.value(),
-                            params.bass_level.value(),
-                        );
+                        let patch_data = state.to_patch_data(patch_name.clone());
                         match patches::save_patch(&patch_data) {
                             Ok(()) => {
                                 state.mark_patch_clean(patch_name.clone());
@@ -133,77 +143,21 @@ pub(crate) fn render(
                     }
                 });
 
-                if state.patch_description_editing {
-                    let response = ui.add(
-                        egui::TextEdit::singleline(&mut state.patch_description)
-                            .desired_width(220.0 * ui_scale),
-                    );
-                    if !response.has_focus() {
-                        response.request_focus();
-                    }
-                    if response.changed() {
-                        state.patch_description =
-                            patches::sanitize_patch_description(&state.patch_description);
-                    }
-                    if response.lost_focus() {
-                        state.patch_description_editing = false;
-                    }
-
-                    let save_name = state.selected_patch_name.clone().or_else(|| {
-                        let name = state.new_patch_name.trim().to_owned();
-                        if name.is_empty() {
-                            None
-                        } else {
-                            Some(name)
-                        }
-                    });
-                    if ui
-                        .add_enabled(save_name.is_some(), egui::Button::new("Save"))
-                        .clicked()
-                    {
-                        if let Some(patch_name) = save_name {
-                            let patch_data = state.to_patch_data(
-                                patch_name.clone(),
-                                params.kick_level.value(),
-                                params.bass_level.value(),
-                            );
-                            match patches::save_patch(&patch_data) {
-                                Ok(()) => {
-                                    state.mark_patch_clean(patch_name.clone());
-                                    state.patch_status =
-                                        Some(format!("Saved patch: {patch_name}"));
-                                    state.refresh_patch_list();
-                                    state.patch_description_editing = false;
-                                }
-                                Err(error) => {
-                                    state.patch_status =
-                                        Some(format!("Failed to save patch: {error}"));
-                                }
-                            }
-                        }
-                    }
+                let text: &str = if state.patch_description.is_empty() {
+                    "No description"
                 } else {
-                    let text: &str = if state.patch_description.is_empty() {
-                        "Add description…"
-                    } else {
-                        state.patch_description.as_str()
-                    };
-                    let response = ui
-                        .add(
-                            egui::Label::new(
-                                egui::RichText::new(text)
-                                    .small()
-                                    .italics()
-                                    .color(APP_THEME.axis_tick()),
-                            )
-                            .sense(egui::Sense::click())
-                            .truncate(),
-                        )
-                        .on_hover_text("Double-click to edit the patch description");
-                    if response.double_clicked() {
-                        state.patch_description_editing = true;
-                    }
-                }
+                    state.patch_description.as_str()
+                };
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(text)
+                            .small()
+                            .italics()
+                            .color(APP_THEME.axis_tick()),
+                    )
+                    .truncate(),
+                )
+                .on_hover_text("Edit the description in the Patches menu");
                 });
 
                 ui.label(

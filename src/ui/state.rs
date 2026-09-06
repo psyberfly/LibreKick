@@ -85,6 +85,8 @@ pub(super) struct PatchSnapshot {
     pub(super) bass_pitch_hz: f32,
     pub(super) bass_cutoff_hz: f32,
     pub(super) bass_filter_mode: shared::BassFilterMode,
+    pub(super) kick_level: f32,
+    pub(super) bass_level: f32,
     pub(super) description: String,
 }
 
@@ -136,11 +138,16 @@ pub(super) struct BezierUiState {
     pub(super) kick_retrigger: bool,
     pub(super) kick_legato_voice_steal: bool,
     pub(super) kick_pitch_hz: f32,
+    /// Mirror of the `kick_level` plugin parameter, synced each frame so
+    /// patch dirty-tracking and saving can see it.
+    pub(super) kick_level: f32,
     pub(super) note_length_ms: f32,
     pub(super) bass_note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) bass_cutoff_hz: f32,
     pub(super) bass_pitch_hz: f32,
+    /// Mirror of the `bass_level` plugin parameter, synced each frame.
+    pub(super) bass_level: f32,
     pub(super) bass_retrigger: bool,
     pub(super) bass_legato_voice_steal: bool,
     pub(super) bass_filter_mode: shared::BassFilterMode,
@@ -178,10 +185,9 @@ pub(super) struct BezierUiState {
     pub(super) default_patch_name: Option<String>,
     pub(super) new_patch_name: String,
     pub(super) patch_status: Option<String>,
-    /// Description of the current patch, shown in the menu bar.
+    /// Description of the current patch, shown in the menu bar and
+    /// edited in the Patches menu.
     pub(super) patch_description: String,
-    /// Whether the patch description is currently being edited.
-    pub(super) patch_description_editing: bool,
     /// User-adjustable display scale multiplier (1.0 = automatic from window size).
     pub(super) display_scale: f32,
 }
@@ -202,11 +208,13 @@ impl Default for BezierUiState {
             kick_retrigger: true,
             kick_legato_voice_steal: true,
             kick_pitch_hz: 55.0,
+            kick_level: 0.8,
             note_length_ms: note_length_max_ms,
             bass_note_length_ms: 220.0,
             note_length_max_ms,
             bass_cutoff_hz: 120.0,
             bass_pitch_hz: 55.0,
+            bass_level: 0.8,
             bass_retrigger: true,
             bass_legato_voice_steal: false,
             bass_filter_mode: shared::BassFilterMode::LowPass,
@@ -251,7 +259,6 @@ impl Default for BezierUiState {
             new_patch_name: String::new(),
             patch_status: None,
             patch_description: String::new(),
-            patch_description_editing: false,
             display_scale: 1.0,
         };
 
@@ -417,6 +424,8 @@ impl BezierUiState {
             bass_pitch_hz: self.bass_pitch_hz,
             bass_cutoff_hz: self.bass_cutoff_hz,
             bass_filter_mode: self.bass_filter_mode,
+            kick_level: self.kick_level,
+            bass_level: self.bass_level,
             description: self.patch_description.clone(),
         }
     }
@@ -449,12 +458,7 @@ impl BezierUiState {
         self.new_patch_name = patch_name;
     }
 
-    pub(super) fn to_patch_data(
-        &self,
-        name: String,
-        kick_level: f32,
-        bass_level: f32,
-    ) -> patches::PatchData {
+    pub(super) fn to_patch_data(&self, name: String) -> patches::PatchData {
         patches::PatchData {
             name,
             description: patches::sanitize_patch_description(&self.patch_description),
@@ -504,7 +508,7 @@ impl BezierUiState {
                     .map(|point| (point.x, point.y))
                     .collect(),
                 filter_bends: self.bass_filter_curve.bends.clone(),
-                level: Some(bass_level),
+                level: Some(self.bass_level),
             }),
             kick: Some(patches::KickPatchData {
                 oscillator_waveform: waveform_to_patch(self.kick_oscillator_waveform)
@@ -512,7 +516,7 @@ impl BezierUiState {
                 retrigger: self.kick_retrigger,
                 legato_voice_steal: self.kick_legato_voice_steal,
                 pitch_hz: self.kick_pitch_hz,
-                level: Some(kick_level),
+                level: Some(self.kick_level),
             }),
         }
     }
@@ -525,7 +529,6 @@ impl BezierUiState {
         patch: patches::PatchData,
     ) -> (Option<f32>, Option<f32>) {
         self.patch_description = patch.description;
-        self.patch_description_editing = false;
         self.amplitude_curve.points =
             points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
         self.amplitude_curve.bends = bends_from_patch(&patch.amplitude_bends, self.amplitude_curve.points.len());
