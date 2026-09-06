@@ -174,7 +174,7 @@ pub(crate) fn render_editor(
             graph_response.request_focus();
         }
         let graph_has_focus = graph_response.has_focus();
-        if graph_response.hovered() {
+        if graph_response.hovered() && !ui.ctx().wants_keyboard_input() {
             graph_response.request_focus();
         }
         let shift_down = ui.input(|i| i.modifiers.shift);

@@ -57,7 +57,11 @@ pub fn create_testing_editor(
                 let mut history_action_applied = false;
 
                 let (undo_shortcut, redo_shortcut, cut_shortcut, delete_shortcut) =
-                    poll_editor_shortcuts(ui);
+                    if ui.ctx().wants_keyboard_input() {
+                        (false, false, false, false)
+                    } else {
+                        poll_editor_shortcuts(ui)
+                    };
                 if undo_shortcut {
                     history_action_applied |= state.undo();
                 }

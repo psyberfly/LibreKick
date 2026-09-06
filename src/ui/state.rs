@@ -85,6 +85,7 @@ pub(super) struct PatchSnapshot {
     pub(super) bass_pitch_hz: f32,
     pub(super) bass_cutoff_hz: f32,
     pub(super) bass_filter_mode: shared::BassFilterMode,
+    pub(super) description: String,
 }
 
 impl Curve {
@@ -177,6 +178,10 @@ pub(super) struct BezierUiState {
     pub(super) default_patch_name: Option<String>,
     pub(super) new_patch_name: String,
     pub(super) patch_status: Option<String>,
+    /// Description of the current patch, shown in the menu bar.
+    pub(super) patch_description: String,
+    /// Whether the patch description is currently being edited.
+    pub(super) patch_description_editing: bool,
     /// User-adjustable display scale multiplier (1.0 = automatic from window size).
     pub(super) display_scale: f32,
 }
@@ -245,6 +250,8 @@ impl Default for BezierUiState {
             default_patch_name: None,
             new_patch_name: String::new(),
             patch_status: None,
+            patch_description: String::new(),
+            patch_description_editing: false,
             display_scale: 1.0,
         };
 
@@ -410,6 +417,7 @@ impl BezierUiState {
             bass_pitch_hz: self.bass_pitch_hz,
             bass_cutoff_hz: self.bass_cutoff_hz,
             bass_filter_mode: self.bass_filter_mode,
+            description: self.patch_description.clone(),
         }
     }
 
@@ -449,6 +457,7 @@ impl BezierUiState {
     ) -> patches::PatchData {
         patches::PatchData {
             name,
+            description: patches::sanitize_patch_description(&self.patch_description),
             tuning_a4_hz: self.tuning_standard.a4_hz(),
             keytrack_enabled: self.keytrack_enabled,
             note_end_ms: self.note_length_ms,
@@ -515,6 +524,8 @@ impl BezierUiState {
         &mut self,
         patch: patches::PatchData,
     ) -> (Option<f32>, Option<f32>) {
+        self.patch_description = patch.description;
+        self.patch_description_editing = false;
         self.amplitude_curve.points =
             points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
         self.amplitude_curve.bends = bends_from_patch(&patch.amplitude_bends, self.amplitude_curve.points.len());

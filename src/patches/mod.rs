@@ -11,9 +11,22 @@ const DEFAULT_PATCH_NAME_FILE: &str = ".default_patch_name";
 
 include!(concat!(env!("OUT_DIR"), "/embedded_seed_patches.rs"));
 
+/// Maximum length of a patch description, in characters.
+pub const PATCH_DESCRIPTION_MAX_CHARS: usize = 300;
+
+/// Strips line breaks and caps the description at `PATCH_DESCRIPTION_MAX_CHARS`.
+pub(crate) fn sanitize_patch_description(raw: &str) -> String {
+    raw.replace(['\n', '\r'], " ")
+        .chars()
+        .take(PATCH_DESCRIPTION_MAX_CHARS)
+        .collect()
+}
+
 #[derive(Clone, Debug)]
 pub struct PatchData {
     pub name: String,
+    /// Free-form patch description shown in the menu bar. Empty when unset.
+    pub description: String,
     pub tuning_a4_hz: f32,
     pub keytrack_enabled: bool,
     pub note_end_ms: f32,
@@ -233,6 +246,7 @@ fn parse_bends(raw: &str, label: &str) -> Result<Vec<f32>, String> {
 
 fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, String> {
     let mut patch_name: Option<String> = None;
+    let mut description: Option<String> = None;
     let mut tuning_a4_hz: Option<f32> = None;
     let mut keytrack_enabled: Option<bool> = None;
     let mut note_end_ms: Option<f32> = None;
@@ -280,6 +294,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
 
         match key {
             "name" => patch_name = Some(value.to_owned()),
+            "description" => description = Some(sanitize_patch_description(value)),
             "tuning_a4_hz" => {
                 tuning_a4_hz =
                     Some(value.parse::<f32>().map_err(|_| "Invalid tuning_a4_hz".to_owned())?)
@@ -392,6 +407,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             .filter(|name| !name.is_empty())
             .or_else(|| fallback_name.map(sanitize_patch_name).filter(|name| !name.is_empty()))
             .ok_or_else(|| "Missing patch name".to_owned())?,
+        description: description.unwrap_or_default(),
         tuning_a4_hz: tuning_a4_hz.ok_or_else(|| "Missing tuning_a4_hz".to_owned())?,
         keytrack_enabled: keytrack_enabled.unwrap_or(false),
         note_end_ms: note_end_ms.ok_or_else(|| "Missing note_end_ms".to_owned())?,
@@ -478,6 +494,7 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
     let path = patch_file_path(&patch.name)?;
     let mut lines = vec![
         format!("name={}", patch.name),
+        format!("description={}", sanitize_patch_description(&patch.description)),
         format!("tuning_a4_hz={}", patch.tuning_a4_hz),
         format!("keytrack_enabled={}", patch.keytrack_enabled),
         format!("note_end_ms={}", patch.note_end_ms),

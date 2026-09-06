@@ -33,6 +33,7 @@ pub(crate) fn render(
             }
 
             ui.vertical(|ui| {
+                ui.horizontal(|ui| {
                 ui.menu_button("Patches", |ui| {
                     apply_ui_text_scale(ui, ui_scale);
                     ui.set_min_width(300.0 * ui_scale);
@@ -130,6 +131,79 @@ pub(crate) fn render(
                         ui.separator();
                         ui.label(status);
                     }
+                });
+
+                if state.patch_description_editing {
+                    let response = ui.add(
+                        egui::TextEdit::singleline(&mut state.patch_description)
+                            .desired_width(220.0 * ui_scale),
+                    );
+                    if !response.has_focus() {
+                        response.request_focus();
+                    }
+                    if response.changed() {
+                        state.patch_description =
+                            patches::sanitize_patch_description(&state.patch_description);
+                    }
+                    if response.lost_focus() {
+                        state.patch_description_editing = false;
+                    }
+
+                    let save_name = state.selected_patch_name.clone().or_else(|| {
+                        let name = state.new_patch_name.trim().to_owned();
+                        if name.is_empty() {
+                            None
+                        } else {
+                            Some(name)
+                        }
+                    });
+                    if ui
+                        .add_enabled(save_name.is_some(), egui::Button::new("Save"))
+                        .clicked()
+                    {
+                        if let Some(patch_name) = save_name {
+                            let patch_data = state.to_patch_data(
+                                patch_name.clone(),
+                                params.kick_level.value(),
+                                params.bass_level.value(),
+                            );
+                            match patches::save_patch(&patch_data) {
+                                Ok(()) => {
+                                    state.mark_patch_clean(patch_name.clone());
+                                    state.patch_status =
+                                        Some(format!("Saved patch: {patch_name}"));
+                                    state.refresh_patch_list();
+                                    state.patch_description_editing = false;
+                                }
+                                Err(error) => {
+                                    state.patch_status =
+                                        Some(format!("Failed to save patch: {error}"));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let text: &str = if state.patch_description.is_empty() {
+                        "Add description…"
+                    } else {
+                        state.patch_description.as_str()
+                    };
+                    let response = ui
+                        .add(
+                            egui::Label::new(
+                                egui::RichText::new(text)
+                                    .small()
+                                    .italics()
+                                    .color(APP_THEME.axis_tick()),
+                            )
+                            .sense(egui::Sense::click())
+                            .truncate(),
+                        )
+                        .on_hover_text("Double-click to edit the patch description");
+                    if response.double_clicked() {
+                        state.patch_description_editing = true;
+                    }
+                }
                 });
 
                 ui.label(
