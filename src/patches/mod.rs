@@ -26,6 +26,17 @@ pub struct PatchData {
     pub pitch_bends: Vec<f32>,
     /// Bass instrument settings. `None` for patches saved before bass support.
     pub bass: Option<BassPatchData>,
+    /// Kick oscillator settings. `None` for patches saved before kick support.
+    pub kick: Option<KickPatchData>,
+}
+
+/// Kick oscillator settings stored inside a patch file.
+#[derive(Clone, Debug)]
+pub struct KickPatchData {
+    pub oscillator_waveform: String,
+    pub retrigger: bool,
+    pub legato_voice_steal: bool,
+    pub pitch_hz: f32,
 }
 
 /// Bass instrument settings stored inside a patch file.
@@ -242,6 +253,12 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut bass_filter_points: Option<Vec<(f32, f32)>> = None;
     let mut bass_filter_bends: Option<Vec<f32>> = None;
 
+    let mut kick_seen = false;
+    let mut kick_oscillator_waveform: Option<String> = None;
+    let mut kick_retrigger: Option<bool> = None;
+    let mut kick_legato_voice_steal: Option<bool> = None;
+    let mut kick_pitch_hz: Option<f32> = None;
+
     for raw_line in raw.lines() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -335,6 +352,22 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 bass_seen = true;
                 bass_filter_bends = Some(parse_bends(value, "bass_filter_bends")?);
             }
+            "kick_oscillator_waveform" => {
+                kick_seen = true;
+                kick_oscillator_waveform = Some(value.to_owned());
+            }
+            "kick_retrigger" => {
+                kick_seen = true;
+                kick_retrigger = value.parse::<bool>().ok();
+            }
+            "kick_legato_voice_steal" => {
+                kick_seen = true;
+                kick_legato_voice_steal = value.parse::<bool>().ok();
+            }
+            "kick_pitch_hz" => {
+                kick_seen = true;
+                kick_pitch_hz = value.parse::<f32>().ok();
+            }
             _ => {}
         }
     }
@@ -371,6 +404,17 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 amp_bends: bass_amp_bends.unwrap_or_default(),
                 filter_points: bass_filter_points.unwrap_or_default(),
                 filter_bends: bass_filter_bends.unwrap_or_default(),
+            })
+        } else {
+            None
+        },
+        kick: if kick_seen {
+            Some(KickPatchData {
+                oscillator_waveform: kick_oscillator_waveform
+                    .unwrap_or_else(|| "sine".to_owned()),
+                retrigger: kick_retrigger.unwrap_or(true),
+                legato_voice_steal: kick_legato_voice_steal.unwrap_or(true),
+                pitch_hz: kick_pitch_hz.unwrap_or(55.0),
             })
         } else {
             None
@@ -448,6 +492,13 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
             "bass_filter_bends={}",
             bends_to_string(&bass.filter_bends)
         ));
+    }
+
+    if let Some(kick) = &patch.kick {
+        lines.push(format!("kick_oscillator_waveform={}", kick.oscillator_waveform));
+        lines.push(format!("kick_retrigger={}", kick.retrigger));
+        lines.push(format!("kick_legato_voice_steal={}", kick.legato_voice_steal));
+        lines.push(format!("kick_pitch_hz={}", kick.pitch_hz));
     }
 
     let serialized = lines.join("\n");

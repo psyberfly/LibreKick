@@ -647,7 +647,7 @@ pub fn create_testing_editor(
                     painter.text(
                         Pos2::new(graph_rect.left() - left_axis_padding * 0.12, y),
                         Align2::RIGHT_CENTER,
-                        axis_y_label(state.active_curve, f),
+                        axis_y_label(state.active_curve, f, state.kick_pitch_hz),
                         themed_font(10.0 * ui_scale),
                         APP_THEME.axis_tick(),
                     );
@@ -1188,6 +1188,7 @@ pub fn create_testing_editor(
                     &state.pitch_curve.points,
                     &state.pitch_curve.bends,
                     tuning_a4_hz,
+                    state.kick_pitch_hz,
                     state.note_length_ms,
                     max_note_length_ms,
                     state.waveform_zoom_percent,
@@ -1310,7 +1311,7 @@ pub fn create_testing_editor(
                     }
 
                     if let Some(value_point) = active_points.get(i).copied() {
-                        let label = point_value_label(active_kind, value_point, tuning_a4_hz);
+                        let label = point_value_label(active_kind, value_point, tuning_a4_hz, state.kick_pitch_hz);
                         let bubble_width = (label.len() as f32 * 7.0 * ui_scale + 14.0 * ui_scale)
                             .max(56.0 * ui_scale);
                         let bubble_height = 20.0 * ui_scale;

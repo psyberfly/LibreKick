@@ -28,6 +28,7 @@ pub(super) struct EditorSnapshot {
     pub(super) kick_oscillator_waveform: shared::Waveform,
     pub(super) kick_retrigger: bool,
     pub(super) kick_legato_voice_steal: bool,
+    pub(super) kick_pitch_hz: f32,
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
@@ -44,6 +45,7 @@ pub(super) struct PatchSnapshot {
     pub(super) kick_oscillator_waveform: shared::Waveform,
     pub(super) kick_retrigger: bool,
     pub(super) kick_legato_voice_steal: bool,
+    pub(super) kick_pitch_hz: f32,
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
@@ -105,6 +107,7 @@ pub(super) struct BezierUiState {
     pub(super) kick_oscillator_waveform: shared::Waveform,
     pub(super) kick_retrigger: bool,
     pub(super) kick_legato_voice_steal: bool,
+    pub(super) kick_pitch_hz: f32,
     pub(super) note_length_ms: f32,
     pub(super) bass_note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
@@ -166,6 +169,7 @@ impl Default for BezierUiState {
             kick_oscillator_waveform: shared::Waveform::Sine,
             kick_retrigger: true,
             kick_legato_voice_steal: true,
+            kick_pitch_hz: 55.0,
             note_length_ms: note_length_max_ms,
             bass_note_length_ms: 220.0,
             note_length_max_ms,
@@ -283,6 +287,7 @@ impl BezierUiState {
             kick_oscillator_waveform: self.kick_oscillator_waveform,
             kick_retrigger: self.kick_retrigger,
             kick_legato_voice_steal: self.kick_legato_voice_steal,
+            kick_pitch_hz: self.kick_pitch_hz,
             note_length_ms: self.note_length_ms,
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
@@ -299,6 +304,7 @@ impl BezierUiState {
         self.kick_oscillator_waveform = snapshot.kick_oscillator_waveform;
         self.kick_retrigger = snapshot.kick_retrigger;
         self.kick_legato_voice_steal = snapshot.kick_legato_voice_steal;
+        self.kick_pitch_hz = snapshot.kick_pitch_hz;
         self.note_length_ms = snapshot.note_length_ms;
         self.note_length_max_ms = snapshot.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
@@ -364,6 +370,7 @@ impl BezierUiState {
             kick_oscillator_waveform: self.kick_oscillator_waveform,
             kick_retrigger: self.kick_retrigger,
             kick_legato_voice_steal: self.kick_legato_voice_steal,
+            kick_pitch_hz: self.kick_pitch_hz,
             note_length_ms: self.note_length_ms,
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
@@ -457,6 +464,13 @@ impl BezierUiState {
                     .collect(),
                 filter_bends: self.bass_filter_curve.bends.clone(),
             }),
+            kick: Some(patches::KickPatchData {
+                oscillator_waveform: waveform_to_patch(self.kick_oscillator_waveform)
+                    .to_owned(),
+                retrigger: self.kick_retrigger,
+                legato_voice_steal: self.kick_legato_voice_steal,
+                pitch_hz: self.kick_pitch_hz,
+            }),
         }
     }
 
@@ -510,6 +524,15 @@ impl BezierUiState {
             );
             self.bass_filter_curve.bends =
                 bends_from_patch(&bass.filter_bends, self.bass_filter_curve.points.len());
+        }
+
+        if let Some(kick) = patch.kick {
+            if let Some(waveform) = waveform_from_patch(&kick.oscillator_waveform) {
+                self.kick_oscillator_waveform = waveform;
+            }
+            self.kick_retrigger = kick.retrigger;
+            self.kick_legato_voice_steal = kick.legato_voice_steal;
+            self.kick_pitch_hz = kick.pitch_hz.clamp(20.0, 2_000.0);
         }
 
         self.selection_drag_start = None;

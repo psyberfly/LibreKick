@@ -100,6 +100,7 @@ impl KickEngine {
             keytrack_enabled: shared_snapshot.keytrack_enabled,
             tuning_scale,
             note_length_ms: shared_snapshot.note_length_ms,
+            pitch_hz: shared_snapshot.kick_pitch_hz,
             waveform: shared_snapshot.kick_oscillator_waveform,
         };
 

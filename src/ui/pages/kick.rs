@@ -174,7 +174,7 @@ pub(crate) fn render_controls(
                 waveform: &mut state.kick_oscillator_waveform,
                 retrigger: &mut state.kick_retrigger,
                 legato_voice_steal: &mut state.kick_legato_voice_steal,
-                pitch_hz: None,
+                pitch_hz: Some(&mut state.kick_pitch_hz),
                 note_length_ms: Some(&mut state.note_length_ms),
             },
         );
@@ -184,6 +184,7 @@ pub(crate) fn render_controls(
     shared::set_kick_oscillator_waveform(shared_for_ui, state.kick_oscillator_waveform);
     shared::set_kick_retrigger(shared_for_ui, state.kick_retrigger);
     shared::set_kick_legato_voice_steal(shared_for_ui, state.kick_legato_voice_steal);
+    shared::set_kick_pitch_hz(shared_for_ui, state.kick_pitch_hz);
 
     ui.horizontal(|ui| {
         ui.label("Curve:");

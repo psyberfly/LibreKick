@@ -10,6 +10,8 @@ pub struct VoiceParams {
     pub keytrack_enabled: bool,
     pub tuning_scale: f32,
     pub note_length_ms: f32,
+    /// Fundamental oscillator pitch; the pitch envelope sweeps above it.
+    pub pitch_hz: f32,
     pub waveform: Waveform,
 }
 
@@ -133,15 +135,19 @@ impl KickVoice {
 
         let amp_curve = amp_lut[lut_index].clamp(0.0, 1.0);
         let pitch_curve = pitch_lut[lut_index].clamp(0.0, 1.0);
-        let curve_hz = pitch_curve_to_hz(pitch_curve);
+        // The pitch envelope is a ratio above the base pitch: 1x at the
+        // bottom of the curve up to 1000x at the top (same log range as
+        // pitch_curve_to_hz, normalized by its 20 Hz minimum).
+        let pitch_ratio = pitch_curve_to_hz(pitch_curve) / 20.0;
         let base_hz = if params.keytrack_enabled {
-            self.hit_note_hz.unwrap_or(curve_hz)
+            self.hit_note_hz.unwrap_or(params.pitch_hz)
         } else {
-            curve_hz
+            params.pitch_hz
         };
 
         let amplitude = params.level.clamp(0.0, 1.0) * self.hit_gain * amp_curve;
-        let frequency = (base_hz * params.tuning_scale.max(0.5)).max(20.0);
+        let frequency = (base_hz * pitch_ratio * params.tuning_scale.max(0.5))
+            .clamp(20.0, 20_000.0);
 
         let sample = self
             .oscillator

@@ -118,6 +118,7 @@ pub(crate) fn render(
         &state.bass_filter_curve.points,
         &state.bass_filter_curve.bends,
         state.tuning_standard.a4_hz(),
+        20.0,
         state.bass_note_length_ms.clamp(1.0, 1000.0),
         max_note_length_ms,
         state.waveform_zoom_percent,

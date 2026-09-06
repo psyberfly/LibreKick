@@ -33,6 +33,12 @@ pub fn set_kick_legato_voice_steal(
     }
 }
 
+pub fn set_kick_pitch_hz(shared: &SharedStateHandle, pitch_hz: f32) {
+    if let Ok(mut state) = shared.lock() {
+        state.kick_pitch_hz = pitch_hz.clamp(20.0, 2_000.0);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Waveform {
     Saw,
@@ -86,6 +92,7 @@ pub struct SharedSnapshot {
     pub kick_oscillator_waveform: Waveform,
     pub kick_retrigger: bool,
     pub kick_legato_voice_steal: bool,
+    pub kick_pitch_hz: f32,
     pub bass_note_length_ms: f32,
     pub bass_cutoff_hz: f32,
     pub bass_pitch_hz: f32,
@@ -106,6 +113,7 @@ pub(crate) struct SharedState {
     kick_oscillator_waveform: Waveform,
     kick_retrigger: bool,
     kick_legato_voice_steal: bool,
+    kick_pitch_hz: f32,
     bass_note_length_ms: f32,
     bass_cutoff_hz: f32,
     bass_pitch_hz: f32,
@@ -134,6 +142,7 @@ impl Default for SharedState {
             kick_oscillator_waveform: Waveform::Sine,
             kick_retrigger: true,
             kick_legato_voice_steal: true,
+            kick_pitch_hz: 55.0,
             bass_note_length_ms: app_cfg.note_length_max_ms,
             bass_cutoff_hz: 120.0,
             bass_pitch_hz: 55.0,
@@ -302,6 +311,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             kick_oscillator_waveform: state.kick_oscillator_waveform,
             kick_retrigger: state.kick_retrigger,
             kick_legato_voice_steal: state.kick_legato_voice_steal,
+            kick_pitch_hz: state.kick_pitch_hz,
             bass_note_length_ms: state.bass_note_length_ms,
             bass_cutoff_hz: state.bass_cutoff_hz,
             bass_pitch_hz: state.bass_pitch_hz,
@@ -335,6 +345,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         kick_oscillator_waveform: Waveform::Sine,
         kick_retrigger: true,
         kick_legato_voice_steal: true,
+        kick_pitch_hz: 55.0,
         bass_note_length_ms: app_cfg.note_length_max_ms,
         bass_cutoff_hz: 120.0,
         bass_pitch_hz: 55.0,

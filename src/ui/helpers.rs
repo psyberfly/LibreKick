@@ -9,14 +9,14 @@ use super::{
     WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL,
 };
 
-pub(super) fn axis_y_label(kind: CurveKind, normalized: f32) -> String {
+pub(super) fn axis_y_label(kind: CurveKind, normalized: f32, base_pitch_hz: f32) -> String {
     match kind {
         CurveKind::Amplitude => {
             let db = AMP_DB_FLOOR + normalized.clamp(0.0, 1.0) * (0.0 - AMP_DB_FLOOR);
             format!("{db:.0} dB")
         }
         CurveKind::Pitch => {
-            let hz = pitch_hz_from_normalized(normalized);
+            let hz = base_pitch_hz * pitch_ratio_from_normalized(normalized);
             if hz >= 1000.0 {
                 format!("{:.1}k", hz / 1000.0)
             } else {
@@ -50,6 +50,7 @@ pub(super) fn waveform_preview_points(
     pitch_points: &[Pos2],
     pitch_bends: &[f32],
     tuning_a4_hz: f32,
+    base_pitch_hz: f32,
     note_end_ms: f32,
     max_note_length_ms: f32,
     waveform_zoom_percent: f32,
@@ -81,7 +82,7 @@ pub(super) fn waveform_preview_points(
 
             let amp = envelope_value_amplitude_db(amplitude_points, amplitude_bends, note_progress_t);
             let pitch = envelope_value_linear(pitch_points, pitch_bends, note_progress_t);
-            let hz = (pitch_hz_from_normalized(pitch) * tuning_scale)
+            let hz = (base_pitch_hz * pitch_ratio_from_normalized(pitch) * tuning_scale)
                 .clamp(20.0, 22050.0)
                 .min(max_display_hz);
 
@@ -223,6 +224,12 @@ pub(super) fn pitch_hz_from_normalized(value: f32) -> f32 {
     min_hz * (max_hz / min_hz).powf(value.clamp(0.0, 1.0))
 }
 
+/// Pitch envelope value as a multiplier above the base pitch: 1x at the
+/// bottom of the curve, 1000x at the top.
+pub(super) fn pitch_ratio_from_normalized(value: f32) -> f32 {
+    pitch_hz_from_normalized(value) / 20.0
+}
+
 pub(crate) fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
     const NOTE_NAMES: [&str; 12] = [
         "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
@@ -235,11 +242,17 @@ pub(crate) fn note_name_from_hz(hz: f32, tuning_a4_hz: f32) -> String {
     format!("{}{}", NOTE_NAMES[note_idx], octave)
 }
 
-pub(super) fn point_value_label(kind: CurveKind, point: Pos2, tuning_a4_hz: f32) -> String {
+pub(super) fn point_value_label(
+    kind: CurveKind,
+    point: Pos2,
+    tuning_a4_hz: f32,
+    base_pitch_hz: f32,
+) -> String {
     match kind {
         CurveKind::Amplitude => format!("{:.1} dB", amplitude_db(point.y)),
         CurveKind::Pitch => {
-            let hz = pitch_hz_from_normalized(point.y)
+            let hz = base_pitch_hz
+                * pitch_ratio_from_normalized(point.y)
                 * (tuning_a4_hz / config::app_config().default_tuning_a4_hz.max(f32::EPSILON));
             let note = note_name_from_hz(hz, tuning_a4_hz);
             format!("{} {:.1}Hz", note, hz)
