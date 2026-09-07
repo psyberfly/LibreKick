@@ -3,6 +3,7 @@ use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2
 use crate::ui::{
     helpers::{constrain_curve_points, envelope_value_linear, normalize_segment_bends},
     state::Curve,
+    theme::{themed_font, APP_THEME},
 };
 
 pub(crate) fn render(
@@ -12,8 +13,12 @@ pub(crate) fn render(
     title: &str,
     curve: &mut Curve,
     selected_point: &mut Option<usize>,
-) {
+) -> bool {
     const EDGE_BEND_HIT_RADIUS_PIXELS: f32 = 14.0;
+
+    // Reports whether a point/bend drag gesture happened this frame so the
+    // caller can stash a pre-drag snapshot for undo history.
+    let mut drag_active = false;
 
     ui.group(|ui| {
         ui.label(title);
@@ -84,7 +89,7 @@ pub(crate) fn render(
         let mut remove_index: Option<usize> = None;
         for i in 0..points.len() {
             let screen = to_screen(points[i]);
-            let hit_rect = Rect::from_center_size(screen, Vec2::splat(24.0));
+            let hit_rect = Rect::from_center_size(screen, Vec2::splat(30.0));
             let point_response = ui.interact(
                 hit_rect,
                 ui.make_persistent_id((id_prefix, title, i)),
@@ -106,6 +111,7 @@ pub(crate) fn render(
                     points[i] = next;
                     constrain_curve_points(points);
                     *selected_point = Some(i);
+                    drag_active = true;
                 }
             }
 
@@ -116,6 +122,7 @@ pub(crate) fn render(
             };
             painter.circle_filled(screen, 4.5, color);
             painter.circle_stroke(screen, 5.5, Stroke::new(1.0, Color32::BLACK));
+            painter.circle_stroke(screen, 9.5, Stroke::new(1.5, APP_THEME.node_ring()));
         }
 
         if let Some(idx) = remove_index {
@@ -129,42 +136,183 @@ pub(crate) fn render(
             *selected_point = Some(idx.saturating_sub(1).max(1).min(points.len().saturating_sub(2)));
         }
 
-        let modifier_down = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
-        if modifier_down {
-            let pointer = ui.input(|i| i.pointer.hover_pos());
-            if let Some(pointer) = pointer.filter(|p| graph_rect.contains(*p)) {
-                let mut best: Option<(usize, f32)> = None;
-                for seg in 0..points.len().saturating_sub(1) {
-                    let left = to_screen(points[seg]);
-                    let right = to_screen(points[seg + 1]);
-                    let ab = right - left;
-                    let ap = pointer - left;
-                    let denom = ab.dot(ab).max(f32::EPSILON);
-                    let t = (ap.dot(ab) / denom).clamp(0.0, 1.0);
-                    let closest = left + ab * t;
-                    let distance = closest.distance(pointer);
+        // --- Edge bending (Ctrl/Cmd + drag on a segment) ---
+        // Drag state persists across frames in egui temp data, keyed per editor.
+        let bend_drag_id = egui::Id::new((id_prefix, "edge_bend_drag"));
+        let (mut drag_segment, mut drag_start_y, mut drag_start_value) = ui
+            .ctx()
+            .data_mut(|d| d.get_temp::<(Option<usize>, Option<f32>, f32)>(bend_drag_id))
+            .unwrap_or((None, None, 0.0));
+
+        let bend_modifier_down = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
+        let pointer_pos = ui
+            .input(|i| i.pointer.interact_pos())
+            .filter(|pos| graph_rect.contains(*pos));
+
+        if !pointer_primary_down {
+            drag_segment = None;
+            drag_start_y = None;
+        }
+        if drag_segment.is_some_and(|segment| segment >= bends.len()) {
+            drag_segment = None;
+            drag_start_y = None;
+            drag_start_value = 0.0;
+        }
+
+        let mut bend_hover_segment: Option<usize> = None;
+        let mut bend_hover_point: Option<Pos2> = None;
+        let mut bend_hover_value: Option<f32> = None;
+        let mut bend_hover_polyline: Vec<Pos2> = Vec::new();
+
+        // Hit-test against the actual (bent) curve by sampling each segment.
+        if bend_modifier_down {
+            if let Some(pointer_pos) = pointer_pos {
+                let mut best_segment: Option<(usize, f32, Pos2, Vec<Pos2>)> = None;
+                for seg_idx in 0..points.len().saturating_sub(1) {
+                    let left_norm = points[seg_idx];
+                    let right_norm = points[seg_idx + 1];
+                    let left_screen = to_screen(left_norm);
+                    let right_screen = to_screen(right_norm);
+                    let sample_count = ((left_screen.distance(right_screen) / 10.0).ceil()
+                        as usize)
+                        .clamp(8, 48);
+
+                    let mut curve_polyline = Vec::with_capacity(sample_count + 1);
+                    let mut prev_point = to_screen(Pos2::new(
+                        left_norm.x,
+                        envelope_value_linear(points, bends, left_norm.x),
+                    ));
+                    curve_polyline.push(prev_point);
+                    let mut closest_point = prev_point;
+                    let mut distance = f32::INFINITY;
+
+                    for step in 1..=sample_count {
+                        let local_t = step as f32 / sample_count as f32;
+                        let sample_t = egui::lerp(left_norm.x..=right_norm.x, local_t);
+                        let sample_point = to_screen(Pos2::new(
+                            sample_t,
+                            envelope_value_linear(points, bends, sample_t),
+                        ));
+                        curve_polyline.push(sample_point);
+
+                        let ab = sample_point - prev_point;
+                        let ap = pointer_pos - prev_point;
+                        let denom = ab.dot(ab).max(f32::EPSILON);
+                        let proj_t = (ap.dot(ab) / denom).clamp(0.0, 1.0);
+                        let projected = prev_point + ab * proj_t;
+                        let seg_distance = projected.distance(pointer_pos);
+                        if seg_distance < distance {
+                            distance = seg_distance;
+                            closest_point = projected;
+                        }
+
+                        prev_point = sample_point;
+                    }
+
                     if distance <= EDGE_BEND_HIT_RADIUS_PIXELS {
-                        if let Some((_, best_distance)) = best {
-                            if distance < best_distance {
-                                best = Some((seg, distance));
-                            }
-                        } else {
-                            best = Some((seg, distance));
+                        let replace = best_segment
+                            .as_ref()
+                            .is_none_or(|(_, best_distance, _, _)| distance < *best_distance);
+                        if replace {
+                            best_segment =
+                                Some((seg_idx, distance, closest_point, curve_polyline));
                         }
                     }
                 }
 
-                if let Some((seg, _)) = best {
+                if let Some((seg_idx, _distance, closest, hover_polyline)) = best_segment {
+                    bend_hover_segment = Some(seg_idx);
+                    bend_hover_point = Some(closest);
+                    bend_hover_value = bends.get(seg_idx).copied();
+                    bend_hover_polyline = hover_polyline;
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
-                    if ui.input(|i| i.pointer.primary_down()) {
-                        let left = to_screen(points[seg]);
-                        let right = to_screen(points[seg + 1]);
-                        let midpoint_y = (left.y + right.y) * 0.5;
-                        bends[seg] = ((midpoint_y - pointer.y) / (graph_rect.height() * 0.5))
-                            .clamp(-1.0, 1.0);
+
+                    if pointer_primary_down
+                        && !drag_active
+                        && drag_segment.is_none()
+                    {
+                        drag_segment = Some(seg_idx);
+                        drag_start_y = Some(pointer_pos.y);
+                        drag_start_value = bends.get(seg_idx).copied().unwrap_or(0.0);
                     }
                 }
             }
+        }
+
+        // Apply the drag as a delta from the value at drag start.
+        if bend_modifier_down && pointer_primary_down {
+            if let (Some(seg_idx), Some(pointer_pos)) = (drag_segment, pointer_pos) {
+                if seg_idx < bends.len() {
+                    let start_y = drag_start_y.unwrap_or(pointer_pos.y);
+                    let delta = (start_y - pointer_pos.y)
+                        / (graph_rect.height() * 0.45).max(f32::EPSILON);
+                    let bend = (drag_start_value + delta).clamp(-1.0, 1.0);
+                    bends[seg_idx] = bend;
+                    bend_hover_segment = Some(seg_idx);
+                    bend_hover_point = Some(pointer_pos);
+                    bend_hover_value = Some(bend);
+
+                    let left_norm = points[seg_idx];
+                    let right_norm = points[seg_idx + 1];
+                    let left_screen = to_screen(left_norm);
+                    let right_screen = to_screen(right_norm);
+                    let sample_count = ((left_screen.distance(right_screen) / 10.0).ceil()
+                        as usize)
+                        .clamp(8, 48);
+                    let mut hover_polyline = Vec::with_capacity(sample_count + 1);
+                    for step in 0..=sample_count {
+                        let local_t = step as f32 / sample_count as f32;
+                        let sample_t = egui::lerp(left_norm.x..=right_norm.x, local_t);
+                        hover_polyline.push(to_screen(Pos2::new(
+                            sample_t,
+                            envelope_value_linear(points, bends, sample_t),
+                        )));
+                    }
+                    bend_hover_polyline = hover_polyline;
+                    drag_active = true;
+                    ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
+                }
+            }
+        }
+
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(bend_drag_id, (drag_segment, drag_start_y, drag_start_value));
+        });
+
+        // Hover highlight + bend value bubble.
+        if bend_hover_segment.is_some() && bend_hover_polyline.len() > 1 {
+            for line in bend_hover_polyline.windows(2) {
+                painter.line_segment(
+                    [line[0], line[1]],
+                    Stroke::new(4.0, Color32::from_rgba_unmultiplied(255, 255, 255, 60)),
+                );
+            }
+        }
+
+        if let (Some(point), Some(value)) = (bend_hover_point, bend_hover_value) {
+            let label = format!("{:+.0}%", value * 100.0);
+            let bubble_width = (label.len() as f32 * 7.0 * ui_scale + 14.0 * ui_scale)
+                .max(52.0 * ui_scale);
+            let bubble_height = 20.0 * ui_scale;
+            let bubble_rect = Rect::from_min_size(
+                point + Vec2::new(10.0 * ui_scale, -bubble_height * 0.5),
+                Vec2::new(bubble_width, bubble_height),
+            );
+            painter.rect_filled(bubble_rect, bubble_height * 0.5, APP_THEME.bubble_bg());
+            painter.rect_stroke(
+                bubble_rect,
+                bubble_height * 0.5,
+                Stroke::new(1.0, APP_THEME.bubble_border()),
+                egui::StrokeKind::Inside,
+            );
+            painter.text(
+                bubble_rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                themed_font(11.0 * ui_scale),
+                APP_THEME.bubble_text(),
+            );
         }
 
         if let Some(sel) = selected_point.and_then(|i| points.get(i).copied()) {
@@ -177,4 +325,6 @@ pub(crate) fn render(
             );
         }
     });
+
+    drag_active
 }

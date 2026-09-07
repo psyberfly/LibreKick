@@ -93,6 +93,11 @@ impl Theme {
         Color32::BLACK
     }
 
+    /// Off-white concentric ring drawn around node dots.
+    pub(crate) fn node_ring(self) -> Color32 {
+        Color32::from_rgb(228, 230, 224)
+    }
+
     pub(crate) fn bubble_bg(self) -> Color32 {
         Color32::from_rgba_unmultiplied(24, 28, 33, 220)
     }
@@ -134,11 +139,11 @@ pub(crate) fn ui_scale_from_size(size: Vec2) -> f32 {
 pub(crate) fn apply_ui_text_scale(ui: &mut egui::Ui, scale: f32) {
     let mut style = ui.style().as_ref().clone();
     style.text_styles = [
-        (egui::TextStyle::Heading, themed_font(21.0 * scale)),
-        (egui::TextStyle::Body, themed_font(14.0 * scale)),
-        (egui::TextStyle::Monospace, FontId::monospace(13.0 * scale)),
-        (egui::TextStyle::Button, themed_font(14.0 * scale)),
-        (egui::TextStyle::Small, themed_font(11.0 * scale)),
+        (egui::TextStyle::Heading, themed_font(26.25 * scale)),
+        (egui::TextStyle::Body, themed_font(17.5 * scale)),
+        (egui::TextStyle::Monospace, FontId::monospace(16.25 * scale)),
+        (egui::TextStyle::Button, themed_font(17.5 * scale)),
+        (egui::TextStyle::Small, themed_font(13.75 * scale)),
     ]
     .into();
     ui.ctx().set_style(style.clone());

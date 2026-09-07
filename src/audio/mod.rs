@@ -134,7 +134,15 @@ impl KickEngine {
                 }
 
                 if event.is_note_on {
-                    let note_hz = 440.0 * 2.0_f32.powf((event.note as f32 - 69.0) / 12.0);
+                    let note_hz = if shared_snapshot.bass_keytrack_enabled && event.note >= 24 && event.note <= 35 {
+                        // Bass keytrack mode: C0-C1 (MIDI 24-35) shifts bass note by semitones
+                        // C0 (24) = base pitch, C#0 (25) = +1 semitone, ..., C1 (35) = +11 semitones
+                        let semitone_shift = (event.note - 24) as f32;
+                        shared_snapshot.bass_pitch_hz * 2.0_f32.powf(semitone_shift / 12.0)
+                    } else {
+                        // Normal mode: use the actual MIDI note frequency
+                        440.0 * 2.0_f32.powf((event.note as f32 - 69.0) / 12.0)
+                    };
                     self.bass_voice.note_on(
                         note_hz,
                         event.velocity.clamp(0.0, 1.0),

@@ -1,13 +1,16 @@
-use nih_plug_egui::egui::{self, Align2, Color32, RichText, Sense, Stroke, Vec2};
+use nih_plug_egui::egui::{self, Align2, Color32, Pos2, RichText, Sense, Stroke, Vec2};
 
 use nih_plug::prelude::ParamSetter;
 
 use crate::ui::{
     components::{envelope_editor, oscillator_panel, panel, waveform_preview},
-    helpers::{curve_lut, waveform_preview_points},
-    state::BezierUiState,
+    helpers::{axis_x_label, effective_waveform_zoom, waveform_preview_points},
+    state::{BezierUiState, EditorSnapshot},
+    theme::{themed_font, APP_THEME},
 };
 use crate::{shared, LibreKickParams};
+
+const AXIS_SUBDIVISIONS: usize = 10;
 
 pub(crate) fn render(
     ui: &mut egui::Ui,
@@ -16,6 +19,7 @@ pub(crate) fn render(
     shared_for_ui: &shared::SharedStateHandle,
     params: &LibreKickParams,
     setter: &ParamSetter,
+    snapshot_before: &EditorSnapshot,
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Bass");
@@ -26,6 +30,10 @@ pub(crate) fn render(
     );
     ui.separator();
 
+    let mut envelope_drag_active = false;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
     ui.columns(2, |columns| {
         panel::render(&mut columns[0], "Oscillator", ui_scale, 220.0 * ui_scale, |ui| {
             oscillator_panel::render(
@@ -42,7 +50,11 @@ pub(crate) fn render(
             );
 
             ui.add_space(8.0 * ui_scale);
-            envelope_editor::render(
+            ui.checkbox(&mut state.bass_keytrack_enabled, "Keytrack (C0-C1)");
+            ui.label(RichText::new("Play C0-C1 to shift bass note by semitones").small().italics());
+
+            ui.add_space(8.0 * ui_scale);
+            envelope_drag_active |= envelope_editor::render(
                 ui,
                 ui_scale,
                 "bass-amp-envelope",
@@ -85,7 +97,7 @@ pub(crate) fn render(
             }
 
             ui.add_space(8.0 * ui_scale);
-            envelope_editor::render(
+            envelope_drag_active |= envelope_editor::render(
                 ui,
                 ui_scale,
                 "bass-filter-envelope",
@@ -97,7 +109,9 @@ pub(crate) fn render(
     });
 
     ui.add_space(10.0 * ui_scale);
-    let remaining_height = ui.available_height().max((160.0 * ui_scale).max(120.0));
+    let remaining_height = ui
+        .available_height()
+        .clamp((160.0 * ui_scale).max(120.0), 400.0 * ui_scale);
     let (outer_rect, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().max(260.0 * ui_scale), remaining_height),
         Sense::hover(),
@@ -116,6 +130,30 @@ pub(crate) fn render(
 
     let max_note_length_ms = state.note_length_max_ms.max(f32::EPSILON);
     let adaptive_zoom_factor = state.base_note_length_max_ms.max(f32::EPSILON) / max_note_length_ms;
+    let note_end_ms = state.bass_note_length_ms.clamp(1.0, 1000.0);
+    let note_end_t = (note_end_ms / max_note_length_ms).clamp(0.0, 1.0);
+    let zoom = effective_waveform_zoom(state.waveform_zoom_percent, adaptive_zoom_factor);
+    let display_length_t = (note_end_t * zoom).clamp(0.0, 1.0);
+    let active_right = egui::lerp(graph_rect.left()..=graph_rect.right(), display_length_t);
+
+    // Time axis: subdivisions and labels span the active waveform region,
+    // which represents 0..note_end_ms.
+    for i in 0..=AXIS_SUBDIVISIONS {
+        let f = i as f32 / AXIS_SUBDIVISIONS as f32;
+        let x = egui::lerp(graph_rect.left()..=active_right, f);
+        painter.line_segment(
+            [Pos2::new(x, graph_rect.top()), Pos2::new(x, graph_rect.bottom())],
+            Stroke::new(1.0, APP_THEME.grid_line()),
+        );
+        painter.text(
+            Pos2::new(x, graph_rect.bottom() + 2.0 * ui_scale),
+            Align2::CENTER_TOP,
+            axis_x_label(f * note_end_ms),
+            themed_font(10.0 * ui_scale),
+            APP_THEME.axis_tick(),
+        );
+    }
+
     let waveform_points = waveform_preview_points(
         graph_rect,
         &state.bass_amp_curve.points,
@@ -124,23 +162,15 @@ pub(crate) fn render(
         &state.bass_filter_curve.bends,
         state.tuning_standard.a4_hz(),
         20.0,
-        state.bass_note_length_ms.clamp(1.0, 1000.0),
+        note_end_ms,
         max_note_length_ms,
         state.waveform_zoom_percent,
         adaptive_zoom_factor,
     );
 
-    let bass_amp_lut = curve_lut(&state.bass_amp_curve.points, &state.bass_amp_curve.bends);
-    let bass_filter_lut = curve_lut(&state.bass_filter_curve.points, &state.bass_filter_curve.bends);
-    shared::set_bass_amp_lut(shared_for_ui, bass_amp_lut);
-    shared::set_bass_filter_lut(shared_for_ui, bass_filter_lut);
-    shared::set_bass_note_length_ms(shared_for_ui, state.bass_note_length_ms);
-    shared::set_bass_cutoff_hz(shared_for_ui, state.bass_cutoff_hz);
-    shared::set_bass_filter_mode(shared_for_ui, state.bass_filter_mode);
-    shared::set_bass_pitch_hz(shared_for_ui, state.bass_pitch_hz);
-    shared::set_bass_retrigger(shared_for_ui, state.bass_retrigger);
-    shared::set_bass_legato_voice_steal(shared_for_ui, state.bass_legato_voice_steal);
-    shared::set_bass_oscillator_waveform(shared_for_ui, state.bass_oscillator_waveform);
+    // Sync UI state to shared state for DSP
+    state.sync_to_shared(shared_for_ui);
+
     waveform_preview::draw(
         &painter,
         graph_rect,
@@ -156,4 +186,10 @@ pub(crate) fn render(
         egui::FontId::proportional(11.0 * ui_scale),
         Color32::from_rgb(185, 191, 198),
     );
+        });
+
+    // Stash the pre-drag state so an envelope drag becomes a single undo entry.
+    if envelope_drag_active && state.point_drag_snapshot.is_none() {
+        state.point_drag_snapshot = Some(snapshot_before.clone());
+    }
 }

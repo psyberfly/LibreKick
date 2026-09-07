@@ -67,8 +67,6 @@ Important behavior:
 ## Testing
 1. Use `./restart.sh` to hot-reload (compile changes and re-launch the VST using Carla; requires Carla locally installed on your machine).
 
-## CONTRIBUTING 
-**NOTICE**: In order to stay free and compliant with its GPL licence, this software requires all of its contributors to write original source code and not use AI generated code; AI can be used personally, for research. 
 
 ## TODO
 1. Make VoiceParams a single type: remove KickVoiceParams and BassVoiceParams and use VoiceParams instead. Make settings common across voice params.
