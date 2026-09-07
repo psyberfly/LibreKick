@@ -43,7 +43,6 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState
 
     ui.add_space(8.0 * ui_scale);
     ui.group(|ui| {
-        ui.label(RichText::new("Persistence").strong());
         if ui.button("Save settings").clicked() {
             let settings = patches::UiSettingsData {
                 tuning_a4_hz: state.tuning_standard.a4_hz(),
