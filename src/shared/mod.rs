@@ -100,6 +100,7 @@ pub struct SharedSnapshot {
     pub bass_legato_voice_steal: bool,
     pub bass_filter_mode: BassFilterMode,
     pub bass_oscillator_waveform: Waveform,
+    pub bass_keytrack_enabled: bool,
     pub trigger_counter: u64,
 }
 
@@ -121,6 +122,7 @@ pub(crate) struct SharedState {
     bass_legato_voice_steal: bool,
     bass_filter_mode: BassFilterMode,
     bass_oscillator_waveform: Waveform,
+    bass_keytrack_enabled: bool,
     osc_kick: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_bass: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_sum: [f32; OSCILLOSCOPE_BUFFER_SIZE],
@@ -150,6 +152,7 @@ impl Default for SharedState {
             bass_legato_voice_steal: false,
             bass_filter_mode: BassFilterMode::LowPass,
             bass_oscillator_waveform: Waveform::Saw,
+            bass_keytrack_enabled: false,
             osc_kick: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_bass: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_sum: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
@@ -254,6 +257,12 @@ pub fn set_bass_oscillator_waveform(shared: &SharedStateHandle, waveform: Wavefo
     }
 }
 
+pub fn set_bass_keytrack_enabled(shared: &SharedStateHandle, enabled: bool) {
+    if let Ok(mut state) = shared.lock() {
+        state.bass_keytrack_enabled = enabled;
+    }
+}
+
 pub fn publish_oscilloscope_signal_block(
     shared: &SharedStateHandle,
     signal: OscilloscopeSignal,
@@ -319,6 +328,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             bass_legato_voice_steal: state.bass_legato_voice_steal,
             bass_filter_mode: state.bass_filter_mode,
             bass_oscillator_waveform: state.bass_oscillator_waveform,
+            bass_keytrack_enabled: state.bass_keytrack_enabled,
             trigger_counter: state.trigger_counter,
         };
     }
@@ -353,6 +363,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         bass_legato_voice_steal: false,
         bass_filter_mode: BassFilterMode::LowPass,
         bass_oscillator_waveform: Waveform::Saw,
+        bass_keytrack_enabled: false,
         trigger_counter: 0,
     }
 }

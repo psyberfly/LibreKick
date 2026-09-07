@@ -70,6 +70,7 @@ pub(super) struct CorePatchData {
     pub(super) bass_pitch_hz: f32,
     pub(super) bass_cutoff_hz: f32,
     pub(super) bass_filter_mode: shared::BassFilterMode,
+    pub(super) bass_keytrack_enabled: bool,
 }
 
 /// Editor snapshot for undo/redo - includes UI-specific state
@@ -154,6 +155,7 @@ pub(super) struct BezierUiState {
     pub(super) bass_legato_voice_steal: bool,
     pub(super) bass_filter_mode: shared::BassFilterMode,
     pub(super) bass_oscillator_waveform: shared::Waveform,
+    pub(super) bass_keytrack_enabled: bool,
     pub(super) osc_hold: bool,
     pub(super) osc_zoom_x: f32,
     pub(super) osc_zoom_y: f32,
@@ -221,6 +223,7 @@ impl Default for BezierUiState {
             bass_legato_voice_steal: false,
             bass_filter_mode: shared::BassFilterMode::LowPass,
             bass_oscillator_waveform: shared::Waveform::Saw,
+            bass_keytrack_enabled: false,
             osc_hold: false,
             osc_zoom_x: 1.0,
             osc_zoom_y: 1.0,
@@ -344,6 +347,7 @@ impl BezierUiState {
                 bass_pitch_hz: self.bass_pitch_hz,
                 bass_cutoff_hz: self.bass_cutoff_hz,
                 bass_filter_mode: self.bass_filter_mode,
+                bass_keytrack_enabled: self.bass_keytrack_enabled,
             },
             selected_point: self.selected_point,
             bass_amp_selected_point: self.bass_amp_selected_point,
@@ -374,6 +378,7 @@ impl BezierUiState {
         self.bass_pitch_hz = snapshot.core.bass_pitch_hz;
         self.bass_cutoff_hz = snapshot.core.bass_cutoff_hz;
         self.bass_filter_mode = snapshot.core.bass_filter_mode;
+        self.bass_keytrack_enabled = snapshot.core.bass_keytrack_enabled;
         self.bass_amp_selected_point = snapshot.bass_amp_selected_point;
         self.bass_filter_selected_point = snapshot.bass_filter_selected_point;
     }
@@ -451,6 +456,7 @@ impl BezierUiState {
                 bass_pitch_hz: self.bass_pitch_hz,
                 bass_cutoff_hz: self.bass_cutoff_hz,
                 bass_filter_mode: self.bass_filter_mode,
+                bass_keytrack_enabled: self.bass_keytrack_enabled,
             },
             kick_level: self.kick_level,
             bass_level: self.bass_level,
@@ -516,6 +522,7 @@ impl BezierUiState {
         shared::set_bass_retrigger(shared, self.bass_retrigger);
         shared::set_bass_legato_voice_steal(shared, self.bass_legato_voice_steal);
         shared::set_bass_oscillator_waveform(shared, self.bass_oscillator_waveform);
+        shared::set_bass_keytrack_enabled(shared, self.bass_keytrack_enabled);
     }
 
     pub(super) fn to_patch_data(&self, name: String) -> patches::PatchData {

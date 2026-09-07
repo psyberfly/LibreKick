@@ -50,6 +50,10 @@ pub(crate) fn render(
             );
 
             ui.add_space(8.0 * ui_scale);
+            ui.checkbox(&mut state.bass_keytrack_enabled, "Keytrack (C0-C1)");
+            ui.label(RichText::new("Play C0-C1 to shift bass note by semitones").small().italics());
+
+            ui.add_space(8.0 * ui_scale);
             envelope_drag_active |= envelope_editor::render(
                 ui,
                 ui_scale,
