@@ -24,7 +24,9 @@ impl Oscillator {
         self.sample_rate = sample_rate.max(1.0);
     }
 
-    pub fn note_on(&mut self, retrigger: bool, legato_voice_steal: bool) -> bool {
+    /// `phase_offset` is the oscillator start phase in cycles (0.0-1.0),
+    /// applied whenever the phase is reset (retrigger or first note-on).
+    pub fn note_on(&mut self, retrigger: bool, legato_voice_steal: bool, phase_offset: f32) -> bool {
         if self.active && !legato_voice_steal {
             return false;
         }
@@ -32,7 +34,7 @@ impl Oscillator {
         let was_active = self.active;
         self.active = true;
         if retrigger || !was_active {
-            self.phase = 0.0;
+            self.phase = phase_offset.rem_euclid(1.0);
         }
         true
     }

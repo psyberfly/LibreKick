@@ -23,11 +23,6 @@ pub(crate) fn render(
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Bass");
-    ui.label(
-        RichText::new("Dedicated bass voice page")
-            .italics()
-            .small(),
-    );
     ui.separator();
 
     let mut envelope_drag_active = false;
@@ -44,6 +39,7 @@ pub(crate) fn render(
                     retrigger: &mut state.bass_retrigger,
                     legato_voice_steal: &mut state.bass_legato_voice_steal,
                     pitch_hz: Some(&mut state.bass_pitch_hz),
+                    phase_deg: Some(&mut state.bass_phase_deg),
                     note_length_ms: Some(&mut state.bass_note_length_ms),
                     level: Some((&params.bass_level, setter)),
                 },
@@ -178,6 +174,7 @@ pub(crate) fn render(
         state.bass_pitch_hz,
         &amp_lut,
         &filter_lut,
+        state.bass_phase_deg / 360.0,
         state.bass_retrigger,
         state.bass_legato_voice_steal,
     );

@@ -9,7 +9,7 @@ mod audio_clip;
 mod controls;
 mod midi_channel;
 
-use nih_plug_egui::egui::{self, RichText};
+use nih_plug_egui::egui;
 
 use nih_plug::prelude::ParamSetter;
 
@@ -68,11 +68,6 @@ pub(crate) fn render(
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Arrange");
-    ui.label(
-        RichText::new("Arrangement and sequencing page")
-            .italics()
-            .small(),
-    );
     ui.separator();
 
     ui.add_space(16.0 * ui_scale);

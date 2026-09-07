@@ -71,11 +71,6 @@ fn color_for_log_kind(kind: &str) -> Color32 {
 pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, _state: &mut BezierUiState) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Logs");
-    ui.label(
-        RichText::new("Session log stream (enter/debug/error/leave)")
-            .italics()
-            .small(),
-    );
     ui.separator();
 
     let snapshot = LOGGER.snapshot();

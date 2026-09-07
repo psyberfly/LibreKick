@@ -818,6 +818,7 @@ pub(crate) fn render_editor(
             },
             &amp_lut,
             &pitch_lut,
+            state.kick_phase_deg / 360.0,
             state.kick_retrigger,
             state.kick_legato_voice_steal,
         );

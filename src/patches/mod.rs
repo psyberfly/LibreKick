@@ -66,6 +66,8 @@ pub struct KickPatchData {
     pub pitch_hz: f32,
     /// Kick level (K Level macro). `None` for patches saved before level support.
     pub level: Option<f32>,
+    /// Oscillator start phase in degrees. `None` for older patches.
+    pub phase_deg: Option<f32>,
 }
 
 /// Bass instrument settings stored inside a patch file.
@@ -84,6 +86,8 @@ pub struct BassPatchData {
     pub filter_bends: Vec<f32>,
     /// Bass level (B Level macro). `None` for patches saved before level support.
     pub level: Option<f32>,
+    /// Oscillator start phase in degrees. `None` for older patches.
+    pub phase_deg: Option<f32>,
 }
 
 pub fn set_default_patch_name(name: &str) -> Result<(), String> {
@@ -285,6 +289,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut bass_filter_points: Option<Vec<(f32, f32)>> = None;
     let mut bass_filter_bends: Option<Vec<f32>> = None;
     let mut bass_level: Option<f32> = None;
+    let mut bass_phase_deg: Option<f32> = None;
 
     let mut kick_seen = false;
     let mut kick_oscillator_waveform: Option<String> = None;
@@ -292,6 +297,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut kick_legato_voice_steal: Option<bool> = None;
     let mut kick_pitch_hz: Option<f32> = None;
     let mut kick_level: Option<f32> = None;
+    let mut kick_phase_deg: Option<f32> = None;
 
     let mut arrange_seen = false;
     let mut arrange_num_bars: Option<f32> = None;
@@ -398,6 +404,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 bass_seen = true;
                 bass_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
             }
+            "bass_phase_deg" => {
+                bass_seen = true;
+                bass_phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0));
+            }
             "kick_oscillator_waveform" => {
                 kick_seen = true;
                 kick_oscillator_waveform = Some(value.to_owned());
@@ -417,6 +427,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             "kick_level" => {
                 kick_seen = true;
                 kick_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
+            "kick_phase_deg" => {
+                kick_seen = true;
+                kick_phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0));
             }
             "arrange_num_bars" => {
                 arrange_seen = true;
@@ -476,6 +490,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 filter_points: bass_filter_points.unwrap_or_default(),
                 filter_bends: bass_filter_bends.unwrap_or_default(),
                 level: bass_level,
+                phase_deg: bass_phase_deg,
             })
         } else {
             None
@@ -488,6 +503,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 legato_voice_steal: kick_legato_voice_steal.unwrap_or(true),
                 pitch_hz: kick_pitch_hz.unwrap_or(55.0),
                 level: kick_level,
+                phase_deg: kick_phase_deg,
             })
         } else {
             None
@@ -603,6 +619,9 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         if let Some(level) = bass.level {
             lines.push(format!("bass_level={level}"));
         }
+        if let Some(phase_deg) = bass.phase_deg {
+            lines.push(format!("bass_phase_deg={phase_deg}"));
+        }
     }
 
     if let Some(kick) = &patch.kick {
@@ -612,6 +631,9 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("kick_pitch_hz={}", kick.pitch_hz));
         if let Some(level) = kick.level {
             lines.push(format!("kick_level={level}"));
+        }
+        if let Some(phase_deg) = kick.phase_deg {
+            lines.push(format!("kick_phase_deg={phase_deg}"));
         }
     }
 

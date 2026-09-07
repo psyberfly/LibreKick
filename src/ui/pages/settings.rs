@@ -8,11 +8,6 @@ use super::super::state::TuningStandard;
 pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Settings");
-    ui.label(
-        RichText::new("Global instrument settings")
-            .italics()
-            .small(),
-    );
     ui.separator();
 
     ui.group(|ui| {

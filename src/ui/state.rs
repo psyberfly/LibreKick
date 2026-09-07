@@ -58,6 +58,7 @@ pub(super) struct CorePatchData {
     pub(super) kick_retrigger: bool,
     pub(super) kick_legato_voice_steal: bool,
     pub(super) kick_pitch_hz: f32,
+    pub(super) kick_phase_deg: f32,
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
@@ -71,6 +72,7 @@ pub(super) struct CorePatchData {
     pub(super) bass_cutoff_hz: f32,
     pub(super) bass_filter_mode: shared::BassFilterMode,
     pub(super) bass_keytrack_enabled: bool,
+    pub(super) bass_phase_deg: f32,
     pub(super) num_bars: f32,
     pub(super) note_size: NoteSize,
     pub(super) use_daw_tempo: bool,
@@ -205,6 +207,8 @@ pub(super) struct BezierUiState {
     pub(super) kick_retrigger: bool,
     pub(super) kick_legato_voice_steal: bool,
     pub(super) kick_pitch_hz: f32,
+    /// Kick oscillator start phase in degrees (0-360), applied on retrigger.
+    pub(super) kick_phase_deg: f32,
     /// Mirror of the `kick_level` plugin parameter, synced each frame so
     /// patch dirty-tracking and saving can see it.
     pub(super) kick_level: f32,
@@ -220,6 +224,8 @@ pub(super) struct BezierUiState {
     pub(super) bass_filter_mode: shared::BassFilterMode,
     pub(super) bass_oscillator_waveform: shared::Waveform,
     pub(super) bass_keytrack_enabled: bool,
+    /// Bass oscillator start phase in degrees (0-360), applied on retrigger.
+    pub(super) bass_phase_deg: f32,
     pub(super) manual_tempo: f32,
     pub(super) use_daw_tempo: bool,
     pub(super) num_bars: f32,
@@ -289,6 +295,7 @@ impl Default for BezierUiState {
             kick_retrigger: true,
             kick_legato_voice_steal: true,
             kick_pitch_hz: 55.0,
+            kick_phase_deg: 0.0,
             kick_level: 0.8,
             note_length_ms: note_length_max_ms,
             bass_note_length_ms: 220.0,
@@ -301,6 +308,7 @@ impl Default for BezierUiState {
             bass_filter_mode: shared::BassFilterMode::LowPass,
             bass_oscillator_waveform: shared::Waveform::Saw,
             bass_keytrack_enabled: false,
+            bass_phase_deg: 0.0,
             manual_tempo: 120.0,
             use_daw_tempo: true,
             num_bars: 1.0,
@@ -423,6 +431,7 @@ impl BezierUiState {
                 kick_retrigger: self.kick_retrigger,
                 kick_legato_voice_steal: self.kick_legato_voice_steal,
                 kick_pitch_hz: self.kick_pitch_hz,
+                kick_phase_deg: self.kick_phase_deg,
                 note_length_ms: self.note_length_ms,
                 note_length_max_ms: self.note_length_max_ms,
                 waveform_zoom_percent: self.waveform_zoom_percent,
@@ -436,6 +445,7 @@ impl BezierUiState {
                 bass_cutoff_hz: self.bass_cutoff_hz,
                 bass_filter_mode: self.bass_filter_mode,
                 bass_keytrack_enabled: self.bass_keytrack_enabled,
+                bass_phase_deg: self.bass_phase_deg,
                 num_bars: self.num_bars,
                 note_size: self.note_size,
                 use_daw_tempo: self.use_daw_tempo,
@@ -458,6 +468,7 @@ impl BezierUiState {
         self.kick_retrigger = snapshot.core.kick_retrigger;
         self.kick_legato_voice_steal = snapshot.core.kick_legato_voice_steal;
         self.kick_pitch_hz = snapshot.core.kick_pitch_hz;
+        self.kick_phase_deg = snapshot.core.kick_phase_deg;
         self.note_length_ms = snapshot.core.note_length_ms;
         self.note_length_max_ms = snapshot.core.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.core.waveform_zoom_percent;
@@ -472,6 +483,7 @@ impl BezierUiState {
         self.bass_cutoff_hz = snapshot.core.bass_cutoff_hz;
         self.bass_filter_mode = snapshot.core.bass_filter_mode;
         self.bass_keytrack_enabled = snapshot.core.bass_keytrack_enabled;
+        self.bass_phase_deg = snapshot.core.bass_phase_deg;
         self.num_bars = snapshot.core.num_bars;
         self.note_size = snapshot.core.note_size;
         self.use_daw_tempo = snapshot.core.use_daw_tempo;
@@ -543,6 +555,7 @@ impl BezierUiState {
                 kick_retrigger: self.kick_retrigger,
                 kick_legato_voice_steal: self.kick_legato_voice_steal,
                 kick_pitch_hz: self.kick_pitch_hz,
+                kick_phase_deg: self.kick_phase_deg,
                 note_length_ms: self.note_length_ms,
                 note_length_max_ms: self.note_length_max_ms,
                 waveform_zoom_percent: self.waveform_zoom_percent,
@@ -556,6 +569,7 @@ impl BezierUiState {
                 bass_cutoff_hz: self.bass_cutoff_hz,
                 bass_filter_mode: self.bass_filter_mode,
                 bass_keytrack_enabled: self.bass_keytrack_enabled,
+                bass_phase_deg: self.bass_phase_deg,
                 num_bars: self.num_bars,
                 note_size: self.note_size,
                 use_daw_tempo: self.use_daw_tempo,
@@ -613,6 +627,7 @@ impl BezierUiState {
         shared::set_kick_retrigger(shared, self.kick_retrigger);
         shared::set_kick_legato_voice_steal(shared, self.kick_legato_voice_steal);
         shared::set_kick_pitch_hz(shared, self.kick_pitch_hz);
+        shared::set_kick_phase_deg(shared, self.kick_phase_deg);
 
         // Bass curves and settings
         let bass_amp_lut = curve_lut(&self.bass_amp_curve.points, &self.bass_amp_curve.bends);
@@ -627,6 +642,7 @@ impl BezierUiState {
         shared::set_bass_legato_voice_steal(shared, self.bass_legato_voice_steal);
         shared::set_bass_oscillator_waveform(shared, self.bass_oscillator_waveform);
         shared::set_bass_keytrack_enabled(shared, self.bass_keytrack_enabled);
+        shared::set_bass_phase_deg(shared, self.bass_phase_deg);
     }
 
     pub(super) fn to_patch_data(&self, name: String) -> patches::PatchData {
@@ -680,6 +696,7 @@ impl BezierUiState {
                     .collect(),
                 filter_bends: self.bass_filter_curve.bends.clone(),
                 level: Some(self.bass_level),
+                phase_deg: Some(self.bass_phase_deg),
             }),
             kick: Some(patches::KickPatchData {
                 oscillator_waveform: waveform_to_patch(self.kick_oscillator_waveform)
@@ -688,6 +705,7 @@ impl BezierUiState {
                 legato_voice_steal: self.kick_legato_voice_steal,
                 pitch_hz: self.kick_pitch_hz,
                 level: Some(self.kick_level),
+                phase_deg: Some(self.kick_phase_deg),
             }),
             arrange: Some(patches::ArrangePatchData {
                 num_bars: self.num_bars,
@@ -761,6 +779,9 @@ impl BezierUiState {
             );
             self.bass_filter_curve.bends =
                 bends_from_patch(&bass.filter_bends, self.bass_filter_curve.points.len());
+            if let Some(phase_deg) = bass.phase_deg {
+                self.bass_phase_deg = phase_deg.clamp(0.0, 360.0);
+            }
         }
 
         let kick_level = patch.kick.as_ref().and_then(|kick| kick.level);
@@ -771,6 +792,9 @@ impl BezierUiState {
             self.kick_retrigger = kick.retrigger;
             self.kick_legato_voice_steal = kick.legato_voice_steal;
             self.kick_pitch_hz = kick.pitch_hz.clamp(20.0, 2_000.0);
+            if let Some(phase_deg) = kick.phase_deg {
+                self.kick_phase_deg = phase_deg.clamp(0.0, 360.0);
+            }
         }
 
         if let Some(arrange) = patch.arrange {

@@ -9,6 +9,8 @@ pub(crate) struct OscillatorPanelModel<'a> {
     pub(crate) retrigger: &'a mut bool,
     pub(crate) legato_voice_steal: &'a mut bool,
     pub(crate) pitch_hz: Option<&'a mut f32>,
+    /// Oscillator start phase in degrees (0-360), applied on retrigger.
+    pub(crate) phase_deg: Option<&'a mut f32>,
     pub(crate) note_length_ms: Option<&'a mut f32>,
     /// Optional level parameter (param + setter) rendered left of the pitch slider.
     pub(crate) level: Option<(&'a FloatParam, &'a ParamSetter<'a>)>,
@@ -22,7 +24,7 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, model: OscillatorPanelMod
         ui.selectable_value(model.waveform, shared::Waveform::Square, "Square");
     });
 
-    if model.level.is_some() || model.pitch_hz.is_some() {
+    if model.level.is_some() || model.pitch_hz.is_some() || model.phase_deg.is_some() {
         ui.add_space(6.0 * ui_scale);
         ui.horizontal(|ui| {
             if let Some((param, setter)) = model.level {
@@ -48,6 +50,24 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, model: OscillatorPanelMod
                             *pitch_hz = (*pitch_hz).clamp(20.0, 2_000.0);
                         }
                         ui.label(format!("{:.2}Hz", *pitch_hz));
+                    });
+                });
+            }
+            if let Some(phase_deg) = model.phase_deg {
+                ui.vertical(|ui| {
+                    ui.label("Phase");
+                    ui.horizontal(|ui| {
+                        let changed = ui
+                            .add(crate::ui::helpers::slider_fine_step(
+                                ui,
+                                egui::Slider::new(phase_deg, 0.0..=360.0).text("\u{00b0}"),
+                                1.0,
+                            ))
+                            .changed();
+                        if changed {
+                            *phase_deg = (*phase_deg).clamp(0.0, 360.0);
+                        }
+                        ui.label(format!("{:.0}\u{00b0}", *phase_deg));
                     });
                 });
             }

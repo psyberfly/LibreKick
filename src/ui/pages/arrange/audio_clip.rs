@@ -196,12 +196,14 @@ fn preview_hash(
     shared_snapshot.keytrack_enabled.hash(&mut hasher);
     shared_snapshot.note_length_ms.to_bits().hash(&mut hasher);
     shared_snapshot.kick_pitch_hz.to_bits().hash(&mut hasher);
+    shared_snapshot.kick_phase_deg.to_bits().hash(&mut hasher);
     (shared_snapshot.kick_oscillator_waveform as u8).hash(&mut hasher);
     shared_snapshot.kick_retrigger.hash(&mut hasher);
     shared_snapshot.kick_legato_voice_steal.hash(&mut hasher);
     shared_snapshot.bass_note_length_ms.to_bits().hash(&mut hasher);
     shared_snapshot.bass_cutoff_hz.to_bits().hash(&mut hasher);
     shared_snapshot.bass_pitch_hz.to_bits().hash(&mut hasher);
+    shared_snapshot.bass_phase_deg.to_bits().hash(&mut hasher);
     (shared_snapshot.bass_filter_mode as u8).hash(&mut hasher);
     (shared_snapshot.bass_oscillator_waveform as u8).hash(&mut hasher);
     shared_snapshot.bass_retrigger.hash(&mut hasher);

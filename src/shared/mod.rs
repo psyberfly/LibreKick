@@ -39,6 +39,18 @@ pub fn set_kick_pitch_hz(shared: &SharedStateHandle, pitch_hz: f32) {
     }
 }
 
+pub fn set_kick_phase_deg(shared: &SharedStateHandle, phase_deg: f32) {
+    if let Ok(mut state) = shared.lock() {
+        state.kick_phase_deg = phase_deg.clamp(0.0, 360.0);
+    }
+}
+
+pub fn set_bass_phase_deg(shared: &SharedStateHandle, phase_deg: f32) {
+    if let Ok(mut state) = shared.lock() {
+        state.bass_phase_deg = phase_deg.clamp(0.0, 360.0);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Waveform {
     Saw,
@@ -93,6 +105,8 @@ pub struct SharedSnapshot {
     pub kick_retrigger: bool,
     pub kick_legato_voice_steal: bool,
     pub kick_pitch_hz: f32,
+    /// Oscillator start phase in degrees (0-360), applied on retrigger.
+    pub kick_phase_deg: f32,
     pub bass_note_length_ms: f32,
     pub bass_cutoff_hz: f32,
     pub bass_pitch_hz: f32,
@@ -101,6 +115,8 @@ pub struct SharedSnapshot {
     pub bass_filter_mode: BassFilterMode,
     pub bass_oscillator_waveform: Waveform,
     pub bass_keytrack_enabled: bool,
+    /// Bass oscillator start phase in degrees (0-360), applied on retrigger.
+    pub bass_phase_deg: f32,
     pub tempo: Option<f64>,
     pub trigger_counter: u64,
 }
@@ -116,6 +132,7 @@ pub(crate) struct SharedState {
     kick_retrigger: bool,
     kick_legato_voice_steal: bool,
     kick_pitch_hz: f32,
+    kick_phase_deg: f32,
     bass_note_length_ms: f32,
     bass_cutoff_hz: f32,
     bass_pitch_hz: f32,
@@ -124,6 +141,7 @@ pub(crate) struct SharedState {
     bass_filter_mode: BassFilterMode,
     bass_oscillator_waveform: Waveform,
     bass_keytrack_enabled: bool,
+    bass_phase_deg: f32,
     osc_kick: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_bass: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_sum: [f32; OSCILLOSCOPE_BUFFER_SIZE],
@@ -147,6 +165,7 @@ impl Default for SharedState {
             kick_retrigger: true,
             kick_legato_voice_steal: true,
             kick_pitch_hz: 55.0,
+            kick_phase_deg: 0.0,
             bass_note_length_ms: app_cfg.note_length_max_ms,
             bass_cutoff_hz: 120.0,
             bass_pitch_hz: 55.0,
@@ -155,6 +174,7 @@ impl Default for SharedState {
             bass_filter_mode: BassFilterMode::LowPass,
             bass_oscillator_waveform: Waveform::Saw,
             bass_keytrack_enabled: false,
+            bass_phase_deg: 0.0,
             tempo: None,
             osc_kick: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_bass: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
@@ -330,6 +350,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             kick_retrigger: state.kick_retrigger,
             kick_legato_voice_steal: state.kick_legato_voice_steal,
             kick_pitch_hz: state.kick_pitch_hz,
+            kick_phase_deg: state.kick_phase_deg,
             bass_note_length_ms: state.bass_note_length_ms,
             bass_cutoff_hz: state.bass_cutoff_hz,
             bass_pitch_hz: state.bass_pitch_hz,
@@ -338,6 +359,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             bass_filter_mode: state.bass_filter_mode,
             bass_oscillator_waveform: state.bass_oscillator_waveform,
             bass_keytrack_enabled: state.bass_keytrack_enabled,
+            bass_phase_deg: state.bass_phase_deg,
             tempo: state.tempo,
             trigger_counter: state.trigger_counter,
         };
@@ -366,6 +388,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         kick_retrigger: true,
         kick_legato_voice_steal: true,
         kick_pitch_hz: 55.0,
+        kick_phase_deg: 0.0,
         bass_note_length_ms: app_cfg.note_length_max_ms,
         bass_cutoff_hz: 120.0,
         bass_pitch_hz: 55.0,
@@ -374,6 +397,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         bass_filter_mode: BassFilterMode::LowPass,
         bass_oscillator_waveform: Waveform::Saw,
         bass_keytrack_enabled: false,
+        bass_phase_deg: 0.0,
         tempo: None,
         trigger_counter: 0,
     }

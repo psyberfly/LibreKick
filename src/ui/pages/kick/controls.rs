@@ -19,11 +19,6 @@ pub(super) fn render(
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Kick");
-    ui.label(
-        egui::RichText::new("Kick drum voice page")
-            .italics()
-            .small(),
-    );
     ui.separator();
 
     ui.add_space(8.0 * ui_scale);
@@ -36,6 +31,7 @@ pub(super) fn render(
                 retrigger: &mut state.kick_retrigger,
                 legato_voice_steal: &mut state.kick_legato_voice_steal,
                 pitch_hz: Some(&mut state.kick_pitch_hz),
+                phase_deg: Some(&mut state.kick_phase_deg),
                 note_length_ms: Some(&mut state.note_length_ms),
                 level: Some((&params.kick_level, setter)),
             },

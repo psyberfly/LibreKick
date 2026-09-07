@@ -61,9 +61,13 @@ impl KickEngine {
     ) -> ProcessStatus {
         let shared_snapshot = shared::snapshot(shared_handle);
 
+        let kick_phase_offset = shared_snapshot.kick_phase_deg / 360.0;
+        let bass_phase_offset = shared_snapshot.bass_phase_deg / 360.0;
+
         if params.trigger_active && !self.last_trigger_param {
             LOGGER.debug("kick trigger via trigger_active rising edge");
             self.voice.trigger(
+                kick_phase_offset,
                 shared_snapshot.kick_retrigger,
                 shared_snapshot.kick_legato_voice_steal,
             );
@@ -79,12 +83,14 @@ impl KickEngine {
                 self.voice.trigger_with_note_velocity(
                     note_hz,
                     params.midi_velocity.clamp(0.0, 1.0),
+                    kick_phase_offset,
                     shared_snapshot.kick_retrigger,
                     shared_snapshot.kick_legato_voice_steal,
                 );
             } else {
                 self.voice.trigger_with_velocity(
                     params.midi_velocity.clamp(0.0, 1.0),
+                    kick_phase_offset,
                     shared_snapshot.kick_retrigger,
                     shared_snapshot.kick_legato_voice_steal,
                 );
@@ -95,6 +101,7 @@ impl KickEngine {
             self.last_shared_trigger_counter = shared_snapshot.trigger_counter;
             LOGGER.debug("kick trigger via shared::request_trigger counter");
             self.voice.trigger(
+                kick_phase_offset,
                 shared_snapshot.kick_retrigger,
                 shared_snapshot.kick_legato_voice_steal,
             );
@@ -152,6 +159,7 @@ impl KickEngine {
                     self.bass_voice.note_on(
                         note_hz,
                         event.velocity.clamp(0.0, 1.0),
+                        bass_phase_offset,
                         shared_snapshot.bass_retrigger,
                         shared_snapshot.bass_legato_voice_steal,
                     );
@@ -229,6 +237,7 @@ pub fn render_kick_preview(
     params: VoiceParams,
     amp_lut: &[f32; shared::CURVE_LUT_SIZE],
     pitch_lut: &[f32; shared::CURVE_LUT_SIZE],
+    phase_offset: f32,
     retrigger: bool,
     legato_voice_steal: bool,
 ) -> Vec<f32> {
@@ -236,7 +245,7 @@ pub fn render_kick_preview(
     let mut buffer = vec![0.0_f32; total_samples];
     let mut voice = KickVoice::default();
     voice.set_sample_rate(preview_rate);
-    voice.trigger_with_velocity(1.0, retrigger, legato_voice_steal);
+    voice.trigger_with_velocity(1.0, phase_offset, retrigger, legato_voice_steal);
     for slot in buffer.iter_mut() {
         if !voice.is_active() {
             break;
@@ -256,6 +265,7 @@ pub fn render_bass_preview(
     note_hz: f32,
     amp_lut: &[f32; shared::CURVE_LUT_SIZE],
     filter_lut: &[f32; shared::CURVE_LUT_SIZE],
+    phase_offset: f32,
     retrigger: bool,
     legato_voice_steal: bool,
 ) -> Vec<f32> {
@@ -263,7 +273,7 @@ pub fn render_bass_preview(
     let mut buffer = vec![0.0_f32; total_samples];
     let mut voice = BassVoice::default();
     voice.set_sample_rate(preview_rate);
-    voice.note_on(note_hz, 1.0, retrigger, legato_voice_steal);
+    voice.note_on(note_hz, 1.0, phase_offset, retrigger, legato_voice_steal);
     for slot in buffer.iter_mut() {
         if !voice.is_active() {
             break;
@@ -318,6 +328,7 @@ pub fn render_arrangement_preview(
             voice.set_sample_rate(preview_rate);
             voice.trigger_with_velocity(
                 1.0,
+                shared.kick_phase_deg / 360.0,
                 shared.kick_retrigger,
                 shared.kick_legato_voice_steal,
             );
@@ -335,6 +346,7 @@ pub fn render_arrangement_preview(
             voice.note_on(
                 note_hz,
                 1.0,
+                shared.bass_phase_deg / 360.0,
                 shared.bass_retrigger,
                 shared.bass_legato_voice_steal,
             );

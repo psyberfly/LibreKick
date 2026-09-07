@@ -84,16 +84,16 @@ impl KickVoice {
         self.oscillator.set_sample_rate(self.sample_rate);
     }
 
-    pub fn trigger(&mut self, retrigger: bool, legato_voice_steal: bool) {
-        self.trigger_with_velocity(1.0, retrigger, legato_voice_steal);
+    pub fn trigger(&mut self, phase_offset: f32, retrigger: bool, legato_voice_steal: bool) {
+        self.trigger_with_velocity(1.0, phase_offset, retrigger, legato_voice_steal);
     }
 
     pub fn is_active(&self) -> bool {
         self.oscillator.is_active()
     }
 
-    pub fn trigger_with_velocity(&mut self, velocity: f32, retrigger: bool, legato_voice_steal: bool) {
-        if !self.oscillator.note_on(retrigger, legato_voice_steal) {
+    pub fn trigger_with_velocity(&mut self, velocity: f32, phase_offset: f32, retrigger: bool, legato_voice_steal: bool) {
+        if !self.oscillator.note_on(retrigger, legato_voice_steal, phase_offset) {
             return;
         }
         self.time_seconds = 0.0;
@@ -105,10 +105,11 @@ impl KickVoice {
         &mut self,
         note_hz: f32,
         velocity: f32,
+        phase_offset: f32,
         retrigger: bool,
         legato_voice_steal: bool,
     ) {
-        if !self.oscillator.note_on(retrigger, legato_voice_steal) {
+        if !self.oscillator.note_on(retrigger, legato_voice_steal, phase_offset) {
             return;
         }
         self.time_seconds = 0.0;
@@ -182,10 +183,11 @@ impl BassVoice {
         &mut self,
         note_hz: f32,
         velocity: f32,
+        phase_offset: f32,
         retrigger: bool,
         legato_voice_steal: bool,
     ) {
-        if !self.oscillator.note_on(retrigger, legato_voice_steal) {
+        if !self.oscillator.note_on(retrigger, legato_voice_steal, phase_offset) {
             return;
         }
 

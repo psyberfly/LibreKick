@@ -1,4 +1,4 @@
-use nih_plug_egui::egui::{self, Color32, RichText};
+use nih_plug_egui::egui::{self, Color32};
 
 use crate::{shared, ui::components::oscilloscope};
 
@@ -12,11 +12,6 @@ pub(crate) fn render(
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Oscilloscope");
-    ui.label(
-        RichText::new("Realtime kick, bass, and combined output traces")
-            .italics()
-            .small(),
-    );
     ui.separator();
 
     ui.horizontal(|ui| {
