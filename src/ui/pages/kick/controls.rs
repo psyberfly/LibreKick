@@ -57,14 +57,15 @@ pub(super) fn render(
         ui.separator();
         ui.label("Max Note Length");
         let max_length_changed = ui
-            .add(
+            .add(crate::ui::helpers::slider_fine_step(
+                ui,
                 egui::Slider::new(
                     &mut state.note_length_max_ms,
                     NOTE_LENGTH_MAX_SLIDER_MIN_MS..=NOTE_LENGTH_MAX_SLIDER_MAX_MS,
                 )
-                .text("ms")
-                .step_by(1.0),
-            )
+                .text("ms"),
+                1.0,
+            ))
             .changed();
         if max_length_changed {
             state.note_length_max_ms = state

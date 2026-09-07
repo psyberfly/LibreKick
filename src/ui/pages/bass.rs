@@ -4,11 +4,11 @@ use nih_plug::prelude::ParamSetter;
 
 use crate::ui::{
     components::{envelope_editor, oscillator_panel, panel, waveform_preview},
-    helpers::{axis_x_label, effective_waveform_zoom, waveform_preview_points},
+    helpers::{axis_x_label, curve_lut, effective_waveform_zoom, waveform_preview_points},
     state::{BezierUiState, EditorSnapshot},
     theme::{themed_font, APP_THEME},
 };
-use crate::{shared, LibreKickParams};
+use crate::{audio, shared, LibreKickParams};
 
 const AXIS_SUBDIVISIONS: usize = 10;
 
@@ -90,7 +90,11 @@ pub(crate) fn render(
             });
             ui.label("Cutoff");
             let cutoff_changed = ui
-                .add(egui::Slider::new(&mut state.bass_cutoff_hz, 20.0..=8000.0).text("Hz"))
+                .add(crate::ui::helpers::slider_fine_step(
+                    ui,
+                    egui::Slider::new(&mut state.bass_cutoff_hz, 20.0..=8000.0).text("Hz"),
+                    1.0,
+                ))
                 .changed();
             if cutoff_changed {
                 state.bass_cutoff_hz = state.bass_cutoff_hz.clamp(20.0, 8_000.0);
@@ -154,14 +158,33 @@ pub(crate) fn render(
         );
     }
 
+    // Render the real bass voice (post amp envelope + filter) so the
+    // preview matches the actual audio output exactly.
+    let preview_rate = audio::PREVIEW_SAMPLE_RATE;
+    let amp_lut = curve_lut(&state.bass_amp_curve.points, &state.bass_amp_curve.bends);
+    let filter_lut = curve_lut(&state.bass_filter_curve.points, &state.bass_filter_curve.bends);
+    let preview_samples = audio::render_bass_preview(
+        preview_rate,
+        note_end_ms * 0.001,
+        audio::BassVoiceParams {
+            level: state.bass_level,
+            tuning_scale: 1.0,
+            note_length_ms: state.bass_note_length_ms,
+            base_cutoff_hz: state.bass_cutoff_hz,
+            pitch_hz: state.bass_pitch_hz,
+            filter_mode: state.bass_filter_mode,
+            waveform: state.bass_oscillator_waveform,
+        },
+        state.bass_pitch_hz,
+        &amp_lut,
+        &filter_lut,
+        state.bass_retrigger,
+        state.bass_legato_voice_steal,
+    );
     let waveform_points = waveform_preview_points(
         graph_rect,
-        &state.bass_amp_curve.points,
-        &state.bass_amp_curve.bends,
-        &state.bass_filter_curve.points,
-        &state.bass_filter_curve.bends,
-        state.tuning_standard.a4_hz(),
-        20.0,
+        &preview_samples,
+        preview_rate,
         note_end_ms,
         max_note_length_ms,
         state.waveform_zoom_percent,

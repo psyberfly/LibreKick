@@ -88,6 +88,10 @@ impl KickVoice {
         self.trigger_with_velocity(1.0, retrigger, legato_voice_steal);
     }
 
+    pub fn is_active(&self) -> bool {
+        self.oscillator.is_active()
+    }
+
     pub fn trigger_with_velocity(&mut self, velocity: f32, retrigger: bool, legato_voice_steal: bool) {
         if !self.oscillator.note_on(retrigger, legato_voice_steal) {
             return;
@@ -193,6 +197,10 @@ impl BassVoice {
     pub fn note_off(&mut self) {
         self.oscillator.note_off();
         self.reset_filter_state();
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.oscillator.is_active()
     }
 
     pub fn next_sample(

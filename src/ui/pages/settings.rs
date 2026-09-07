@@ -30,13 +30,15 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState
         ui.label(RichText::new("Display").strong());
         ui.horizontal(|ui| {
             ui.label("UI scale");
-            ui.add(
+            ui.add(crate::ui::helpers::slider_fine_step(
+                ui,
                 egui::Slider::new(&mut state.display_scale, 0.5..=2.0)
                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
                     .custom_parser(|s| {
                         s.trim_end_matches('%').parse::<f64>().ok().map(|v| v / 100.0)
                     }),
-            );
+                0.01,
+            ));
         });
         ui.label("Multiplies the automatic window-based scaling.");
     });

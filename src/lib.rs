@@ -129,6 +129,10 @@ impl Plugin for LibreKick {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        // Get tempo from DAW transport
+        let transport = context.transport();
+        shared::set_tempo(&self.shared, transport.tempo);
+        
         let midi_input = midi::collect_midi_input(context);
 
         for index in 0..midi_input.bass_event_count {

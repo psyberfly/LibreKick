@@ -18,6 +18,7 @@ pub(crate) fn render(
         ui.separator();
         ui.selectable_value(active_page, UiPage::Kick, "Kick");
         ui.selectable_value(active_page, UiPage::Bass, "Bass");
+        ui.selectable_value(active_page, UiPage::Arrange, "Arrange");
         ui.selectable_value(active_page, UiPage::Settings, "Settings");
         ui.selectable_value(active_page, UiPage::Oscilloscope, "Oscilloscope");
         ui.selectable_value(active_page, UiPage::Logs, "Logs");

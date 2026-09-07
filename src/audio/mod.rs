@@ -9,7 +9,13 @@ use crate::{
     shared,
 };
 
-use self::voice::{BassVoice, BassVoiceParams, KickVoice, VoiceParams};
+use self::voice::{BassVoice, KickVoice};
+pub use self::voice::{BassVoiceParams, VoiceParams};
+
+/// Preview sample rate for all offline-rendered waveforms (instrument pages
+/// and arrange clip). The voices are rate-dependent, so every preview must
+/// use this same rate to produce identical output.
+pub const PREVIEW_SAMPLE_RATE: f32 = 4_000.0;
 
 #[derive(Clone, Copy)]
 pub struct KickDspParams {
@@ -201,4 +207,149 @@ impl KickEngine {
 
         ProcessStatus::Normal
     }
+}
+
+/// A single note to render in the arrangement preview.
+#[derive(Clone, Copy)]
+pub struct ArrangeNoteSpec {
+    /// true = kick lane, false = bass lane
+    pub is_kick: bool,
+    /// Semitone offset above the base bass pitch (bass only).
+    pub semitone: i32,
+    /// Note start time in seconds within the clip.
+    pub start_seconds: f32,
+}
+
+/// Renders a single kick hit through the real `KickVoice` at a preview rate.
+/// Returns the post-amp/pitch-envelope samples — identical to what the audio
+/// thread produces for one trigger.
+pub fn render_kick_preview(
+    preview_rate: f32,
+    total_seconds: f32,
+    params: VoiceParams,
+    amp_lut: &[f32; shared::CURVE_LUT_SIZE],
+    pitch_lut: &[f32; shared::CURVE_LUT_SIZE],
+    retrigger: bool,
+    legato_voice_steal: bool,
+) -> Vec<f32> {
+    let total_samples = (total_seconds * preview_rate).ceil().max(1.0) as usize;
+    let mut buffer = vec![0.0_f32; total_samples];
+    let mut voice = KickVoice::default();
+    voice.set_sample_rate(preview_rate);
+    voice.trigger_with_velocity(1.0, retrigger, legato_voice_steal);
+    for slot in buffer.iter_mut() {
+        if !voice.is_active() {
+            break;
+        }
+        *slot = voice.next_sample(params, amp_lut, pitch_lut);
+    }
+    buffer
+}
+
+/// Renders a single bass note through the real `BassVoice` at a preview rate.
+/// Returns the post-amp-envelope, post-filter samples — identical to what the
+/// audio thread produces for one note-on.
+pub fn render_bass_preview(
+    preview_rate: f32,
+    total_seconds: f32,
+    params: BassVoiceParams,
+    note_hz: f32,
+    amp_lut: &[f32; shared::CURVE_LUT_SIZE],
+    filter_lut: &[f32; shared::CURVE_LUT_SIZE],
+    retrigger: bool,
+    legato_voice_steal: bool,
+) -> Vec<f32> {
+    let total_samples = (total_seconds * preview_rate).ceil().max(1.0) as usize;
+    let mut buffer = vec![0.0_f32; total_samples];
+    let mut voice = BassVoice::default();
+    voice.set_sample_rate(preview_rate);
+    voice.note_on(note_hz, 1.0, retrigger, legato_voice_steal);
+    for slot in buffer.iter_mut() {
+        if !voice.is_active() {
+            break;
+        }
+        *slot = voice.next_sample(params, amp_lut, filter_lut);
+    }
+    buffer
+}
+
+/// Renders the arrangement's notes through the kick/bass voices at a reduced
+/// preview sample rate. Returns `(kick, bass)` mono buffers so the UI can
+/// draw each instrument in its own color.
+pub fn render_arrangement_preview(
+    notes: &[ArrangeNoteSpec],
+    total_seconds: f32,
+    preview_rate: f32,
+    shared: &shared::SharedSnapshot,
+    kick_level: f32,
+    bass_level: f32,
+) -> (Vec<f32>, Vec<f32>) {
+    let total_samples = (total_seconds * preview_rate).ceil().max(1.0) as usize;
+    let mut kick_buffer = vec![0.0_f32; total_samples];
+    let mut bass_buffer = vec![0.0_f32; total_samples];
+
+    let tuning_scale = 1.0_f32;
+    let kick_params = VoiceParams {
+        level: kick_level,
+        keytrack_enabled: shared.keytrack_enabled,
+        tuning_scale,
+        note_length_ms: shared.note_length_ms,
+        pitch_hz: shared.kick_pitch_hz,
+        waveform: shared.kick_oscillator_waveform,
+    };
+    let bass_params = BassVoiceParams {
+        level: bass_level,
+        tuning_scale,
+        note_length_ms: shared.bass_note_length_ms,
+        base_cutoff_hz: shared.bass_cutoff_hz,
+        pitch_hz: shared.bass_pitch_hz,
+        filter_mode: shared.bass_filter_mode,
+        waveform: shared.bass_oscillator_waveform,
+    };
+
+    for note in notes {
+        let start = (note.start_seconds * preview_rate) as usize;
+        if start >= total_samples {
+            continue;
+        }
+
+        if note.is_kick {
+            let mut voice = KickVoice::default();
+            voice.set_sample_rate(preview_rate);
+            voice.trigger_with_velocity(
+                1.0,
+                shared.kick_retrigger,
+                shared.kick_legato_voice_steal,
+            );
+            for slot in kick_buffer.iter_mut().skip(start) {
+                if !voice.is_active() {
+                    break;
+                }
+                *slot += voice.next_sample(kick_params, &shared.amp_lut, &shared.pitch_lut);
+            }
+        } else {
+            let note_hz = shared.bass_pitch_hz
+                * 2.0_f32.powf(note.semitone as f32 / 12.0);
+            let mut voice = BassVoice::default();
+            voice.set_sample_rate(preview_rate);
+            voice.note_on(
+                note_hz,
+                1.0,
+                shared.bass_retrigger,
+                shared.bass_legato_voice_steal,
+            );
+            for slot in bass_buffer.iter_mut().skip(start) {
+                if !voice.is_active() {
+                    break;
+                }
+                *slot += voice.next_sample(
+                    bass_params,
+                    &shared.bass_amp_lut,
+                    &shared.bass_filter_lut,
+                );
+            }
+        }
+    }
+
+    (kick_buffer, bass_buffer)
 }

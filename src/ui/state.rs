@@ -71,6 +71,11 @@ pub(super) struct CorePatchData {
     pub(super) bass_cutoff_hz: f32,
     pub(super) bass_filter_mode: shared::BassFilterMode,
     pub(super) bass_keytrack_enabled: bool,
+    pub(super) num_bars: f32,
+    pub(super) note_size: NoteSize,
+    pub(super) use_daw_tempo: bool,
+    pub(super) manual_tempo: f32,
+    pub(super) midi_notes: Vec<ArrangeNote>,
 }
 
 /// Editor snapshot for undo/redo - includes UI-specific state
@@ -119,10 +124,69 @@ impl Curve {
     }
 }
 
+/// A note placed on the arrange page MIDI channel.
+/// `row`: 0-11 = bass octave (B at top .. C at bottom), 12 = kick lane.
+/// `bar_pos`: position in bars (fractional, e.g. 1.5 = middle of bar 2).
+/// Notes are fixed-length: one beat (0.25 bars in 4/4).
+#[derive(Clone, Copy, PartialEq)]
+pub(super) struct ArrangeNote {
+    pub(super) row: usize,
+    pub(super) bar_pos: f32,
+}
+
+/// Note size options for the arrange grid, expressed as a fraction of a 4/4 bar.
+/// Ordered finest to coarsest (left to right on the slider).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum NoteSize {
+    Sixteenth, // 1/16 = 0.0625 bars
+    Eighth,    // 1/8  = 0.125 bars
+    Quarter,   // 1/4  = 0.25 bars
+    Whole,     // 1    = 1.0 bars
+}
+
+impl NoteSize {
+    pub(super) const ALL: [NoteSize; 4] = [
+        NoteSize::Sixteenth,
+        NoteSize::Eighth,
+        NoteSize::Quarter,
+        NoteSize::Whole,
+    ];
+
+    /// Length of one note in bars.
+    pub(super) fn bars(self) -> f32 {
+        match self {
+            NoteSize::Sixteenth => 0.0625,
+            NoteSize::Eighth => 0.125,
+            NoteSize::Quarter => 0.25,
+            NoteSize::Whole => 1.0,
+        }
+    }
+
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            NoteSize::Sixteenth => "1/16",
+            NoteSize::Eighth => "1/8",
+            NoteSize::Quarter => "1/4",
+            NoteSize::Whole => "1",
+        }
+    }
+
+    pub(super) fn from_label(raw: &str) -> Option<Self> {
+        match raw.trim() {
+            "1/16" => Some(NoteSize::Sixteenth),
+            "1/8" => Some(NoteSize::Eighth),
+            "1/4" => Some(NoteSize::Quarter),
+            "1" => Some(NoteSize::Whole),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum UiPage {
     Kick,
     Bass,
+    Arrange,
     Settings,
     Oscilloscope,
     Logs,
@@ -156,6 +220,19 @@ pub(super) struct BezierUiState {
     pub(super) bass_filter_mode: shared::BassFilterMode,
     pub(super) bass_oscillator_waveform: shared::Waveform,
     pub(super) bass_keytrack_enabled: bool,
+    pub(super) manual_tempo: f32,
+    pub(super) use_daw_tempo: bool,
+    pub(super) num_bars: f32,
+    pub(super) note_size: NoteSize,
+    pub(super) midi_channel_zoom: f32,
+    pub(super) midi_channel_scroll_offset: f32,
+    pub(super) midi_notes: Vec<ArrangeNote>,
+    pub(super) dragging_note: Option<usize>,
+    /// Cached offline-rendered waveforms for the Audio Clip preview.
+    pub(super) clip_preview_kick: Vec<f32>,
+    pub(super) clip_preview_bass: Vec<f32>,
+    /// Hash of the inputs used to render `clip_preview_samples`.
+    pub(super) clip_preview_key: u64,
     pub(super) osc_hold: bool,
     pub(super) osc_zoom_x: f32,
     pub(super) osc_zoom_y: f32,
@@ -224,6 +301,17 @@ impl Default for BezierUiState {
             bass_filter_mode: shared::BassFilterMode::LowPass,
             bass_oscillator_waveform: shared::Waveform::Saw,
             bass_keytrack_enabled: false,
+            manual_tempo: 120.0,
+            use_daw_tempo: true,
+            num_bars: 1.0,
+            note_size: NoteSize::Quarter,
+            midi_channel_zoom: 1.0,
+            midi_channel_scroll_offset: 0.0,
+            midi_notes: Vec::new(),
+            dragging_note: None,
+            clip_preview_kick: Vec::new(),
+            clip_preview_bass: Vec::new(),
+            clip_preview_key: 0,
             osc_hold: false,
             osc_zoom_x: 1.0,
             osc_zoom_y: 1.0,
@@ -348,6 +436,11 @@ impl BezierUiState {
                 bass_cutoff_hz: self.bass_cutoff_hz,
                 bass_filter_mode: self.bass_filter_mode,
                 bass_keytrack_enabled: self.bass_keytrack_enabled,
+                num_bars: self.num_bars,
+                note_size: self.note_size,
+                use_daw_tempo: self.use_daw_tempo,
+                manual_tempo: self.manual_tempo,
+                midi_notes: self.midi_notes.clone(),
             },
             selected_point: self.selected_point,
             bass_amp_selected_point: self.bass_amp_selected_point,
@@ -379,6 +472,12 @@ impl BezierUiState {
         self.bass_cutoff_hz = snapshot.core.bass_cutoff_hz;
         self.bass_filter_mode = snapshot.core.bass_filter_mode;
         self.bass_keytrack_enabled = snapshot.core.bass_keytrack_enabled;
+        self.num_bars = snapshot.core.num_bars;
+        self.note_size = snapshot.core.note_size;
+        self.use_daw_tempo = snapshot.core.use_daw_tempo;
+        self.manual_tempo = snapshot.core.manual_tempo;
+        self.midi_notes = snapshot.core.midi_notes;
+        self.dragging_note = None;
         self.bass_amp_selected_point = snapshot.bass_amp_selected_point;
         self.bass_filter_selected_point = snapshot.bass_filter_selected_point;
     }
@@ -457,6 +556,11 @@ impl BezierUiState {
                 bass_cutoff_hz: self.bass_cutoff_hz,
                 bass_filter_mode: self.bass_filter_mode,
                 bass_keytrack_enabled: self.bass_keytrack_enabled,
+                num_bars: self.num_bars,
+                note_size: self.note_size,
+                use_daw_tempo: self.use_daw_tempo,
+                manual_tempo: self.manual_tempo,
+                midi_notes: self.midi_notes.clone(),
             },
             kick_level: self.kick_level,
             bass_level: self.bass_level,
@@ -585,6 +689,17 @@ impl BezierUiState {
                 pitch_hz: self.kick_pitch_hz,
                 level: Some(self.kick_level),
             }),
+            arrange: Some(patches::ArrangePatchData {
+                num_bars: self.num_bars,
+                note_size: self.note_size.label().to_owned(),
+                use_daw_tempo: self.use_daw_tempo,
+                manual_tempo: self.manual_tempo,
+                notes: self
+                    .midi_notes
+                    .iter()
+                    .map(|note| (note.row, note.bar_pos))
+                    .collect(),
+            }),
         }
     }
 
@@ -656,6 +771,23 @@ impl BezierUiState {
             self.kick_retrigger = kick.retrigger;
             self.kick_legato_voice_steal = kick.legato_voice_steal;
             self.kick_pitch_hz = kick.pitch_hz.clamp(20.0, 2_000.0);
+        }
+
+        if let Some(arrange) = patch.arrange {
+            self.num_bars = arrange.num_bars.clamp(0.25, 8.0);
+            if let Some(note_size) = NoteSize::from_label(&arrange.note_size) {
+                self.note_size = note_size;
+            }
+            self.use_daw_tempo = arrange.use_daw_tempo;
+            self.manual_tempo = arrange.manual_tempo.clamp(20.0, 300.0);
+            self.midi_notes = arrange
+                .notes
+                .into_iter()
+                .filter(|(row, _)| *row < 13)
+                .map(|(row, bar_pos)| ArrangeNote { row, bar_pos })
+                .collect();
+            self.dragging_note = None;
+            self.midi_channel_scroll_offset = 0.0;
         }
 
         self.selection_drag_start = None;

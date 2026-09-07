@@ -22,9 +22,17 @@ pub(crate) fn render(
     ui.horizontal(|ui| {
         ui.checkbox(&mut state.osc_hold, "Hold");
         ui.label("X Zoom");
-        ui.add(egui::Slider::new(&mut state.osc_zoom_x, 1.0..=16.0).logarithmic(true));
+        ui.add(crate::ui::helpers::slider_fine_step(
+            ui,
+            egui::Slider::new(&mut state.osc_zoom_x, 1.0..=16.0).logarithmic(true),
+            1.0,
+        ));
         ui.label("Y Zoom");
-        ui.add(egui::Slider::new(&mut state.osc_zoom_y, 0.25..=4.0).logarithmic(true));
+        ui.add(crate::ui::helpers::slider_fine_step(
+            ui,
+            egui::Slider::new(&mut state.osc_zoom_y, 0.25..=4.0).logarithmic(true),
+            0.25,
+        ));
     });
 
     ui.horizontal(|ui| {

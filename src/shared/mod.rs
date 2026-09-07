@@ -101,6 +101,7 @@ pub struct SharedSnapshot {
     pub bass_filter_mode: BassFilterMode,
     pub bass_oscillator_waveform: Waveform,
     pub bass_keytrack_enabled: bool,
+    pub tempo: Option<f64>,
     pub trigger_counter: u64,
 }
 
@@ -129,6 +130,7 @@ pub(crate) struct SharedState {
     osc_len: usize,
     osc_sequence: u64,
     trigger_counter: u64,
+    tempo: Option<f64>,
 }
 
 impl Default for SharedState {
@@ -153,6 +155,7 @@ impl Default for SharedState {
             bass_filter_mode: BassFilterMode::LowPass,
             bass_oscillator_waveform: Waveform::Saw,
             bass_keytrack_enabled: false,
+            tempo: None,
             osc_kick: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_bass: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_sum: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
@@ -263,6 +266,12 @@ pub fn set_bass_keytrack_enabled(shared: &SharedStateHandle, enabled: bool) {
     }
 }
 
+pub fn set_tempo(shared: &SharedStateHandle, tempo: Option<f64>) {
+    if let Ok(mut state) = shared.lock() {
+        state.tempo = tempo;
+    }
+}
+
 pub fn publish_oscilloscope_signal_block(
     shared: &SharedStateHandle,
     signal: OscilloscopeSignal,
@@ -329,6 +338,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             bass_filter_mode: state.bass_filter_mode,
             bass_oscillator_waveform: state.bass_oscillator_waveform,
             bass_keytrack_enabled: state.bass_keytrack_enabled,
+            tempo: state.tempo,
             trigger_counter: state.trigger_counter,
         };
     }
@@ -364,6 +374,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         bass_filter_mode: BassFilterMode::LowPass,
         bass_oscillator_waveform: Waveform::Saw,
         bass_keytrack_enabled: false,
+        tempo: None,
         trigger_counter: 0,
     }
 }

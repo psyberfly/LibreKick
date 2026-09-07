@@ -16,12 +16,13 @@ mod controls;
 use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use nih_plug::prelude::ParamSetter;
 
-use crate::{config, shared, LibreKickParams};
+use crate::{audio, config, shared, LibreKickParams};
 use crate::ui::components::{waveform_preview as shared_waveform_preview};
 use crate::ui::helpers::{
-    axis_x_label, axis_y_label, constrain_curve_points, effective_waveform_zoom,
-    envelope_value_linear, normalize_segment_bends, point_value_label,
-    to_normalized_with_note_end, to_screen_with_note_end, waveform_preview_points,
+    axis_x_label, axis_y_label, constrain_curve_points, curve_lut,
+    effective_waveform_zoom, envelope_value_linear, normalize_segment_bends,
+    point_value_label, to_normalized_with_note_end, to_screen_with_note_end,
+    waveform_preview_points,
 };
 use crate::ui::state::{BezierUiState, CurveKind, EditorSnapshot};
 use crate::ui::theme::{self as ui_theme, apply_ui_text_scale, themed_font, APP_THEME};
@@ -799,14 +800,31 @@ pub(crate) fn render_editor(
         state.note_length_ms = note_end_ms.clamp(0.0, max_note_length_ms);
         shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
 
+        // Render the real kick voice (post amp + pitch envelopes) so the
+        // preview matches the actual audio output exactly.
+        let preview_rate = audio::PREVIEW_SAMPLE_RATE;
+        let amp_lut = curve_lut(&state.amplitude_curve.points, &state.amplitude_curve.bends);
+        let pitch_lut = curve_lut(&state.pitch_curve.points, &state.pitch_curve.bends);
+        let preview_samples = audio::render_kick_preview(
+            preview_rate,
+            state.note_length_ms * 0.001,
+            audio::VoiceParams {
+                level: state.kick_level,
+                keytrack_enabled: state.keytrack_enabled,
+                tuning_scale: 1.0,
+                note_length_ms: state.note_length_ms,
+                pitch_hz: state.kick_pitch_hz,
+                waveform: state.kick_oscillator_waveform,
+            },
+            &amp_lut,
+            &pitch_lut,
+            state.kick_retrigger,
+            state.kick_legato_voice_steal,
+        );
         let waveform_points = waveform_preview_points(
             graph_rect,
-            &state.amplitude_curve.points,
-            &state.amplitude_curve.bends,
-            &state.pitch_curve.points,
-            &state.pitch_curve.bends,
-            tuning_a4_hz,
-            state.kick_pitch_hz,
+            &preview_samples,
+            preview_rate,
             state.note_length_ms,
             max_note_length_ms,
             state.waveform_zoom_percent,

@@ -25,8 +25,6 @@ use self::theme::{
 };
 
 const MIN_POINT_GAP_X: f32 = 0.01;
-const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
-const WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL: f32 = 0.3;
 const AMP_DB_FLOOR: f32 = -30.0;
 
 /// Initializes the shared state from the default UI state/patch.
@@ -112,6 +110,8 @@ pub fn create_testing_editor(
                 });
                 } else if state.active_page == UiPage::Bass {
                     pages::bass::render(ui, ui_scale, state, &shared_for_ui, &params, setter, &snapshot_before);
+                } else if state.active_page == UiPage::Arrange {
+                    pages::arrange::render(ui, ui_scale, state, &shared_for_ui, &params, setter);
                 } else if state.active_page == UiPage::Settings {
                     pages::settings::render(ui, ui_scale, state);
                 } else if state.active_page == UiPage::Oscilloscope {

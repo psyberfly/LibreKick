@@ -41,6 +41,20 @@ pub struct PatchData {
     pub bass: Option<BassPatchData>,
     /// Kick oscillator settings. `None` for patches saved before kick support.
     pub kick: Option<KickPatchData>,
+    /// Arrange page settings. `None` for patches saved before arrange support.
+    pub arrange: Option<ArrangePatchData>,
+}
+
+/// Arrange page settings stored inside a patch file.
+#[derive(Clone, Debug)]
+pub struct ArrangePatchData {
+    pub num_bars: f32,
+    /// Note size label: "1/16", "1/8", "1/4", or "1".
+    pub note_size: String,
+    pub use_daw_tempo: bool,
+    pub manual_tempo: f32,
+    /// MIDI notes as (row, bar_pos) pairs.
+    pub notes: Vec<(usize, f32)>,
 }
 
 /// Kick oscillator settings stored inside a patch file.
@@ -279,6 +293,13 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut kick_pitch_hz: Option<f32> = None;
     let mut kick_level: Option<f32> = None;
 
+    let mut arrange_seen = false;
+    let mut arrange_num_bars: Option<f32> = None;
+    let mut arrange_note_size: Option<String> = None;
+    let mut arrange_use_daw_tempo: Option<bool> = None;
+    let mut arrange_manual_tempo: Option<f32> = None;
+    let mut arrange_notes: Option<Vec<(usize, f32)>> = None;
+
     for raw_line in raw.lines() {
         let line = raw_line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -397,6 +418,26 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 kick_seen = true;
                 kick_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
             }
+            "arrange_num_bars" => {
+                arrange_seen = true;
+                arrange_num_bars = value.parse::<f32>().ok();
+            }
+            "arrange_note_size" => {
+                arrange_seen = true;
+                arrange_note_size = Some(value.to_owned());
+            }
+            "arrange_use_daw_tempo" => {
+                arrange_seen = true;
+                arrange_use_daw_tempo = value.parse::<bool>().ok();
+            }
+            "arrange_manual_tempo" => {
+                arrange_seen = true;
+                arrange_manual_tempo = value.parse::<f32>().ok();
+            }
+            "arrange_notes" => {
+                arrange_seen = true;
+                arrange_notes = Some(parse_arrange_notes(value));
+            }
             _ => {}
         }
     }
@@ -451,7 +492,41 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
         } else {
             None
         },
+        arrange: if arrange_seen {
+            Some(ArrangePatchData {
+                num_bars: arrange_num_bars.unwrap_or(1.0),
+                note_size: arrange_note_size.unwrap_or_else(|| "1/4".to_owned()),
+                use_daw_tempo: arrange_use_daw_tempo.unwrap_or(true),
+                manual_tempo: arrange_manual_tempo.unwrap_or(120.0),
+                notes: arrange_notes.unwrap_or_default(),
+            })
+        } else {
+            None
+        },
     })
+}
+
+/// Parses arrange notes stored as `row,bar_pos|row,bar_pos|...`.
+/// Empty or malformed segments are skipped.
+fn parse_arrange_notes(raw: &str) -> Vec<(usize, f32)> {
+    raw.split('|')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+        .filter_map(|segment| {
+            let (row_raw, pos_raw) = segment.split_once(',')?;
+            let row = row_raw.trim().parse::<usize>().ok()?;
+            let pos = pos_raw.trim().parse::<f32>().ok()?;
+            Some((row, pos.max(0.0)))
+        })
+        .collect()
+}
+
+fn arrange_notes_to_string(notes: &[(usize, f32)]) -> String {
+    notes
+        .iter()
+        .map(|(row, pos)| format!("{row},{pos:.6}"))
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 fn ensure_patches_dir() -> Result<(), String> {
@@ -538,6 +613,14 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         if let Some(level) = kick.level {
             lines.push(format!("kick_level={level}"));
         }
+    }
+
+    if let Some(arrange) = &patch.arrange {
+        lines.push(format!("arrange_num_bars={}", arrange.num_bars));
+        lines.push(format!("arrange_note_size={}", arrange.note_size));
+        lines.push(format!("arrange_use_daw_tempo={}", arrange.use_daw_tempo));
+        lines.push(format!("arrange_manual_tempo={}", arrange.manual_tempo));
+        lines.push(format!("arrange_notes={}", arrange_notes_to_string(&arrange.notes)));
     }
 
     let serialized = lines.join("\n");
