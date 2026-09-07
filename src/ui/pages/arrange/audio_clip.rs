@@ -27,13 +27,26 @@ pub(super) fn render(
         ui.label(RichText::new("Audio Clip").strong());
         ui.add_space(4.0 * ui_scale);
 
+        // Zoom controls
+        ui.horizontal(|ui| {
+            if ui.button("-").clicked() {
+                state.clip_zoom = (state.clip_zoom - 0.25).max(1.0);
+            }
+            ui.label(format!("Zoom {:.0}%", state.clip_zoom * 100.0));
+            if ui.button("+").clicked() {
+                state.clip_zoom = (state.clip_zoom + 0.25).min(4.0);
+            }
+        });
+
+        ui.add_space(4.0 * ui_scale);
+
         let clip_height = 400.0 * ui_scale;
         let available_width = ui.available_width();
         let axis_height = 18.0 * ui_scale;
 
-        let (rect, _response) = ui.allocate_exact_size(
+        let (rect, response) = ui.allocate_exact_size(
             Vec2::new(available_width, clip_height),
-            Sense::hover(),
+            Sense::drag(),
         );
 
         let painter = ui.painter_at(rect);
@@ -57,7 +70,6 @@ pub(super) fn render(
         let beats_per_bar = 4.0;
         let bar_ms = beats_per_bar * (60_000.0 / tempo.max(1.0));
         let total_ms = bar_ms * state.num_bars as f64;
-        let total_beats = (state.num_bars * beats_per_bar as f32).round() as u32;
 
         // Waveform area excludes the bottom axis strip
         let wave_rect = egui::Rect::from_min_max(
@@ -65,41 +77,131 @@ pub(super) fn render(
             Pos2::new(rect.right(), rect.bottom() - axis_height),
         );
 
+        // Visible window in bars; drag scrolls horizontally
+        let visible_bars = (state.num_bars / state.clip_zoom)
+            .min(state.num_bars)
+            .max(0.0625);
+        let max_scroll = (state.num_bars - visible_bars).max(0.0);
+        if response.dragged() {
+            let bar_width = wave_rect.width() / visible_bars;
+            state.clip_scroll_offset = (state.clip_scroll_offset
+                - response.drag_delta().x / bar_width)
+                .clamp(0.0, max_scroll);
+        }
+        let scroll_offset = state.clip_scroll_offset.clamp(0.0, max_scroll);
+
         draw_grid(
             &painter,
             wave_rect,
-            total_beats,
             state.num_bars,
+            visible_bars,
+            scroll_offset,
             state.note_size.bars(),
         );
 
         update_preview(state, shared_snapshot, params, tempo, bar_ms, total_ms);
 
-        draw_waveform(&painter, wave_rect, &state.clip_preview_bass, colors::bass_note());
-        draw_waveform(&painter, wave_rect, &state.clip_preview_kick, colors::kick_note());
+        // Draw only the visible slice of the rendered clip
+        draw_waveform(
+            &painter,
+            wave_rect,
+            sample_window(
+                &state.clip_preview_bass,
+                scroll_offset,
+                visible_bars,
+                state.num_bars,
+            ),
+            colors::bass_note(),
+        );
+        draw_waveform(
+            &painter,
+            wave_rect,
+            sample_window(
+                &state.clip_preview_kick,
+                scroll_offset,
+                visible_bars,
+                state.num_bars,
+            ),
+            colors::kick_note(),
+        );
 
-        draw_note_markers(&painter, rect, wave_rect, ui_scale, state, bar_ms);
+        draw_note_markers(
+            &painter,
+            rect,
+            wave_rect,
+            ui_scale,
+            state,
+            bar_ms,
+            visible_bars,
+            scroll_offset,
+        );
 
-        draw_time_axis(&painter, rect, wave_rect, ui_scale, total_ms, total_beats);
+        draw_time_axis(
+            &painter,
+            rect,
+            wave_rect,
+            ui_scale,
+            bar_ms,
+            state.num_bars,
+            visible_bars,
+            scroll_offset,
+        );
+
+        draw_scroll_indicator(
+            &painter,
+            rect,
+            state.num_bars,
+            visible_bars,
+            scroll_offset,
+        );
     });
 }
 
-/// Draws bar boundary and beat subdivision lines across the waveform area.
-/// `total_beats` covers fractional bars too (0.25 bar = 1 beat).
-/// For clips of one bar or less, note-size slot lines are also drawn.
+/// Returns the slice of `samples` covering the visible bar window.
+fn sample_window<'a>(
+    samples: &'a [f32],
+    scroll_offset: f32,
+    visible_bars: f32,
+    num_bars: f32,
+) -> &'a [f32] {
+    if samples.is_empty() || num_bars <= 0.0 {
+        return &[];
+    }
+    let start = ((scroll_offset / num_bars) * samples.len() as f32) as usize;
+    let end = (((scroll_offset + visible_bars) / num_bars) * samples.len() as f32).ceil() as usize;
+    let start = start.min(samples.len());
+    &samples[start..end.min(samples.len()).max(start)]
+}
+
+/// Draws bar boundary and beat subdivision lines across the visible window
+/// of the waveform area. For narrow windows (<= 1 bar), note-size slot lines
+/// are also drawn.
 fn draw_grid(
     painter: &egui::Painter,
     wave_rect: egui::Rect,
-    total_beats: u32,
     num_bars: f32,
+    visible_bars: f32,
+    scroll_offset: f32,
     note_len_bars: f32,
 ) {
-    if total_beats == 0 {
+    if num_bars <= 0.0 || visible_bars <= 0.0 {
         return;
     }
-    for beat in 0..=total_beats {
-        let t = beat as f32 / total_beats as f32;
-        let x = egui::lerp(wave_rect.left()..=wave_rect.right(), t);
+    let bars_to_x = |bars: f32| {
+        wave_rect.left() + (bars - scroll_offset) / visible_bars * wave_rect.width()
+    };
+
+    let first_beat = (scroll_offset * 4.0).floor().max(0.0) as i32;
+    let last_beat = ((scroll_offset + visible_bars) * 4.0).ceil() as i32;
+    for beat in first_beat..=last_beat {
+        let beat_bars = beat as f32 * 0.25;
+        if beat_bars > num_bars {
+            break;
+        }
+        let x = bars_to_x(beat_bars);
+        if x < wave_rect.left() - 1.0 || x > wave_rect.right() + 1.0 {
+            continue;
+        }
         let is_bar_line = beat % 4 == 0;
         painter.line_segment(
             [Pos2::new(x, wave_rect.top()), Pos2::new(x, wave_rect.bottom())],
@@ -111,24 +213,52 @@ fn draw_grid(
         );
     }
 
-    // Note-size slot lines for short clips (<= 1 bar) when finer than a beat
-    if num_bars <= 1.0 && note_len_bars < 0.25 {
+    // Note-size slot lines for narrow windows (<= 1 bar) when finer than a beat
+    if visible_bars <= 1.0 && note_len_bars < 0.25 {
         let slot_color = Color32::from_rgb(38, 43, 50);
-        let total_slots = (num_bars / note_len_bars).round() as i32;
-        for slot in 1..total_slots {
+        let first_slot = (scroll_offset / note_len_bars).floor() as i32;
+        let last_slot = ((scroll_offset + visible_bars) / note_len_bars).ceil() as i32;
+        for slot in first_slot..=last_slot {
             let slot_bars = slot as f32 * note_len_bars;
+            if slot_bars <= 0.0 || slot_bars >= num_bars {
+                continue;
+            }
             // Skip positions already covered by beat/bar lines
             let on_beat = (slot_bars / 0.25).fract().abs() < 1e-4;
             if on_beat {
                 continue;
             }
-            let t = slot_bars / num_bars;
-            let x = egui::lerp(wave_rect.left()..=wave_rect.right(), t);
-            painter.line_segment(
-                [Pos2::new(x, wave_rect.top()), Pos2::new(x, wave_rect.bottom())],
-                Stroke::new(0.5, slot_color),
-            );
+            let x = bars_to_x(slot_bars);
+            if x >= wave_rect.left() && x <= wave_rect.right() {
+                painter.line_segment(
+                    [Pos2::new(x, wave_rect.top()), Pos2::new(x, wave_rect.bottom())],
+                    Stroke::new(0.5, slot_color),
+                );
+            }
         }
+    }
+}
+
+/// Draws the horizontal scroll indicator when the clip overflows the view.
+fn draw_scroll_indicator(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    num_bars: f32,
+    visible_bars: f32,
+    scroll_offset: f32,
+) {
+    if num_bars > visible_bars {
+        let scroll_ratio = scroll_offset / (num_bars - visible_bars).max(1.0);
+        let indicator_width = rect.width() * (visible_bars / num_bars);
+        let indicator_x = rect.left() + scroll_ratio * (rect.width() - indicator_width);
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                Pos2::new(indicator_x, rect.bottom() - 2.0),
+                Vec2::new(indicator_width, 2.0),
+            ),
+            1.0,
+            crate::ui::theme::accent_color(),
+        );
     }
 }
 
@@ -201,6 +331,7 @@ fn preview_hash(
     shared_snapshot.kick_retrigger.hash(&mut hasher);
     shared_snapshot.kick_legato_voice_steal.hash(&mut hasher);
     shared_snapshot.bass_note_length_ms.to_bits().hash(&mut hasher);
+    shared_snapshot.bass_keytrack_enabled.hash(&mut hasher);
     shared_snapshot.bass_cutoff_hz.to_bits().hash(&mut hasher);
     shared_snapshot.bass_pitch_hz.to_bits().hash(&mut hasher);
     shared_snapshot.bass_phase_deg.to_bits().hash(&mut hasher);
@@ -289,12 +420,14 @@ fn draw_note_markers(
     ui_scale: f32,
     state: &BezierUiState,
     bar_ms: f64,
+    visible_bars: f32,
+    scroll_offset: f32,
 ) {
-    if state.num_bars <= 0.0 {
+    if state.num_bars <= 0.0 || visible_bars <= 0.0 {
         return;
     }
     for note in &state.midi_notes {
-        let t = note.bar_pos / state.num_bars;
+        let t = (note.bar_pos - scroll_offset) / visible_bars;
         if !(0.0..=1.0).contains(&t) {
             continue;
         }
@@ -343,23 +476,31 @@ fn draw_note_markers(
     }
 }
 
-/// Draws the bottom time axis with ms labels on each beat marker line.
-/// First and last labels are edge-clamped so they don't overflow.
+/// Draws the bottom time axis with ms labels on each visible beat marker
+/// line. Labels show absolute clip time; edge labels are clamped so they
+/// don't overflow.
 fn draw_time_axis(
     painter: &egui::Painter,
     rect: egui::Rect,
     wave_rect: egui::Rect,
     ui_scale: f32,
-    total_ms: f64,
-    total_beats: u32,
+    bar_ms: f64,
+    num_bars: f32,
+    visible_bars: f32,
+    scroll_offset: f32,
 ) {
-    if total_beats == 0 {
+    if num_bars <= 0.0 || visible_bars <= 0.0 {
         return;
     }
-    for beat in 0..=total_beats {
-        let f = beat as f32 / total_beats as f32;
+    let first_beat = (scroll_offset * 4.0).floor().max(0.0) as i32;
+    let last_beat = ((scroll_offset + visible_bars) * 4.0)
+        .ceil()
+        .min(num_bars * 4.0) as i32;
+    for beat in first_beat..=last_beat {
+        let beat_bars = beat as f32 * 0.25;
+        let f = (beat_bars - scroll_offset) / visible_bars;
         let x = egui::lerp(rect.left()..=rect.right(), f);
-        let time_ms = f as f64 * total_ms;
+        let time_ms = beat_bars as f64 * bar_ms;
 
         // Tick mark
         painter.line_segment(
@@ -371,12 +512,12 @@ fn draw_time_axis(
         );
 
         // ms label - clamp edge labels so they don't overflow
-        let (label_pos, label_align) = if beat == 0 {
+        let (label_pos, label_align) = if f <= 0.0 {
             (
                 Pos2::new(rect.left() + 2.0 * ui_scale, rect.bottom() - 2.0 * ui_scale),
                 Align2::LEFT_BOTTOM,
             )
-        } else if beat == total_beats {
+        } else if f >= 1.0 {
             (
                 Pos2::new(rect.right() - 2.0 * ui_scale, rect.bottom() - 2.0 * ui_scale),
                 Align2::RIGHT_BOTTOM,

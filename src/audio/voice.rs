@@ -21,7 +21,6 @@ pub struct BassVoiceParams {
     pub tuning_scale: f32,
     pub note_length_ms: f32,
     pub base_cutoff_hz: f32,
-    pub pitch_hz: f32,
     pub filter_mode: BassFilterMode,
     pub waveform: Waveform,
 }
@@ -224,7 +223,7 @@ impl BassVoice {
         let cutoff_env = bass_filter_lut[lut_index].clamp(0.0, 1.0);
 
         let amplitude = params.level.clamp(0.0, 1.0) * self.velocity * amp_env;
-        let frequency = (params.pitch_hz * params.tuning_scale.max(0.5)).clamp(20.0, 20_000.0);
+        let frequency = (self.note_hz * params.tuning_scale.max(0.5)).clamp(20.0, 20_000.0);
 
         let raw = self
             .oscillator

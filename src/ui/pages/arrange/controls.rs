@@ -98,5 +98,18 @@ pub(super) fn render(
                 state.note_size = NoteSize::ALL[index];
             }
         });
+
+        // Playback section
+        ui.group(|ui| {
+            ui.label(RichText::new("Playback").strong());
+            ui.add_space(4.0 * ui_scale);
+
+            ui.checkbox(&mut state.arrange_override, "Override DAW MIDI");
+            ui.label(
+                RichText::new("Hold any note to play this pattern")
+                    .small()
+                    .italics(),
+            );
+        });
     });
 }

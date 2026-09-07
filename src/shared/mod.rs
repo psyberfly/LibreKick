@@ -51,6 +51,51 @@ pub fn set_bass_phase_deg(shared: &SharedStateHandle, phase_deg: f32) {
     }
 }
 
+/// Maximum number of arrange notes synced to the audio thread.
+pub const ARRANGE_MAX_NOTES: usize = 256;
+
+/// An arrange-page note synced to the audio thread.
+/// `row`: 0-11 = bass semitones (B at top .. C at bottom), 12 = kick lane.
+/// `bar_pos`: position in bars (fractional).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ArrangeNoteData {
+    pub row: u8,
+    pub bar_pos: f32,
+}
+
+pub fn set_arrange_override(shared: &SharedStateHandle, enabled: bool) {
+    if let Ok(mut state) = shared.lock() {
+        state.arrange_override = enabled;
+    }
+}
+
+/// Syncs the arrange pattern and its timing settings to the audio thread.
+/// `notes` are (row, bar_pos) pairs; at most `ARRANGE_MAX_NOTES` are kept.
+pub fn set_arrange_pattern(
+    shared: &SharedStateHandle,
+    notes: &[(usize, f32)],
+    num_bars: f32,
+    note_len_bars: f32,
+    manual_tempo: f32,
+    use_daw_tempo: bool,
+) {
+    if let Ok(mut state) = shared.lock() {
+        let count = notes.len().min(ARRANGE_MAX_NOTES);
+        for (slot, &(row, bar_pos)) in state.arrange_notes.iter_mut().zip(notes.iter()).take(count)
+        {
+            *slot = ArrangeNoteData {
+                row: row.min(12) as u8,
+                bar_pos,
+            };
+        }
+        state.arrange_note_count = count;
+        state.arrange_num_bars = num_bars.clamp(0.25, 8.0);
+        state.arrange_note_len_bars = note_len_bars.clamp(0.0625, 1.0);
+        state.arrange_manual_tempo = manual_tempo.clamp(20.0, 300.0);
+        state.arrange_use_daw_tempo = use_daw_tempo;
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Waveform {
     Saw,
@@ -117,6 +162,16 @@ pub struct SharedSnapshot {
     pub bass_keytrack_enabled: bool,
     /// Bass oscillator start phase in degrees (0-360), applied on retrigger.
     pub bass_phase_deg: f32,
+    /// When true, the internal arrange pattern plays while any DAW note is
+    /// held, instead of routing DAW MIDI directly to the voices.
+    pub arrange_override: bool,
+    pub arrange_notes: [ArrangeNoteData; ARRANGE_MAX_NOTES],
+    pub arrange_note_count: usize,
+    pub arrange_num_bars: f32,
+    /// Length of one arrange note in bars (from the note-size setting).
+    pub arrange_note_len_bars: f32,
+    pub arrange_manual_tempo: f32,
+    pub arrange_use_daw_tempo: bool,
     pub tempo: Option<f64>,
     pub trigger_counter: u64,
 }
@@ -142,6 +197,13 @@ pub(crate) struct SharedState {
     bass_oscillator_waveform: Waveform,
     bass_keytrack_enabled: bool,
     bass_phase_deg: f32,
+    arrange_override: bool,
+    arrange_notes: [ArrangeNoteData; ARRANGE_MAX_NOTES],
+    arrange_note_count: usize,
+    arrange_num_bars: f32,
+    arrange_note_len_bars: f32,
+    arrange_manual_tempo: f32,
+    arrange_use_daw_tempo: bool,
     osc_kick: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_bass: [f32; OSCILLOSCOPE_BUFFER_SIZE],
     osc_sum: [f32; OSCILLOSCOPE_BUFFER_SIZE],
@@ -175,6 +237,13 @@ impl Default for SharedState {
             bass_oscillator_waveform: Waveform::Saw,
             bass_keytrack_enabled: false,
             bass_phase_deg: 0.0,
+            arrange_override: false,
+            arrange_notes: [ArrangeNoteData::default(); ARRANGE_MAX_NOTES],
+            arrange_note_count: 0,
+            arrange_num_bars: 1.0,
+            arrange_note_len_bars: 0.25,
+            arrange_manual_tempo: 120.0,
+            arrange_use_daw_tempo: true,
             tempo: None,
             osc_kick: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
             osc_bass: [0.0; OSCILLOSCOPE_BUFFER_SIZE],
@@ -360,6 +429,13 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             bass_oscillator_waveform: state.bass_oscillator_waveform,
             bass_keytrack_enabled: state.bass_keytrack_enabled,
             bass_phase_deg: state.bass_phase_deg,
+            arrange_override: state.arrange_override,
+            arrange_notes: state.arrange_notes,
+            arrange_note_count: state.arrange_note_count,
+            arrange_num_bars: state.arrange_num_bars,
+            arrange_note_len_bars: state.arrange_note_len_bars,
+            arrange_manual_tempo: state.arrange_manual_tempo,
+            arrange_use_daw_tempo: state.arrange_use_daw_tempo,
             tempo: state.tempo,
             trigger_counter: state.trigger_counter,
         };
@@ -398,6 +474,13 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         bass_oscillator_waveform: Waveform::Saw,
         bass_keytrack_enabled: false,
         bass_phase_deg: 0.0,
+        arrange_override: false,
+        arrange_notes: [ArrangeNoteData::default(); ARRANGE_MAX_NOTES],
+        arrange_note_count: 0,
+        arrange_num_bars: 1.0,
+        arrange_note_len_bars: 0.25,
+        arrange_manual_tempo: 120.0,
+        arrange_use_daw_tempo: true,
         tempo: None,
         trigger_counter: 0,
     }

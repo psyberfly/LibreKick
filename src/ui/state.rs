@@ -77,6 +77,9 @@ pub(super) struct CorePatchData {
     pub(super) note_size: NoteSize,
     pub(super) use_daw_tempo: bool,
     pub(super) manual_tempo: f32,
+    /// When true, held DAW notes drive the internal arrange pattern instead
+    /// of routing MIDI directly to the voices.
+    pub(super) arrange_override: bool,
     pub(super) midi_notes: Vec<ArrangeNote>,
 }
 
@@ -230,8 +233,15 @@ pub(super) struct BezierUiState {
     pub(super) use_daw_tempo: bool,
     pub(super) num_bars: f32,
     pub(super) note_size: NoteSize,
+    /// When true, held DAW notes drive the internal arrange pattern instead
+    /// of routing MIDI directly to the voices.
+    pub(super) arrange_override: bool,
     pub(super) midi_channel_zoom: f32,
     pub(super) midi_channel_scroll_offset: f32,
+    /// Horizontal zoom for the Audio Clip preview (1.0 = whole clip).
+    pub(super) clip_zoom: f32,
+    /// Scroll position of the Audio Clip preview, in bars.
+    pub(super) clip_scroll_offset: f32,
     pub(super) midi_notes: Vec<ArrangeNote>,
     pub(super) dragging_note: Option<usize>,
     /// Cached offline-rendered waveforms for the Audio Clip preview.
@@ -313,8 +323,11 @@ impl Default for BezierUiState {
             use_daw_tempo: true,
             num_bars: 1.0,
             note_size: NoteSize::Quarter,
+            arrange_override: false,
             midi_channel_zoom: 1.0,
             midi_channel_scroll_offset: 0.0,
+            clip_zoom: 1.0,
+            clip_scroll_offset: 0.0,
             midi_notes: Vec::new(),
             dragging_note: None,
             clip_preview_kick: Vec::new(),
@@ -450,6 +463,7 @@ impl BezierUiState {
                 note_size: self.note_size,
                 use_daw_tempo: self.use_daw_tempo,
                 manual_tempo: self.manual_tempo,
+                arrange_override: self.arrange_override,
                 midi_notes: self.midi_notes.clone(),
             },
             selected_point: self.selected_point,
@@ -488,6 +502,7 @@ impl BezierUiState {
         self.note_size = snapshot.core.note_size;
         self.use_daw_tempo = snapshot.core.use_daw_tempo;
         self.manual_tempo = snapshot.core.manual_tempo;
+        self.arrange_override = snapshot.core.arrange_override;
         self.midi_notes = snapshot.core.midi_notes;
         self.dragging_note = None;
         self.bass_amp_selected_point = snapshot.bass_amp_selected_point;
@@ -574,6 +589,7 @@ impl BezierUiState {
                 note_size: self.note_size,
                 use_daw_tempo: self.use_daw_tempo,
                 manual_tempo: self.manual_tempo,
+                arrange_override: self.arrange_override,
                 midi_notes: self.midi_notes.clone(),
             },
             kick_level: self.kick_level,
@@ -643,6 +659,22 @@ impl BezierUiState {
         shared::set_bass_oscillator_waveform(shared, self.bass_oscillator_waveform);
         shared::set_bass_keytrack_enabled(shared, self.bass_keytrack_enabled);
         shared::set_bass_phase_deg(shared, self.bass_phase_deg);
+
+        // Arrange pattern and override
+        shared::set_arrange_override(shared, self.arrange_override);
+        let arrange_notes: Vec<(usize, f32)> = self
+            .midi_notes
+            .iter()
+            .map(|note| (note.row, note.bar_pos))
+            .collect();
+        shared::set_arrange_pattern(
+            shared,
+            &arrange_notes,
+            self.num_bars,
+            self.note_size.bars(),
+            self.manual_tempo,
+            self.use_daw_tempo,
+        );
     }
 
     pub(super) fn to_patch_data(&self, name: String) -> patches::PatchData {
@@ -712,6 +744,7 @@ impl BezierUiState {
                 note_size: self.note_size.label().to_owned(),
                 use_daw_tempo: self.use_daw_tempo,
                 manual_tempo: self.manual_tempo,
+                override_daw_midi: Some(self.arrange_override),
                 notes: self
                     .midi_notes
                     .iter()
@@ -804,6 +837,9 @@ impl BezierUiState {
             }
             self.use_daw_tempo = arrange.use_daw_tempo;
             self.manual_tempo = arrange.manual_tempo.clamp(20.0, 300.0);
+            if let Some(override_daw_midi) = arrange.override_daw_midi {
+                self.arrange_override = override_daw_midi;
+            }
             self.midi_notes = arrange
                 .notes
                 .into_iter()

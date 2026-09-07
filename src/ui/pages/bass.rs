@@ -167,7 +167,6 @@ pub(crate) fn render(
             tuning_scale: 1.0,
             note_length_ms: state.bass_note_length_ms,
             base_cutoff_hz: state.bass_cutoff_hz,
-            pitch_hz: state.bass_pitch_hz,
             filter_mode: state.bass_filter_mode,
             waveform: state.bass_oscillator_waveform,
         },

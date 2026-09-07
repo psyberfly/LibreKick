@@ -28,6 +28,14 @@ pub struct MidiFrameInput {
     pub bass_note_hz: Option<f32>,
     pub bass_events: [Option<RoutedMidiEvent>; 6],
     pub bass_event_count: usize,
+    /// Note-on count this block across ALL notes (arrange-override gate).
+    pub gate_note_ons: u32,
+    /// Note-off count this block across ALL notes (incl. velocity-0 note-ons).
+    pub gate_note_offs: u32,
+    /// Sample timing of the first note-on this block, if any.
+    pub gate_first_on_timing: Option<u32>,
+    /// Velocity of the first note-on this block.
+    pub gate_velocity: f32,
 }
 
 impl Default for MidiFrameInput {
@@ -42,6 +50,10 @@ impl Default for MidiFrameInput {
             bass_note_hz: None,
             bass_events: [None; 6],
             bass_event_count: 0,
+            gate_note_ons: 0,
+            gate_note_offs: 0,
+            gate_first_on_timing: None,
+            gate_velocity: 1.0,
         }
     }
 }
@@ -83,6 +95,11 @@ pub fn collect_midi_input<P: Plugin>(context: &mut impl ProcessContext<P>) -> Mi
                 velocity,
             } => {
                 if velocity > 0.0 {
+                    midi_input.gate_note_ons += 1;
+                    if midi_input.gate_first_on_timing.is_none() {
+                        midi_input.gate_first_on_timing = Some(timing);
+                        midi_input.gate_velocity = velocity.clamp(0.0, 1.0);
+                    }
                     if is_kick_control_note(note) {
                         midi_input.trigger = true;
                         midi_input.velocity = velocity.clamp(0.0, 1.0);
@@ -106,20 +123,23 @@ pub fn collect_midi_input<P: Plugin>(context: &mut impl ProcessContext<P>) -> Mi
                             );
                         }
                     }
-                } else if is_bass_control_note(note) {
-                    midi_input.bass_note_off = true;
-                    for mapped in mapped_bass_notes(note) {
-                        push_bass_event(
-                            &mut midi_input,
-                            RoutedMidiEvent {
-                                timing,
-                                voice_id,
-                                channel,
-                                note: mapped,
-                                velocity: 0.0,
-                                is_note_on: false,
-                            },
-                        );
+                } else {
+                    midi_input.gate_note_offs += 1;
+                    if is_bass_control_note(note) {
+                        midi_input.bass_note_off = true;
+                        for mapped in mapped_bass_notes(note) {
+                            push_bass_event(
+                                &mut midi_input,
+                                RoutedMidiEvent {
+                                    timing,
+                                    voice_id,
+                                    channel,
+                                    note: mapped,
+                                    velocity: 0.0,
+                                    is_note_on: false,
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -130,6 +150,7 @@ pub fn collect_midi_input<P: Plugin>(context: &mut impl ProcessContext<P>) -> Mi
                 note,
                 ..
             } => {
+                midi_input.gate_note_offs += 1;
                 if is_bass_control_note(note) {
                     midi_input.bass_note_off = true;
                     for mapped in mapped_bass_notes(note) {

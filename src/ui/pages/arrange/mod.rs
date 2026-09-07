@@ -78,6 +78,9 @@ pub(crate) fn render(
 
     controls::render(ui, ui_scale, state, daw_tempo);
 
+    // Sync UI state (incl. arrange pattern + override) to shared state for DSP
+    state.sync_to_shared(shared_for_ui);
+
     ui.add_space(16.0 * ui_scale);
 
     midi_channel::render(ui, ui_scale, state);

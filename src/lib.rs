@@ -168,6 +168,10 @@ impl Plugin for LibreKick {
             midi_note_hz: midi_input.note_hz,
             bass_events: midi_input.bass_events,
             bass_event_count: midi_input.bass_event_count,
+            gate_note_ons: midi_input.gate_note_ons,
+            gate_note_offs: midi_input.gate_note_offs,
+            gate_first_on_timing: midi_input.gate_first_on_timing,
+            gate_velocity: midi_input.gate_velocity,
         };
 
         self.engine.process(buffer, dsp_params, &self.shared)

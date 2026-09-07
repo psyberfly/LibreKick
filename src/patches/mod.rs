@@ -53,6 +53,9 @@ pub struct ArrangePatchData {
     pub note_size: String,
     pub use_daw_tempo: bool,
     pub manual_tempo: f32,
+    /// When true, held DAW notes drive the internal arrange pattern.
+    /// `None` for patches saved before this setting existed.
+    pub override_daw_midi: Option<bool>,
     /// MIDI notes as (row, bar_pos) pairs.
     pub notes: Vec<(usize, f32)>,
 }
@@ -304,6 +307,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut arrange_note_size: Option<String> = None;
     let mut arrange_use_daw_tempo: Option<bool> = None;
     let mut arrange_manual_tempo: Option<f32> = None;
+    let mut arrange_override_daw_midi: Option<bool> = None;
     let mut arrange_notes: Option<Vec<(usize, f32)>> = None;
 
     for raw_line in raw.lines() {
@@ -448,6 +452,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 arrange_seen = true;
                 arrange_manual_tempo = value.parse::<f32>().ok();
             }
+            "arrange_override_daw_midi" => {
+                arrange_seen = true;
+                arrange_override_daw_midi = value.parse::<bool>().ok();
+            }
             "arrange_notes" => {
                 arrange_seen = true;
                 arrange_notes = Some(parse_arrange_notes(value));
@@ -514,6 +522,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 note_size: arrange_note_size.unwrap_or_else(|| "1/4".to_owned()),
                 use_daw_tempo: arrange_use_daw_tempo.unwrap_or(true),
                 manual_tempo: arrange_manual_tempo.unwrap_or(120.0),
+                override_daw_midi: arrange_override_daw_midi,
                 notes: arrange_notes.unwrap_or_default(),
             })
         } else {
@@ -642,6 +651,9 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("arrange_note_size={}", arrange.note_size));
         lines.push(format!("arrange_use_daw_tempo={}", arrange.use_daw_tempo));
         lines.push(format!("arrange_manual_tempo={}", arrange.manual_tempo));
+        if let Some(override_daw_midi) = arrange.override_daw_midi {
+            lines.push(format!("arrange_override_daw_midi={override_daw_midi}"));
+        }
         lines.push(format!("arrange_notes={}", arrange_notes_to_string(&arrange.notes)));
     }
 
