@@ -111,9 +111,15 @@ impl Plugin for LibreKick {
         &mut self,
         _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
-        _context: &mut impl InitContext<Self>,
+        context: &mut impl InitContext<Self>,
     ) -> bool {
         self.engine.set_sample_rate(buffer_config.sample_rate);
+        
+        // Explicitly report zero latency to the DAW. LibreKick processes MIDI events
+        // sample-accurately with no inherent delay, so this ensures the DAW aligns
+        // bounces/freezes to the exact note-on timing without adding pre-roll padding.
+        context.set_latency_samples(0);
+        
         true
     }
 
