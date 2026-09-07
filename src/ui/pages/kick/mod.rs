@@ -1,31 +1,43 @@
-use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
+// Kick drum voice page - modular structure
+//
+// This module is being refactored from a monolithic 1,054-line file into
+// logical components. Currently extracted:
+// - controls: Oscillator panel, curve selector, zoom controls
+//
+// TODO: Extract remaining components:
+// - graph: Axes, grid, background rendering
+// - curve_editor: Point dragging, selection, deletion
+// - bend_editor: Ctrl+click bend editing
+// - shift_lock: Shift-lock vertical dragging
+// - waveform: Waveform preview overlay
 
+mod controls;
+
+use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use nih_plug::prelude::ParamSetter;
 
 use crate::{config, shared, LibreKickParams};
-use crate::ui::components::{
-    oscillator_panel, panel, waveform_preview as shared_waveform_preview,
-};
+use crate::ui::components::{waveform_preview as shared_waveform_preview};
 use crate::ui::helpers::{
     axis_x_label, axis_y_label, constrain_curve_points, effective_waveform_zoom,
     envelope_value_linear, normalize_segment_bends, point_value_label,
     to_normalized_with_note_end, to_screen_with_note_end, waveform_preview_points,
 };
-use crate::ui::state::{
-    BezierUiState, CurveKind, EditorSnapshot, NOTE_LENGTH_MAX_SLIDER_MAX_MS,
-    NOTE_LENGTH_MAX_SLIDER_MIN_MS,
-};
+use crate::ui::state::{BezierUiState, CurveKind, EditorSnapshot};
 use crate::ui::theme::{self as ui_theme, apply_ui_text_scale, themed_font, APP_THEME};
 
+// Constants used across kick page modules
 const AXIS_SUBDIVISIONS: usize = 10;
 const SHIFT_LOCK_X_FREEZE_AFTER_VERTICAL_RELEASE_SECONDS: f64 = 0.250;
 const SHIFT_LOCK_X_REENGAGE_HORIZONTAL_PIXELS: f32 = 4.0;
 const EDGE_BEND_HIT_RADIUS_PIXELS: f32 = 14.0;
 
+/// Main render function for kick page content wrapper.
 pub(crate) fn render(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
     add_contents(ui);
 }
 
+/// Renders the kick page control panel (now modularized).
 pub(crate) fn render_controls(
     ui: &mut egui::Ui,
     ui_scale: f32,
@@ -35,87 +47,18 @@ pub(crate) fn render_controls(
     params: &LibreKickParams,
     setter: &ParamSetter,
 ) {
-    ui.add_space(8.0 * ui_scale);
-    ui.heading("Kick");
-    ui.label(
-        egui::RichText::new("Kick drum voice page")
-            .italics()
-            .small(),
-    );
-    ui.separator();
-
-    ui.add_space(8.0 * ui_scale);
-    panel::render(ui, "Oscillator", ui_scale, 150.0 * ui_scale, |ui| {
-        oscillator_panel::render(
-            ui,
-            ui_scale,
-            oscillator_panel::OscillatorPanelModel {
-                waveform: &mut state.kick_oscillator_waveform,
-                retrigger: &mut state.kick_retrigger,
-                legato_voice_steal: &mut state.kick_legato_voice_steal,
-                pitch_hz: Some(&mut state.kick_pitch_hz),
-                note_length_ms: Some(&mut state.note_length_ms),
-                level: Some((&params.kick_level, setter)),
-            },
-        );
-    });
-    ui.add_space(8.0 * ui_scale);
-
-    // Sync UI state to shared state for DSP
-    state.sync_to_shared(shared_for_ui);
-
-    ui.horizontal(|ui| {
-        ui.label("Curve:");
-        ui.selectable_value(&mut state.active_curve, CurveKind::Amplitude, "Amplitude");
-        ui.selectable_value(&mut state.active_curve, CurveKind::Pitch, "Pitch");
-        ui.separator();
-        ui.checkbox(&mut state.keytrack_enabled, "Keytrack");
-        ui.separator();
-        if ui.button("Trigger").clicked() {
-            shared::request_trigger(shared_for_ui);
-        }
-        ui.separator();
-        ui.label("Max Note Length");
-        let max_length_changed = ui
-            .add(
-                egui::Slider::new(
-                    &mut state.note_length_max_ms,
-                    NOTE_LENGTH_MAX_SLIDER_MIN_MS..=NOTE_LENGTH_MAX_SLIDER_MAX_MS,
-                )
-                .text("ms")
-                .step_by(1.0),
-            )
-            .changed();
-        if max_length_changed {
-            state.note_length_max_ms = state
-                .note_length_max_ms
-                .clamp(NOTE_LENGTH_MAX_SLIDER_MIN_MS, NOTE_LENGTH_MAX_SLIDER_MAX_MS);
-            state.note_length_ms = state.note_length_ms.clamp(0.0, state.note_length_max_ms);
-        }
-        ui.separator();
-        if ui.button("-").clicked() {
-            state.waveform_zoom_percent =
-                (state.waveform_zoom_percent - app_cfg.waveform_zoom_step_percent).clamp(
-                    app_cfg.waveform_zoom_min_percent,
-                    app_cfg.waveform_zoom_max_percent,
-                );
-        }
-        ui.label(format!("Zoom {:.0}%", state.waveform_zoom_percent));
-        if ui.button("+").clicked() {
-            state.waveform_zoom_percent =
-                (state.waveform_zoom_percent + app_cfg.waveform_zoom_step_percent).clamp(
-                    app_cfg.waveform_zoom_min_percent,
-                    app_cfg.waveform_zoom_max_percent,
-                );
-        }
-
-    });
-    ui.add_space(8.0);
+    controls::render(ui, ui_scale, state, app_cfg, shared_for_ui, params, setter);
 }
 
-/// Renders the kick envelope curve editor graph (axes, note-length handle,
-/// point drag/select, shift-lock, segment bends, waveform preview) and commits
-/// undo history for edits made this frame.
+/// Renders the kick envelope curve editor graph.
+/// 
+/// This function is still monolithic and will be refactored into sub-modules in future iterations.
+/// The complexity of the editor (600+ lines) makes it a candidate for further breakdown into:
+/// - Graph rendering (axes, grid, backgrounds)
+/// - Point editing (drag, select, delete)
+/// - Bend editing (Ctrl+click curve bending)
+/// - Shift-lock mode (vertical-only dragging)
+/// - Waveform preview overlay
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_editor(
     ui: &mut egui::Ui,
@@ -127,6 +70,9 @@ pub(crate) fn render_editor(
     cut_shortcut: bool,
     delete_shortcut: bool,
 ) {
+    // This is the original monolithic editor implementation
+    // It will be gradually extracted into sub-modules
+    
     let mut point_dragging_this_frame = false;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])

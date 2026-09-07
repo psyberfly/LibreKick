@@ -5,6 +5,7 @@ mod components;
 mod pages;
 mod state;
 mod theme;
+mod widgets;
 
 use nih_plug::prelude::Editor;
 use nih_plug_egui::{

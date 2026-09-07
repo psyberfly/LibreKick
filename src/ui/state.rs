@@ -45,8 +45,10 @@ pub(super) struct Curve {
     pub(super) bends: Vec<f32>,
 }
 
+/// Core patch data shared between EditorSnapshot and PatchSnapshot.
+/// This eliminates duplication of ~20 fields between the two structs.
 #[derive(Clone, PartialEq)]
-pub(super) struct EditorSnapshot {
+pub(super) struct CorePatchData {
     pub(super) amplitude_curve: Curve,
     pub(super) pitch_curve: Curve,
     pub(super) active_curve: CurveKind,
@@ -59,8 +61,6 @@ pub(super) struct EditorSnapshot {
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
-    pub(super) selected_point: Option<usize>,
-    // Bass instrument fields so undo/redo covers both instruments.
     pub(super) bass_amp_curve: Curve,
     pub(super) bass_filter_curve: Curve,
     pub(super) bass_oscillator_waveform: shared::Waveform,
@@ -70,33 +70,23 @@ pub(super) struct EditorSnapshot {
     pub(super) bass_pitch_hz: f32,
     pub(super) bass_cutoff_hz: f32,
     pub(super) bass_filter_mode: shared::BassFilterMode,
+}
+
+/// Editor snapshot for undo/redo - includes UI-specific state
+#[derive(Clone, PartialEq)]
+pub(super) struct EditorSnapshot {
+    pub(super) core: CorePatchData,
+    // Editor-only fields
+    pub(super) selected_point: Option<usize>,
     pub(super) bass_amp_selected_point: Option<usize>,
     pub(super) bass_filter_selected_point: Option<usize>,
 }
 
+/// Patch snapshot for save/load - includes patch metadata
 #[derive(Clone, PartialEq)]
 pub(super) struct PatchSnapshot {
-    pub(super) amplitude_curve: Curve,
-    pub(super) pitch_curve: Curve,
-    pub(super) active_curve: CurveKind,
-    pub(super) tuning_standard: TuningStandard,
-    pub(super) keytrack_enabled: bool,
-    pub(super) kick_oscillator_waveform: shared::Waveform,
-    pub(super) kick_retrigger: bool,
-    pub(super) kick_legato_voice_steal: bool,
-    pub(super) kick_pitch_hz: f32,
-    pub(super) note_length_ms: f32,
-    pub(super) note_length_max_ms: f32,
-    pub(super) waveform_zoom_percent: f32,
-    pub(super) bass_amp_curve: Curve,
-    pub(super) bass_filter_curve: Curve,
-    pub(super) bass_oscillator_waveform: shared::Waveform,
-    pub(super) bass_retrigger: bool,
-    pub(super) bass_legato_voice_steal: bool,
-    pub(super) bass_note_length_ms: f32,
-    pub(super) bass_pitch_hz: f32,
-    pub(super) bass_cutoff_hz: f32,
-    pub(super) bass_filter_mode: shared::BassFilterMode,
+    pub(super) core: CorePatchData,
+    // Patch-only fields
     pub(super) kick_level: f32,
     pub(super) bass_level: f32,
     pub(super) description: String,
@@ -332,56 +322,58 @@ impl BezierUiState {
 
     pub(super) fn snapshot(&self) -> EditorSnapshot {
         EditorSnapshot {
-            amplitude_curve: self.amplitude_curve.clone(),
-            pitch_curve: self.pitch_curve.clone(),
-            active_curve: self.active_curve,
-            tuning_standard: self.tuning_standard,
-            keytrack_enabled: self.keytrack_enabled,
-            kick_oscillator_waveform: self.kick_oscillator_waveform,
-            kick_retrigger: self.kick_retrigger,
-            kick_legato_voice_steal: self.kick_legato_voice_steal,
-            kick_pitch_hz: self.kick_pitch_hz,
-            note_length_ms: self.note_length_ms,
-            note_length_max_ms: self.note_length_max_ms,
-            waveform_zoom_percent: self.waveform_zoom_percent,
+            core: CorePatchData {
+                amplitude_curve: self.amplitude_curve.clone(),
+                pitch_curve: self.pitch_curve.clone(),
+                active_curve: self.active_curve,
+                tuning_standard: self.tuning_standard,
+                keytrack_enabled: self.keytrack_enabled,
+                kick_oscillator_waveform: self.kick_oscillator_waveform,
+                kick_retrigger: self.kick_retrigger,
+                kick_legato_voice_steal: self.kick_legato_voice_steal,
+                kick_pitch_hz: self.kick_pitch_hz,
+                note_length_ms: self.note_length_ms,
+                note_length_max_ms: self.note_length_max_ms,
+                waveform_zoom_percent: self.waveform_zoom_percent,
+                bass_amp_curve: self.bass_amp_curve.clone(),
+                bass_filter_curve: self.bass_filter_curve.clone(),
+                bass_oscillator_waveform: self.bass_oscillator_waveform,
+                bass_retrigger: self.bass_retrigger,
+                bass_legato_voice_steal: self.bass_legato_voice_steal,
+                bass_note_length_ms: self.bass_note_length_ms,
+                bass_pitch_hz: self.bass_pitch_hz,
+                bass_cutoff_hz: self.bass_cutoff_hz,
+                bass_filter_mode: self.bass_filter_mode,
+            },
             selected_point: self.selected_point,
-            bass_amp_curve: self.bass_amp_curve.clone(),
-            bass_filter_curve: self.bass_filter_curve.clone(),
-            bass_oscillator_waveform: self.bass_oscillator_waveform,
-            bass_retrigger: self.bass_retrigger,
-            bass_legato_voice_steal: self.bass_legato_voice_steal,
-            bass_note_length_ms: self.bass_note_length_ms,
-            bass_pitch_hz: self.bass_pitch_hz,
-            bass_cutoff_hz: self.bass_cutoff_hz,
-            bass_filter_mode: self.bass_filter_mode,
             bass_amp_selected_point: self.bass_amp_selected_point,
             bass_filter_selected_point: self.bass_filter_selected_point,
         }
     }
 
     fn apply_snapshot(&mut self, snapshot: EditorSnapshot) {
-        self.amplitude_curve = snapshot.amplitude_curve;
-        self.pitch_curve = snapshot.pitch_curve;
-        self.active_curve = snapshot.active_curve;
-        self.tuning_standard = snapshot.tuning_standard;
-        self.keytrack_enabled = snapshot.keytrack_enabled;
-        self.kick_oscillator_waveform = snapshot.kick_oscillator_waveform;
-        self.kick_retrigger = snapshot.kick_retrigger;
-        self.kick_legato_voice_steal = snapshot.kick_legato_voice_steal;
-        self.kick_pitch_hz = snapshot.kick_pitch_hz;
-        self.note_length_ms = snapshot.note_length_ms;
-        self.note_length_max_ms = snapshot.note_length_max_ms;
-        self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
+        self.amplitude_curve = snapshot.core.amplitude_curve;
+        self.pitch_curve = snapshot.core.pitch_curve;
+        self.active_curve = snapshot.core.active_curve;
+        self.tuning_standard = snapshot.core.tuning_standard;
+        self.keytrack_enabled = snapshot.core.keytrack_enabled;
+        self.kick_oscillator_waveform = snapshot.core.kick_oscillator_waveform;
+        self.kick_retrigger = snapshot.core.kick_retrigger;
+        self.kick_legato_voice_steal = snapshot.core.kick_legato_voice_steal;
+        self.kick_pitch_hz = snapshot.core.kick_pitch_hz;
+        self.note_length_ms = snapshot.core.note_length_ms;
+        self.note_length_max_ms = snapshot.core.note_length_max_ms;
+        self.waveform_zoom_percent = snapshot.core.waveform_zoom_percent;
         self.selected_point = snapshot.selected_point;
-        self.bass_amp_curve = snapshot.bass_amp_curve;
-        self.bass_filter_curve = snapshot.bass_filter_curve;
-        self.bass_oscillator_waveform = snapshot.bass_oscillator_waveform;
-        self.bass_retrigger = snapshot.bass_retrigger;
-        self.bass_legato_voice_steal = snapshot.bass_legato_voice_steal;
-        self.bass_note_length_ms = snapshot.bass_note_length_ms;
-        self.bass_pitch_hz = snapshot.bass_pitch_hz;
-        self.bass_cutoff_hz = snapshot.bass_cutoff_hz;
-        self.bass_filter_mode = snapshot.bass_filter_mode;
+        self.bass_amp_curve = snapshot.core.bass_amp_curve;
+        self.bass_filter_curve = snapshot.core.bass_filter_curve;
+        self.bass_oscillator_waveform = snapshot.core.bass_oscillator_waveform;
+        self.bass_retrigger = snapshot.core.bass_retrigger;
+        self.bass_legato_voice_steal = snapshot.core.bass_legato_voice_steal;
+        self.bass_note_length_ms = snapshot.core.bass_note_length_ms;
+        self.bass_pitch_hz = snapshot.core.bass_pitch_hz;
+        self.bass_cutoff_hz = snapshot.core.bass_cutoff_hz;
+        self.bass_filter_mode = snapshot.core.bass_filter_mode;
         self.bass_amp_selected_point = snapshot.bass_amp_selected_point;
         self.bass_filter_selected_point = snapshot.bass_filter_selected_point;
     }
@@ -437,27 +429,29 @@ impl BezierUiState {
 
     fn patch_snapshot(&self) -> PatchSnapshot {
         PatchSnapshot {
-            amplitude_curve: self.amplitude_curve.clone(),
-            pitch_curve: self.pitch_curve.clone(),
-            active_curve: self.active_curve,
-            tuning_standard: self.tuning_standard,
-            keytrack_enabled: self.keytrack_enabled,
-            kick_oscillator_waveform: self.kick_oscillator_waveform,
-            kick_retrigger: self.kick_retrigger,
-            kick_legato_voice_steal: self.kick_legato_voice_steal,
-            kick_pitch_hz: self.kick_pitch_hz,
-            note_length_ms: self.note_length_ms,
-            note_length_max_ms: self.note_length_max_ms,
-            waveform_zoom_percent: self.waveform_zoom_percent,
-            bass_amp_curve: self.bass_amp_curve.clone(),
-            bass_filter_curve: self.bass_filter_curve.clone(),
-            bass_oscillator_waveform: self.bass_oscillator_waveform,
-            bass_retrigger: self.bass_retrigger,
-            bass_legato_voice_steal: self.bass_legato_voice_steal,
-            bass_note_length_ms: self.bass_note_length_ms,
-            bass_pitch_hz: self.bass_pitch_hz,
-            bass_cutoff_hz: self.bass_cutoff_hz,
-            bass_filter_mode: self.bass_filter_mode,
+            core: CorePatchData {
+                amplitude_curve: self.amplitude_curve.clone(),
+                pitch_curve: self.pitch_curve.clone(),
+                active_curve: self.active_curve,
+                tuning_standard: self.tuning_standard,
+                keytrack_enabled: self.keytrack_enabled,
+                kick_oscillator_waveform: self.kick_oscillator_waveform,
+                kick_retrigger: self.kick_retrigger,
+                kick_legato_voice_steal: self.kick_legato_voice_steal,
+                kick_pitch_hz: self.kick_pitch_hz,
+                note_length_ms: self.note_length_ms,
+                note_length_max_ms: self.note_length_max_ms,
+                waveform_zoom_percent: self.waveform_zoom_percent,
+                bass_amp_curve: self.bass_amp_curve.clone(),
+                bass_filter_curve: self.bass_filter_curve.clone(),
+                bass_oscillator_waveform: self.bass_oscillator_waveform,
+                bass_retrigger: self.bass_retrigger,
+                bass_legato_voice_steal: self.bass_legato_voice_steal,
+                bass_note_length_ms: self.bass_note_length_ms,
+                bass_pitch_hz: self.bass_pitch_hz,
+                bass_cutoff_hz: self.bass_cutoff_hz,
+                bass_filter_mode: self.bass_filter_mode,
+            },
             kick_level: self.kick_level,
             bass_level: self.bass_level,
             description: self.patch_description.clone(),
