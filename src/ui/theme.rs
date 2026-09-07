@@ -93,6 +93,11 @@ impl Theme {
         Color32::BLACK
     }
 
+    /// Off-white concentric ring drawn around node dots.
+    pub(crate) fn node_ring(self) -> Color32 {
+        Color32::from_rgb(228, 230, 224)
+    }
+
     pub(crate) fn bubble_bg(self) -> Color32 {
         Color32::from_rgba_unmultiplied(24, 28, 33, 220)
     }

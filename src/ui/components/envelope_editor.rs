@@ -86,7 +86,7 @@ pub(crate) fn render(
         let mut point_dragging_this_frame = false;
         for i in 0..points.len() {
             let screen = to_screen(points[i]);
-            let hit_rect = Rect::from_center_size(screen, Vec2::splat(24.0));
+            let hit_rect = Rect::from_center_size(screen, Vec2::splat(30.0));
             let point_response = ui.interact(
                 hit_rect,
                 ui.make_persistent_id((id_prefix, title, i)),
@@ -119,6 +119,7 @@ pub(crate) fn render(
             };
             painter.circle_filled(screen, 4.5, color);
             painter.circle_stroke(screen, 5.5, Stroke::new(1.0, Color32::BLACK));
+            painter.circle_stroke(screen, 9.5, Stroke::new(1.5, APP_THEME.node_ring()));
         }
 
         if let Some(idx) = remove_index {

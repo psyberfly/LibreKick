@@ -983,11 +983,12 @@ pub(crate) fn render_editor(
             };
             painter.circle_filled(*point, 6.0, color);
             painter.circle_stroke(*point, 7.0, Stroke::new(1.0, APP_THEME.point_outline()));
+            painter.circle_stroke(*point, 10.5, Stroke::new(1.5, APP_THEME.node_ring()));
 
             if shift_down && shift_snap_candidate == Some(i) {
                 painter.circle_stroke(
                     *point,
-                    11.0,
+                    14.0,
                     Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 72, 72, 180)),
                 );
             }
@@ -995,7 +996,7 @@ pub(crate) fn render_editor(
             if shift_down && state.shift_locked_point == Some(i) {
                 painter.circle_stroke(
                     *point,
-                    12.0,
+                    15.0,
                     Stroke::new(2.0, ui_theme::accent_color()),
                 );
                 let cross_len = 8.0;
