@@ -5,7 +5,7 @@ use nih_plug::prelude::ParamSetter;
 use crate::ui::{
     components::{envelope_editor, oscillator_panel, panel, waveform_preview},
     helpers::{axis_x_label, effective_waveform_zoom, waveform_preview_points},
-    state::BezierUiState,
+    state::{BezierUiState, EditorSnapshot},
     theme::{themed_font, APP_THEME},
 };
 use crate::{shared, LibreKickParams};
@@ -19,6 +19,7 @@ pub(crate) fn render(
     shared_for_ui: &shared::SharedStateHandle,
     params: &LibreKickParams,
     setter: &ParamSetter,
+    snapshot_before: &EditorSnapshot,
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Bass");
@@ -29,6 +30,7 @@ pub(crate) fn render(
     );
     ui.separator();
 
+    let mut envelope_drag_active = false;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -48,7 +50,7 @@ pub(crate) fn render(
             );
 
             ui.add_space(8.0 * ui_scale);
-            envelope_editor::render(
+            envelope_drag_active |= envelope_editor::render(
                 ui,
                 ui_scale,
                 "bass-amp-envelope",
@@ -91,7 +93,7 @@ pub(crate) fn render(
             }
 
             ui.add_space(8.0 * ui_scale);
-            envelope_editor::render(
+            envelope_drag_active |= envelope_editor::render(
                 ui,
                 ui_scale,
                 "bass-filter-envelope",
@@ -181,4 +183,9 @@ pub(crate) fn render(
         Color32::from_rgb(185, 191, 198),
     );
         });
+
+    // Stash the pre-drag state so an envelope drag becomes a single undo entry.
+    if envelope_drag_active && state.point_drag_snapshot.is_none() {
+        state.point_drag_snapshot = Some(snapshot_before.clone());
+    }
 }

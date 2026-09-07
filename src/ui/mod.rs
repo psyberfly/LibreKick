@@ -86,7 +86,7 @@ pub fn create_testing_editor(
                 let app_cfg = config::app_config();
                 apply_widget_style(ui, ui_scale);
                 apply_ui_text_scale(ui, ui_scale);
-                components::scaffold::render(ui, ui_scale, state, &params, setter, |ui, state| {
+                components::scaffold::render(ui, ui_scale, state, &params, setter, &mut history_action_applied, |ui, state| {
                 if state.active_page == UiPage::Kick {
                 pages::kick::render(ui, |ui| {
                 pages::kick::render_controls(
@@ -97,7 +97,6 @@ pub fn create_testing_editor(
                     &shared_for_ui,
                     &params,
                     setter,
-                    &mut history_action_applied,
                 );
                 pages::kick::render_editor(
                     ui,
@@ -106,13 +105,12 @@ pub fn create_testing_editor(
                     app_cfg,
                     &shared_for_ui,
                     &snapshot_before,
-                    &mut history_action_applied,
                     cut_shortcut,
                     delete_shortcut,
                 );
                 });
                 } else if state.active_page == UiPage::Bass {
-                    pages::bass::render(ui, ui_scale, state, &shared_for_ui, &params, setter);
+                    pages::bass::render(ui, ui_scale, state, &shared_for_ui, &params, setter, &snapshot_before);
                 } else if state.active_page == UiPage::Settings {
                     pages::settings::render(ui, ui_scale, state);
                 } else if state.active_page == UiPage::Oscilloscope {
@@ -121,6 +119,23 @@ pub fn create_testing_editor(
                     pages::logs::render(ui, ui_scale, state);
                 }
                 });
+
+                // A finished drag pushes its pre-drag snapshot as one undo entry.
+                let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
+                if !pointer_primary_down {
+                    if let Some(drag_start_snapshot) = state.point_drag_snapshot.take() {
+                        state.push_undo_snapshot(drag_start_snapshot);
+                    }
+                }
+
+                // Undo/redo and patch loads already committed history and changed
+                // DSP-visible state, so re-sync. Otherwise auto-commit any edits
+                // made this frame (covers both kick and bass pages).
+                if history_action_applied {
+                    state.sync_to_shared(&shared_for_ui);
+                } else if state.point_drag_snapshot.is_none() {
+                    state.commit_history_if_changed(&snapshot_before);
+                }
             });
         },
     )

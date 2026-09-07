@@ -7,16 +7,23 @@ use crate::ui::state::BezierUiState;
 use crate::ui::theme::{apply_ui_text_scale, APP_THEME};
 
 /// Renders the top menu bar shown on every page: brand logo, version,
-/// help button, and the patch selector.
+/// help button, undo/redo, and the patch selector.
+///
+/// `page_width` is the width of the page-content column below; the undo/redo
+/// buttons are right-aligned to that edge so they sit at the end of the page
+/// content rather than above the nav menu.
 pub(crate) fn render(
     ui: &mut egui::Ui,
     ui_scale: f32,
     state: &mut BezierUiState,
     params: &LibreKickParams,
     setter: &ParamSetter,
+    page_width: f32,
+    history_action_applied: &mut bool,
 ) {
     ui.add_space(6.0 * ui_scale);
     ui.horizontal(|ui| {
+        let row_left = ui.max_rect().left();
         brand::brand_title_logo(ui, state.brand_logo.as_ref(), ui_scale);
         ui.add_space(6.0 * ui_scale);
         ui.label(
@@ -25,11 +32,40 @@ pub(crate) fn render(
                 .color(APP_THEME.axis_title()),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            // Right-align the control group to the page-content right edge.
+            let page_right = row_left + page_width;
+            let pad = (ui.available_rect_before_wrap().right() - page_right).max(0.0);
+            ui.add_space(pad);
+
+            let button_size = egui::Vec2::splat(30.0 * ui_scale);
             if ui
-                .add(egui::Button::new("?").min_size(egui::Vec2::new(18.0 * ui_scale, 18.0 * ui_scale)))
+                .add(egui::Button::new("?").min_size(button_size))
                 .clicked()
             {
                 state.show_help_popup = true;
+            }
+
+            ui.add_space(10.0 * ui_scale);
+
+            let redo_clicked = ui
+                .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">").min_size(button_size))
+                .on_hover_ui(|ui| {
+                    apply_ui_text_scale(ui, ui_scale);
+                    ui.label("Redo (Ctrl/Cmd + Y)");
+                })
+                .clicked();
+            let undo_clicked = ui
+                .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<").min_size(button_size))
+                .on_hover_ui(|ui| {
+                    apply_ui_text_scale(ui, ui_scale);
+                    ui.label("Undo (Ctrl/Cmd + Z)");
+                })
+                .clicked();
+            if redo_clicked {
+                *history_action_applied |= state.redo();
+            }
+            if undo_clicked {
+                *history_action_applied |= state.undo();
             }
 
             ui.vertical(|ui| {
@@ -63,6 +99,7 @@ pub(crate) fn render(
                                         }
                                         state.mark_patch_clean(patch_name.clone());
                                         state.commit_history_if_changed(&before);
+                                        *history_action_applied = true;
                                         state.patch_status = Some(format!("Loaded patch: {patch_name}"));
                                         ui.close_menu();
                                     }

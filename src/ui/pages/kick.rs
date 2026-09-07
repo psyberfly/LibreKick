@@ -34,7 +34,6 @@ pub(crate) fn render_controls(
     shared_for_ui: &shared::SharedStateHandle,
     params: &LibreKickParams,
     setter: &ParamSetter,
-    history_action_applied: &mut bool,
 ) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Kick");
@@ -110,30 +109,6 @@ pub(crate) fn render_controls(
                 );
         }
 
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(10.0 * ui_scale);
-            let redo_clicked = ui
-                .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">"))
-                .on_hover_ui(|ui| {
-                    apply_ui_text_scale(ui, ui_scale);
-                    ui.label("Redo (Ctrl/Cmd + Y)");
-                })
-                .clicked();
-            let undo_clicked = ui
-                .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<"))
-                .on_hover_ui(|ui| {
-                    apply_ui_text_scale(ui, ui_scale);
-                    ui.label("Undo (Ctrl/Cmd + Z)");
-                })
-                .clicked();
-            if redo_clicked {
-                *history_action_applied |= state.redo();
-            }
-            if undo_clicked {
-                *history_action_applied |= state.undo();
-            }
-        });
-        ui.add_space(8.0);
     });
     ui.add_space(8.0);
 }
@@ -149,7 +124,6 @@ pub(crate) fn render_editor(
     app_cfg: &config::AppConfig,
     shared_for_ui: &shared::SharedStateHandle,
     snapshot_before: &EditorSnapshot,
-    history_action_applied: &mut bool,
     cut_shortcut: bool,
     delete_shortcut: bool,
 ) {
@@ -1076,15 +1050,5 @@ pub(crate) fn render_editor(
         });
     if point_dragging_this_frame && state.point_drag_snapshot.is_none() {
         state.point_drag_snapshot = Some(snapshot_before.clone());
-    }
-    let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
-    if !point_dragging_this_frame && !pointer_primary_down {
-        if let Some(drag_start_snapshot) = state.point_drag_snapshot.take() {
-            state.push_undo_snapshot(drag_start_snapshot);
-        }
-    }
-
-    if !*history_action_applied && state.point_drag_snapshot.is_none() {
-        state.commit_history_if_changed(snapshot_before);
     }
 }

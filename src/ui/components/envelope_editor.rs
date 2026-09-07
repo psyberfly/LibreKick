@@ -13,8 +13,12 @@ pub(crate) fn render(
     title: &str,
     curve: &mut Curve,
     selected_point: &mut Option<usize>,
-) {
+) -> bool {
     const EDGE_BEND_HIT_RADIUS_PIXELS: f32 = 14.0;
+
+    // Reports whether a point/bend drag gesture happened this frame so the
+    // caller can stash a pre-drag snapshot for undo history.
+    let mut drag_active = false;
 
     ui.group(|ui| {
         ui.label(title);
@@ -83,7 +87,6 @@ pub(crate) fn render(
         }
 
         let mut remove_index: Option<usize> = None;
-        let mut point_dragging_this_frame = false;
         for i in 0..points.len() {
             let screen = to_screen(points[i]);
             let hit_rect = Rect::from_center_size(screen, Vec2::splat(30.0));
@@ -108,7 +111,7 @@ pub(crate) fn render(
                     points[i] = next;
                     constrain_curve_points(points);
                     *selected_point = Some(i);
-                    point_dragging_this_frame = true;
+                    drag_active = true;
                 }
             }
 
@@ -226,7 +229,7 @@ pub(crate) fn render(
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
 
                     if pointer_primary_down
-                        && !point_dragging_this_frame
+                        && !drag_active
                         && drag_segment.is_none()
                     {
                         drag_segment = Some(seg_idx);
@@ -267,6 +270,7 @@ pub(crate) fn render(
                         )));
                     }
                     bend_hover_polyline = hover_polyline;
+                    drag_active = true;
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
                 }
             }
@@ -321,4 +325,6 @@ pub(crate) fn render(
             );
         }
     });
+
+    drag_active
 }

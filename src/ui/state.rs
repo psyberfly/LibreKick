@@ -60,6 +60,18 @@ pub(super) struct EditorSnapshot {
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
     pub(super) selected_point: Option<usize>,
+    // Bass instrument fields so undo/redo covers both instruments.
+    pub(super) bass_amp_curve: Curve,
+    pub(super) bass_filter_curve: Curve,
+    pub(super) bass_oscillator_waveform: shared::Waveform,
+    pub(super) bass_retrigger: bool,
+    pub(super) bass_legato_voice_steal: bool,
+    pub(super) bass_note_length_ms: f32,
+    pub(super) bass_pitch_hz: f32,
+    pub(super) bass_cutoff_hz: f32,
+    pub(super) bass_filter_mode: shared::BassFilterMode,
+    pub(super) bass_amp_selected_point: Option<usize>,
+    pub(super) bass_filter_selected_point: Option<usize>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -333,6 +345,17 @@ impl BezierUiState {
             note_length_max_ms: self.note_length_max_ms,
             waveform_zoom_percent: self.waveform_zoom_percent,
             selected_point: self.selected_point,
+            bass_amp_curve: self.bass_amp_curve.clone(),
+            bass_filter_curve: self.bass_filter_curve.clone(),
+            bass_oscillator_waveform: self.bass_oscillator_waveform,
+            bass_retrigger: self.bass_retrigger,
+            bass_legato_voice_steal: self.bass_legato_voice_steal,
+            bass_note_length_ms: self.bass_note_length_ms,
+            bass_pitch_hz: self.bass_pitch_hz,
+            bass_cutoff_hz: self.bass_cutoff_hz,
+            bass_filter_mode: self.bass_filter_mode,
+            bass_amp_selected_point: self.bass_amp_selected_point,
+            bass_filter_selected_point: self.bass_filter_selected_point,
         }
     }
 
@@ -350,6 +373,17 @@ impl BezierUiState {
         self.note_length_max_ms = snapshot.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.waveform_zoom_percent;
         self.selected_point = snapshot.selected_point;
+        self.bass_amp_curve = snapshot.bass_amp_curve;
+        self.bass_filter_curve = snapshot.bass_filter_curve;
+        self.bass_oscillator_waveform = snapshot.bass_oscillator_waveform;
+        self.bass_retrigger = snapshot.bass_retrigger;
+        self.bass_legato_voice_steal = snapshot.bass_legato_voice_steal;
+        self.bass_note_length_ms = snapshot.bass_note_length_ms;
+        self.bass_pitch_hz = snapshot.bass_pitch_hz;
+        self.bass_cutoff_hz = snapshot.bass_cutoff_hz;
+        self.bass_filter_mode = snapshot.bass_filter_mode;
+        self.bass_amp_selected_point = snapshot.bass_amp_selected_point;
+        self.bass_filter_selected_point = snapshot.bass_filter_selected_point;
     }
 
     pub(super) fn commit_history_if_changed(&mut self, before: &EditorSnapshot) {
