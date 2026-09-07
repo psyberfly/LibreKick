@@ -1,4 +1,4 @@
-use nih_plug_egui::egui::{self, Align2, Color32, Pos2, RichText, Sense, Stroke, Vec2};
+use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Sense, Stroke, Vec2};
 
 use nih_plug::prelude::ParamSetter;
 
@@ -46,8 +46,7 @@ pub(crate) fn render(
             );
 
             ui.add_space(8.0 * ui_scale);
-            ui.checkbox(&mut state.bass_keytrack_enabled, "Keytrack (C0-C1)");
-            ui.label(RichText::new("Play C0-C1 to shift bass note by semitones").small().italics());
+            ui.checkbox(&mut state.bass_keytrack_enabled, "Keytrack");
 
             ui.add_space(8.0 * ui_scale);
             envelope_drag_active |= envelope_editor::render(
