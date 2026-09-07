@@ -22,7 +22,7 @@ pub(crate) struct LibreKickParams {
     #[id = "trigger"]
     pub trigger: BoolParam,
 
-    #[id = "level"]
+    #[id = "kick_level"]
     pub kick_level: FloatParam,
 
     #[id = "bass_level"]
@@ -36,7 +36,7 @@ impl Default for LibreKickParams {
     fn default() -> Self {
         let ui_cfg = config::ui_config();
         Self {
-            trigger: BoolParam::new("Trigger", false),
+            trigger: BoolParam::new("Trigger", false).hide(),
             kick_level: FloatParam::new(
                 "K Level",
                 0.8,
