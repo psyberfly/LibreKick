@@ -45,11 +45,6 @@ pub fn set_kick_phase_deg(shared: &SharedStateHandle, phase_deg: f32) {
     }
 }
 
-pub fn set_bass_phase_deg(shared: &SharedStateHandle, phase_deg: f32) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_phase_deg = phase_deg.clamp(0.0, 360.0);
-    }
-}
 
 /// Maximum number of arrange notes synced to the audio thread.
 pub const ARRANGE_MAX_NOTES: usize = 256;
@@ -57,10 +52,12 @@ pub const ARRANGE_MAX_NOTES: usize = 256;
 /// An arrange-page note synced to the audio thread.
 /// `row`: 0-11 = bass semitones (B at top .. C at bottom), 12 = kick lane.
 /// `bar_pos`: position in bars (fractional).
+/// `slot`: which bass note slot plays it (0 = Note 1, 1 = Note 2).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ArrangeNoteData {
     pub row: u8,
     pub bar_pos: f32,
+    pub slot: u8,
 }
 
 pub fn set_arrange_override(shared: &SharedStateHandle, enabled: bool) {
@@ -70,10 +67,10 @@ pub fn set_arrange_override(shared: &SharedStateHandle, enabled: bool) {
 }
 
 /// Syncs the arrange pattern and its timing settings to the audio thread.
-/// `notes` are (row, bar_pos) pairs; at most `ARRANGE_MAX_NOTES` are kept.
+/// `notes` are (row, bar_pos, slot) triples; at most `ARRANGE_MAX_NOTES` are kept.
 pub fn set_arrange_pattern(
     shared: &SharedStateHandle,
-    notes: &[(usize, f32)],
+    notes: &[(usize, f32, u8)],
     num_bars: f32,
     note_len_bars: f32,
     manual_tempo: f32,
@@ -81,11 +78,13 @@ pub fn set_arrange_pattern(
 ) {
     if let Ok(mut state) = shared.lock() {
         let count = notes.len().min(ARRANGE_MAX_NOTES);
-        for (slot, &(row, bar_pos)) in state.arrange_notes.iter_mut().zip(notes.iter()).take(count)
+        for (entry, &(row, bar_pos, slot)) in
+            state.arrange_notes.iter_mut().zip(notes.iter()).take(count)
         {
-            *slot = ArrangeNoteData {
+            *entry = ArrangeNoteData {
                 row: row.min(12) as u8,
                 bar_pos,
+                slot: slot.min(BASS_SLOT_COUNT as u8 - 1),
             };
         }
         state.arrange_note_count = count;
@@ -126,15 +125,51 @@ pub struct OscilloscopeSnapshot {
     pub sequence: u64,
 }
 
-pub fn set_bass_amp_lut(shared: &SharedStateHandle, lut: [f32; CURVE_LUT_SIZE]) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_amp_lut = lut;
+/// Number of bass note slots (Note 1, Note 2, ...).
+pub const BASS_SLOT_COUNT: usize = 2;
+
+/// All per-slot bass settings shared with the DSP thread.
+#[derive(Clone)]
+pub struct BassSlotParams {
+    pub amp_lut: [f32; CURVE_LUT_SIZE],
+    pub filter_lut: [f32; CURVE_LUT_SIZE],
+    pub note_length_ms: f32,
+    pub cutoff_hz: f32,
+    pub filter_mode: BassFilterMode,
+    pub pitch_hz: f32,
+    pub retrigger: bool,
+    pub legato_voice_steal: bool,
+    pub oscillator_waveform: Waveform,
+    pub keytrack_enabled: bool,
+    /// Oscillator start phase in degrees (0-360), applied on retrigger.
+    pub phase_deg: f32,
+}
+
+impl Default for BassSlotParams {
+    fn default() -> Self {
+        let app_cfg = config::app_config();
+        Self {
+            amp_lut: [0.0; CURVE_LUT_SIZE],
+            filter_lut: [0.0; CURVE_LUT_SIZE],
+            note_length_ms: app_cfg.note_length_max_ms,
+            cutoff_hz: 120.0,
+            filter_mode: BassFilterMode::LowPass,
+            pitch_hz: 55.0,
+            retrigger: true,
+            legato_voice_steal: false,
+            oscillator_waveform: Waveform::Saw,
+            keytrack_enabled: false,
+            phase_deg: 0.0,
+        }
     }
 }
 
-pub fn set_bass_filter_lut(shared: &SharedStateHandle, lut: [f32; CURVE_LUT_SIZE]) {
+/// Writes one bass slot's settings (index 0 = Note 1, 1 = Note 2).
+pub fn set_bass_slot(shared: &SharedStateHandle, index: usize, params: BassSlotParams) {
     if let Ok(mut state) = shared.lock() {
-        state.bass_filter_lut = lut;
+        if let Some(slot) = state.bass.get_mut(index) {
+            *slot = params;
+        }
     }
 }
 
@@ -142,8 +177,8 @@ pub fn set_bass_filter_lut(shared: &SharedStateHandle, lut: [f32; CURVE_LUT_SIZE
 pub struct SharedSnapshot {
     pub amp_lut: [f32; CURVE_LUT_SIZE],
     pub pitch_lut: [f32; CURVE_LUT_SIZE],
-    pub bass_amp_lut: [f32; CURVE_LUT_SIZE],
-    pub bass_filter_lut: [f32; CURVE_LUT_SIZE],
+    /// Bass settings per note slot (index 0 = Note 1, 1 = Note 2).
+    pub bass: [BassSlotParams; BASS_SLOT_COUNT],
     pub keytrack_enabled: bool,
     pub note_length_ms: f32,
     pub kick_oscillator_waveform: Waveform,
@@ -152,16 +187,6 @@ pub struct SharedSnapshot {
     pub kick_pitch_hz: f32,
     /// Oscillator start phase in degrees (0-360), applied on retrigger.
     pub kick_phase_deg: f32,
-    pub bass_note_length_ms: f32,
-    pub bass_cutoff_hz: f32,
-    pub bass_pitch_hz: f32,
-    pub bass_retrigger: bool,
-    pub bass_legato_voice_steal: bool,
-    pub bass_filter_mode: BassFilterMode,
-    pub bass_oscillator_waveform: Waveform,
-    pub bass_keytrack_enabled: bool,
-    /// Bass oscillator start phase in degrees (0-360), applied on retrigger.
-    pub bass_phase_deg: f32,
     /// When true, the internal arrange pattern plays while any DAW note is
     /// held, instead of routing DAW MIDI directly to the voices.
     pub arrange_override: bool,
@@ -179,8 +204,7 @@ pub struct SharedSnapshot {
 pub(crate) struct SharedState {
     amp_lut: [f32; CURVE_LUT_SIZE],
     pitch_lut: [f32; CURVE_LUT_SIZE],
-    bass_amp_lut: [f32; CURVE_LUT_SIZE],
-    bass_filter_lut: [f32; CURVE_LUT_SIZE],
+    bass: [BassSlotParams; BASS_SLOT_COUNT],
     keytrack_enabled: bool,
     note_length_ms: f32,
     kick_oscillator_waveform: Waveform,
@@ -188,15 +212,6 @@ pub(crate) struct SharedState {
     kick_legato_voice_steal: bool,
     kick_pitch_hz: f32,
     kick_phase_deg: f32,
-    bass_note_length_ms: f32,
-    bass_cutoff_hz: f32,
-    bass_pitch_hz: f32,
-    bass_retrigger: bool,
-    bass_legato_voice_steal: bool,
-    bass_filter_mode: BassFilterMode,
-    bass_oscillator_waveform: Waveform,
-    bass_keytrack_enabled: bool,
-    bass_phase_deg: f32,
     arrange_override: bool,
     arrange_notes: [ArrangeNoteData; ARRANGE_MAX_NOTES],
     arrange_note_count: usize,
@@ -219,8 +234,7 @@ impl Default for SharedState {
         Self {
             amp_lut: [0.0; CURVE_LUT_SIZE],
             pitch_lut: [0.0; CURVE_LUT_SIZE],
-            bass_amp_lut: [0.0; CURVE_LUT_SIZE],
-            bass_filter_lut: [0.0; CURVE_LUT_SIZE],
+            bass: [BassSlotParams::default(), BassSlotParams::default()],
             keytrack_enabled: false,
             note_length_ms: app_cfg.note_length_max_ms,
             kick_oscillator_waveform: Waveform::Sine,
@@ -228,15 +242,6 @@ impl Default for SharedState {
             kick_legato_voice_steal: true,
             kick_pitch_hz: 55.0,
             kick_phase_deg: 0.0,
-            bass_note_length_ms: app_cfg.note_length_max_ms,
-            bass_cutoff_hz: 120.0,
-            bass_pitch_hz: 55.0,
-            bass_retrigger: true,
-            bass_legato_voice_steal: false,
-            bass_filter_mode: BassFilterMode::LowPass,
-            bass_oscillator_waveform: Waveform::Saw,
-            bass_keytrack_enabled: false,
-            bass_phase_deg: 0.0,
             arrange_override: false,
             arrange_notes: [ArrangeNoteData::default(); ARRANGE_MAX_NOTES],
             arrange_note_count: 0,
@@ -264,8 +269,10 @@ pub fn new_shared_state() -> SharedStateHandle {
         let t = i as f32 / (CURVE_LUT_SIZE as f32 - 1.0);
         state.amp_lut[i] = (1.0 - t).clamp(0.0, 1.0);
         state.pitch_lut[i] = (1.0 - t).clamp(0.0, 1.0);
-        state.bass_amp_lut[i] = (1.0 - t).clamp(0.0, 1.0);
-        state.bass_filter_lut[i] = t.clamp(0.0, 1.0);
+        for slot in state.bass.iter_mut() {
+            slot.amp_lut[i] = (1.0 - t).clamp(0.0, 1.0);
+            slot.filter_lut[i] = t.clamp(0.0, 1.0);
+        }
     }
 
     Arc::new(Mutex::new(state))
@@ -301,57 +308,6 @@ pub fn set_note_length_ms(shared: &SharedStateHandle, note_length_ms: f32) {
     let app_cfg = config::app_config();
     if let Ok(mut state) = shared.lock() {
         state.note_length_ms = note_length_ms.clamp(0.0, app_cfg.note_length_max_ms);
-    }
-}
-
-pub fn set_bass_note_length_ms(shared: &SharedStateHandle, note_length_ms: f32) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_note_length_ms = note_length_ms.clamp(1.0, 1000.0);
-    }
-}
-
-pub fn set_bass_cutoff_hz(shared: &SharedStateHandle, cutoff_hz: f32) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_cutoff_hz = cutoff_hz.clamp(20.0, 8_000.0);
-    }
-}
-
-pub fn set_bass_filter_mode(shared: &SharedStateHandle, mode: BassFilterMode) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_filter_mode = mode;
-    }
-}
-
-pub fn set_bass_pitch_hz(shared: &SharedStateHandle, pitch_hz: f32) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_pitch_hz = pitch_hz.clamp(20.0, 2_000.0);
-    }
-}
-
-pub fn set_bass_retrigger(shared: &SharedStateHandle, bass_retrigger: bool) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_retrigger = bass_retrigger;
-    }
-}
-
-pub fn set_bass_legato_voice_steal(
-    shared: &SharedStateHandle,
-    bass_legato_voice_steal: bool,
-) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_legato_voice_steal = bass_legato_voice_steal;
-    }
-}
-
-pub fn set_bass_oscillator_waveform(shared: &SharedStateHandle, waveform: Waveform) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_oscillator_waveform = waveform;
-    }
-}
-
-pub fn set_bass_keytrack_enabled(shared: &SharedStateHandle, enabled: bool) {
-    if let Ok(mut state) = shared.lock() {
-        state.bass_keytrack_enabled = enabled;
     }
 }
 
@@ -411,8 +367,7 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         return SharedSnapshot {
             amp_lut: state.amp_lut,
             pitch_lut: state.pitch_lut,
-            bass_amp_lut: state.bass_amp_lut,
-            bass_filter_lut: state.bass_filter_lut,
+            bass: state.bass.clone(),
             keytrack_enabled: state.keytrack_enabled,
             note_length_ms: state.note_length_ms,
             kick_oscillator_waveform: state.kick_oscillator_waveform,
@@ -420,15 +375,6 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             kick_legato_voice_steal: state.kick_legato_voice_steal,
             kick_pitch_hz: state.kick_pitch_hz,
             kick_phase_deg: state.kick_phase_deg,
-            bass_note_length_ms: state.bass_note_length_ms,
-            bass_cutoff_hz: state.bass_cutoff_hz,
-            bass_pitch_hz: state.bass_pitch_hz,
-            bass_retrigger: state.bass_retrigger,
-            bass_legato_voice_steal: state.bass_legato_voice_steal,
-            bass_filter_mode: state.bass_filter_mode,
-            bass_oscillator_waveform: state.bass_oscillator_waveform,
-            bass_keytrack_enabled: state.bass_keytrack_enabled,
-            bass_phase_deg: state.bass_phase_deg,
             arrange_override: state.arrange_override,
             arrange_notes: state.arrange_notes,
             arrange_note_count: state.arrange_note_count,
@@ -443,21 +389,21 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
 
     let mut amp_lut = [0.0; CURVE_LUT_SIZE];
     let mut pitch_lut = [0.0; CURVE_LUT_SIZE];
-    let mut bass_amp_lut = [0.0; CURVE_LUT_SIZE];
-    let mut bass_filter_lut = [0.0; CURVE_LUT_SIZE];
+    let mut bass = [BassSlotParams::default(), BassSlotParams::default()];
     for i in 0..CURVE_LUT_SIZE {
         let t = i as f32 / (CURVE_LUT_SIZE as f32 - 1.0);
         amp_lut[i] = 1.0 - t;
         pitch_lut[i] = 1.0 - t;
-        bass_amp_lut[i] = 1.0 - t;
-        bass_filter_lut[i] = t;
+        for slot in bass.iter_mut() {
+            slot.amp_lut[i] = 1.0 - t;
+            slot.filter_lut[i] = t;
+        }
     }
 
     SharedSnapshot {
         amp_lut,
         pitch_lut,
-        bass_amp_lut,
-        bass_filter_lut,
+        bass,
         keytrack_enabled: false,
         note_length_ms: app_cfg.note_length_max_ms,
         kick_oscillator_waveform: Waveform::Sine,
@@ -465,15 +411,6 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         kick_legato_voice_steal: true,
         kick_pitch_hz: 55.0,
         kick_phase_deg: 0.0,
-        bass_note_length_ms: app_cfg.note_length_max_ms,
-        bass_cutoff_hz: 120.0,
-        bass_pitch_hz: 55.0,
-        bass_retrigger: true,
-        bass_legato_voice_steal: false,
-        bass_filter_mode: BassFilterMode::LowPass,
-        bass_oscillator_waveform: Waveform::Saw,
-        bass_keytrack_enabled: false,
-        bass_phase_deg: 0.0,
         arrange_override: false,
         arrange_notes: [ArrangeNoteData::default(); ARRANGE_MAX_NOTES],
         arrange_note_count: 0,

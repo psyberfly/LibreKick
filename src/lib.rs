@@ -25,8 +25,11 @@ pub(crate) struct LibreKickParams {
     #[id = "kick_level"]
     pub kick_level: FloatParam,
 
-    #[id = "bass_level"]
-    pub bass_level: FloatParam,
+    #[id = "bass1_level"]
+    pub bass1_level: FloatParam,
+
+    #[id = "bass2_level"]
+    pub bass2_level: FloatParam,
 
     #[persist = "editor-state-v3"]
     editor_state: Arc<EguiState>,
@@ -42,8 +45,13 @@ impl Default for LibreKickParams {
                 0.8,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
-            bass_level: FloatParam::new(
-                "B Level",
+            bass1_level: FloatParam::new(
+                "B1 Level",
+                0.8,
+                FloatRange::Linear { min: 0.0, max: 1.0 },
+            ),
+            bass2_level: FloatParam::new(
+                "B2 Level",
                 0.8,
                 FloatRange::Linear { min: 0.0, max: 1.0 },
             ),
@@ -161,7 +169,10 @@ impl Plugin for LibreKick {
 
         let dsp_params = audio::KickDspParams {
             kick_level: self.params.kick_level.value(),
-            bass_level: self.params.bass_level.value(),
+            bass_levels: [
+                self.params.bass1_level.value(),
+                self.params.bass2_level.value(),
+            ],
             trigger_active: self.params.trigger.value(),
             midi_trigger: midi_input.trigger,
             midi_velocity: midi_input.velocity,

@@ -11,8 +11,9 @@ use super::{colors, BASS_NOTES, TOTAL_ROWS};
 /// (12 rows) on top and a single kick lane at the bottom.
 ///
 /// Interactions:
-/// - Double-click empty slot: add a note
-/// - Right-click a note: remove it
+/// - Double-click empty slot: add a note; double-click a note: remove it
+/// - Right-click a bass note: toggle between Note 1 (blue) and Note 2 (green)
+/// - Shift+right-click a note: remove it
 /// - Drag a note: move it (snapped to beat slots, no overlap)
 /// - Drag empty space: horizontal scroll
 pub(super) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState) {
@@ -358,11 +359,18 @@ fn handle_interactions(
     note_len_bars: f32,
     note_at: &impl Fn(Pos2, &[ArrangeNote]) -> Option<usize>,
 ) {
-    // Right-click removes a note
+    // Right-click toggles a bass note between Note 1 and Note 2;
+    // Shift+right-click removes a note.
     if response.secondary_clicked() {
         if let Some(pointer_pos) = response.interact_pointer_pos() {
             if let Some(index) = note_at(pointer_pos, &state.midi_notes) {
-                state.midi_notes.remove(index);
+                let shift = ui.input(|i| i.modifiers.shift);
+                if shift {
+                    state.midi_notes.remove(index);
+                } else if state.midi_notes[index].row < BASS_NOTES {
+                    let note = &mut state.midi_notes[index];
+                    note.slot = if note.slot == 0 { 1 } else { 0 };
+                }
             }
         }
     }
@@ -415,23 +423,26 @@ fn handle_interactions(
         state.dragging_note = None;
     }
 
-    // Double-click in grid area adds a note
+    // Double-click in grid area adds a note; on an existing note removes it
     if response.double_clicked() {
         if let Some(pointer_pos) = response.interact_pointer_pos() {
-            if grid_rect.contains(pointer_pos)
-                && note_at(pointer_pos, &state.midi_notes).is_none()
-            {
-                let row = ((pointer_pos.y - rect.top()) / row_height) as usize;
-                if row < TOTAL_ROWS {
-                    let bar_pos =
-                        scroll_offset + (pointer_pos.x - grid_rect.left()) / bar_width;
-                    // Snap to the note-size slot that was clicked
-                    let snapped = (bar_pos / note_len_bars).floor() * note_len_bars;
-                    if snapped >= 0.0 && snapped < total_bars {
-                        state.midi_notes.push(ArrangeNote {
-                            row,
-                            bar_pos: snapped,
-                        });
+            if grid_rect.contains(pointer_pos) {
+                if let Some(index) = note_at(pointer_pos, &state.midi_notes) {
+                    state.midi_notes.remove(index);
+                } else {
+                    let row = ((pointer_pos.y - rect.top()) / row_height) as usize;
+                    if row < TOTAL_ROWS {
+                        let bar_pos =
+                            scroll_offset + (pointer_pos.x - grid_rect.left()) / bar_width;
+                        // Snap to the note-size slot that was clicked
+                        let snapped = (bar_pos / note_len_bars).floor() * note_len_bars;
+                        if snapped >= 0.0 && snapped < total_bars {
+                            state.midi_notes.push(ArrangeNote {
+                                row,
+                                bar_pos: snapped,
+                                slot: 0,
+                            });
+                        }
                     }
                 }
             }
@@ -461,6 +472,8 @@ fn draw_notes(
         if note_rect.right() >= grid_rect.left() && note_rect.left() <= grid_rect.right() {
             let mut color = if note.row == BASS_NOTES {
                 colors::kick_note()
+            } else if note.slot == 1 {
+                colors::bass_note_alt()
             } else {
                 colors::bass_note()
             };

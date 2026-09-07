@@ -273,9 +273,9 @@ fn update_preview(
     total_ms: f64,
 ) {
     let kick_level = params.kick_level.value();
-    let bass_level = params.bass_level.value();
+    let bass_levels = [params.bass1_level.value(), params.bass2_level.value()];
 
-    let preview_key = preview_hash(state, shared_snapshot, tempo, kick_level, bass_level);
+    let preview_key = preview_hash(state, shared_snapshot, tempo, kick_level, bass_levels);
 
     if preview_key == state.clip_preview_key {
         return;
@@ -290,6 +290,7 @@ fn update_preview(
             is_kick: n.row == BASS_NOTES,
             // Row 0 = B (+11 semitones) .. row 11 = C (+0)
             semitone: (BASS_NOTES - 1 - n.row.min(BASS_NOTES - 1)) as i32,
+            slot: n.slot,
             start_seconds: (n.bar_pos as f64 * bar_seconds) as f32,
         })
         .collect();
@@ -299,7 +300,7 @@ fn update_preview(
         CLIP_PREVIEW_RATE,
         shared_snapshot,
         kick_level,
-        bass_level,
+        bass_levels,
     );
     state.clip_preview_kick = kick;
     state.clip_preview_bass = bass;
@@ -312,17 +313,20 @@ fn preview_hash(
     shared_snapshot: &SharedSnapshot,
     tempo: f64,
     kick_level: f32,
-    bass_level: f32,
+    bass_levels: [f32; 2],
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     for note in &state.midi_notes {
         note.row.hash(&mut hasher);
         note.bar_pos.to_bits().hash(&mut hasher);
+        note.slot.hash(&mut hasher);
     }
     state.num_bars.to_bits().hash(&mut hasher);
     (tempo as u64).hash(&mut hasher);
     kick_level.to_bits().hash(&mut hasher);
-    bass_level.to_bits().hash(&mut hasher);
+    for level in bass_levels {
+        level.to_bits().hash(&mut hasher);
+    }
     shared_snapshot.keytrack_enabled.hash(&mut hasher);
     shared_snapshot.note_length_ms.to_bits().hash(&mut hasher);
     shared_snapshot.kick_pitch_hz.to_bits().hash(&mut hasher);
@@ -330,21 +334,24 @@ fn preview_hash(
     (shared_snapshot.kick_oscillator_waveform as u8).hash(&mut hasher);
     shared_snapshot.kick_retrigger.hash(&mut hasher);
     shared_snapshot.kick_legato_voice_steal.hash(&mut hasher);
-    shared_snapshot.bass_note_length_ms.to_bits().hash(&mut hasher);
-    shared_snapshot.bass_keytrack_enabled.hash(&mut hasher);
-    shared_snapshot.bass_cutoff_hz.to_bits().hash(&mut hasher);
-    shared_snapshot.bass_pitch_hz.to_bits().hash(&mut hasher);
-    shared_snapshot.bass_phase_deg.to_bits().hash(&mut hasher);
-    (shared_snapshot.bass_filter_mode as u8).hash(&mut hasher);
-    (shared_snapshot.bass_oscillator_waveform as u8).hash(&mut hasher);
-    shared_snapshot.bass_retrigger.hash(&mut hasher);
-    shared_snapshot.bass_legato_voice_steal.hash(&mut hasher);
+    for bass in shared_snapshot.bass.iter() {
+        bass.note_length_ms.to_bits().hash(&mut hasher);
+        bass.keytrack_enabled.hash(&mut hasher);
+        bass.cutoff_hz.to_bits().hash(&mut hasher);
+        bass.pitch_hz.to_bits().hash(&mut hasher);
+        bass.phase_deg.to_bits().hash(&mut hasher);
+        (bass.filter_mode as u8).hash(&mut hasher);
+        (bass.oscillator_waveform as u8).hash(&mut hasher);
+        bass.retrigger.hash(&mut hasher);
+        bass.legato_voice_steal.hash(&mut hasher);
+        for v in bass.amp_lut.iter().chain(bass.filter_lut.iter()) {
+            v.to_bits().hash(&mut hasher);
+        }
+    }
     for v in shared_snapshot
         .amp_lut
         .iter()
         .chain(shared_snapshot.pitch_lut.iter())
-        .chain(shared_snapshot.bass_amp_lut.iter())
-        .chain(shared_snapshot.bass_filter_lut.iter())
     {
         v.to_bits().hash(&mut hasher);
     }

@@ -56,6 +56,11 @@ pub(super) mod colors {
     pub(super) fn bass_note() -> Color32 {
         Color32::from_rgb(80, 160, 245)
     }
+
+    /// Bass notes assigned to Note 2 (second bass slot).
+    pub(super) fn bass_note_alt() -> Color32 {
+        Color32::from_rgb(80, 200, 120)
+    }
 }
 
 pub(crate) fn render(

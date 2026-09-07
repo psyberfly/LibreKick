@@ -37,8 +37,11 @@ pub struct PatchData {
     pub amplitude_bends: Vec<f32>,
     pub pitch_points: Vec<(f32, f32)>,
     pub pitch_bends: Vec<f32>,
-    /// Bass instrument settings. `None` for patches saved before bass support.
+    /// Bass instrument settings (Note 1). `None` for patches saved before bass support.
     pub bass: Option<BassPatchData>,
+    /// Second bass note slot (Note 2). `None` for patches saved before
+    /// multi-slot support; the UI then duplicates Note 1.
+    pub bass2: Option<BassPatchData>,
     /// Kick oscillator settings. `None` for patches saved before kick support.
     pub kick: Option<KickPatchData>,
     /// Arrange page settings. `None` for patches saved before arrange support.
@@ -56,8 +59,9 @@ pub struct ArrangePatchData {
     /// When true, held DAW notes drive the internal arrange pattern.
     /// `None` for patches saved before this setting existed.
     pub override_daw_midi: Option<bool>,
-    /// MIDI notes as (row, bar_pos) pairs.
-    pub notes: Vec<(usize, f32)>,
+    /// MIDI notes as (row, bar_pos, slot) triples. `slot` selects the bass
+    /// note slot (0 = Note 1, 1 = Note 2); ignored for the kick lane.
+    pub notes: Vec<(usize, f32, u8)>,
 }
 
 /// Kick oscillator settings stored inside a patch file.
@@ -294,6 +298,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut bass_level: Option<f32> = None;
     let mut bass_phase_deg: Option<f32> = None;
 
+    // Second bass note slot, stored under `bass2_*` keys.
+    let mut bass2_seen = false;
+    let mut bass2_raw = BassRaw::default();
+
     let mut kick_seen = false;
     let mut kick_oscillator_waveform: Option<String> = None;
     let mut kick_retrigger: Option<bool> = None;
@@ -308,7 +316,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut arrange_use_daw_tempo: Option<bool> = None;
     let mut arrange_manual_tempo: Option<f32> = None;
     let mut arrange_override_daw_midi: Option<bool> = None;
-    let mut arrange_notes: Option<Vec<(usize, f32)>> = None;
+    let mut arrange_notes: Option<Vec<(usize, f32, u8)>> = None;
 
     for raw_line in raw.lines() {
         let line = raw_line.trim();
@@ -460,7 +468,12 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 arrange_seen = true;
                 arrange_notes = Some(parse_arrange_notes(value));
             }
-            _ => {}
+            _ => {
+                if let Some(rest) = key.strip_prefix("bass2_") {
+                    bass2_seen = true;
+                    bass2_raw.parse_key(rest, value)?;
+                }
+            }
         }
     }
 
@@ -503,6 +516,11 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
         } else {
             None
         },
+        bass2: if bass2_seen {
+            Some(bass2_raw.into_data())
+        } else {
+            None
+        },
         kick: if kick_seen {
             Some(KickPatchData {
                 oscillator_waveform: kick_oscillator_waveform
@@ -531,25 +549,107 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     })
 }
 
-/// Parses arrange notes stored as `row,bar_pos|row,bar_pos|...`.
+/// Raw accumulator for one bass slot's `bassN_*` patch keys.
+#[derive(Default)]
+struct BassRaw {
+    oscillator_waveform: Option<String>,
+    retrigger: Option<bool>,
+    legato_voice_steal: Option<bool>,
+    note_length_ms: Option<f32>,
+    pitch_hz: Option<f32>,
+    cutoff_hz: Option<f32>,
+    filter_mode: Option<String>,
+    amp_points: Option<Vec<(f32, f32)>>,
+    amp_bends: Option<Vec<f32>>,
+    filter_points: Option<Vec<(f32, f32)>>,
+    filter_bends: Option<Vec<f32>>,
+    level: Option<f32>,
+    phase_deg: Option<f32>,
+}
+
+impl BassRaw {
+    /// Parses a single `bass2_<key>=value` suffix (e.g. `pitch_hz`).
+    fn parse_key(&mut self, key: &str, value: &str) -> Result<(), String> {
+        match key {
+            "oscillator_waveform" => self.oscillator_waveform = Some(value.to_owned()),
+            "retrigger" => self.retrigger = value.parse::<bool>().ok(),
+            "legato_voice_steal" => self.legato_voice_steal = value.parse::<bool>().ok(),
+            "note_length_ms" => self.note_length_ms = value.parse::<f32>().ok(),
+            "pitch_hz" => self.pitch_hz = value.parse::<f32>().ok(),
+            "cutoff_hz" => self.cutoff_hz = value.parse::<f32>().ok(),
+            "filter_mode" => self.filter_mode = Some(value.to_owned()),
+            "amp_points" => {
+                if !value.is_empty() {
+                    self.amp_points = Some(parse_points(value, "bass2_amp_points")?);
+                }
+            }
+            "amp_bends" => self.amp_bends = Some(parse_bends(value, "bass2_amp_bends")?),
+            "filter_points" => {
+                if !value.is_empty() {
+                    self.filter_points = Some(parse_points(value, "bass2_filter_points")?);
+                }
+            }
+            "filter_bends" => self.filter_bends = Some(parse_bends(value, "bass2_filter_bends")?),
+            "level" => self.level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0)),
+            "phase_deg" => {
+                self.phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0))
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn into_data(self) -> BassPatchData {
+        BassPatchData {
+            oscillator_waveform: self
+                .oscillator_waveform
+                .unwrap_or_else(|| "saw".to_owned()),
+            retrigger: self.retrigger.unwrap_or(true),
+            legato_voice_steal: self.legato_voice_steal.unwrap_or(false),
+            note_length_ms: self.note_length_ms.unwrap_or(220.0),
+            pitch_hz: self.pitch_hz.unwrap_or(55.0),
+            cutoff_hz: self.cutoff_hz.unwrap_or(120.0),
+            filter_mode: self.filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
+            amp_points: self.amp_points.unwrap_or_default(),
+            amp_bends: self.amp_bends.unwrap_or_default(),
+            filter_points: self.filter_points.unwrap_or_default(),
+            filter_bends: self.filter_bends.unwrap_or_default(),
+            level: self.level,
+            phase_deg: self.phase_deg,
+        }
+    }
+}
+
+/// Parses arrange notes stored as `row,bar_pos[,slot]|...`.
+/// The optional third field is the bass note slot (default 0).
 /// Empty or malformed segments are skipped.
-fn parse_arrange_notes(raw: &str) -> Vec<(usize, f32)> {
+fn parse_arrange_notes(raw: &str) -> Vec<(usize, f32, u8)> {
     raw.split('|')
         .map(str::trim)
         .filter(|segment| !segment.is_empty())
         .filter_map(|segment| {
-            let (row_raw, pos_raw) = segment.split_once(',')?;
-            let row = row_raw.trim().parse::<usize>().ok()?;
-            let pos = pos_raw.trim().parse::<f32>().ok()?;
-            Some((row, pos.max(0.0)))
+            let mut parts = segment.split(',');
+            let row = parts.next()?.trim().parse::<usize>().ok()?;
+            let pos = parts.next()?.trim().parse::<f32>().ok()?;
+            let slot = parts
+                .next()
+                .and_then(|raw| raw.trim().parse::<u8>().ok())
+                .unwrap_or(0);
+            Some((row, pos.max(0.0), slot.min(1)))
         })
         .collect()
 }
 
-fn arrange_notes_to_string(notes: &[(usize, f32)]) -> String {
+fn arrange_notes_to_string(notes: &[(usize, f32, u8)]) -> String {
     notes
         .iter()
-        .map(|(row, pos)| format!("{row},{pos:.6}"))
+        .map(|(row, pos, slot)| {
+            if *slot == 0 {
+                format!("{row},{pos:.6}")
+            } else {
+                format!("{row},{pos:.6},{slot}")
+            }
+        })
         .collect::<Vec<_>>()
         .join("|")
 }
@@ -630,6 +730,44 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         }
         if let Some(phase_deg) = bass.phase_deg {
             lines.push(format!("bass_phase_deg={phase_deg}"));
+        }
+    }
+
+    if let Some(bass2) = &patch.bass2 {
+        lines.push(format!(
+            "bass2_oscillator_waveform={}",
+            bass2.oscillator_waveform
+        ));
+        lines.push(format!("bass2_retrigger={}", bass2.retrigger));
+        lines.push(format!(
+            "bass2_legato_voice_steal={}",
+            bass2.legato_voice_steal
+        ));
+        lines.push(format!("bass2_note_length_ms={}", bass2.note_length_ms));
+        lines.push(format!("bass2_pitch_hz={}", bass2.pitch_hz));
+        lines.push(format!("bass2_cutoff_hz={}", bass2.cutoff_hz));
+        lines.push(format!("bass2_filter_mode={}", bass2.filter_mode));
+        lines.push(format!(
+            "bass2_amp_points={}",
+            points_to_string(&bass2.amp_points)
+        ));
+        lines.push(format!(
+            "bass2_amp_bends={}",
+            bends_to_string(&bass2.amp_bends)
+        ));
+        lines.push(format!(
+            "bass2_filter_points={}",
+            points_to_string(&bass2.filter_points)
+        ));
+        lines.push(format!(
+            "bass2_filter_bends={}",
+            bends_to_string(&bass2.filter_bends)
+        ));
+        if let Some(level) = bass2.level {
+            lines.push(format!("bass2_level={level}"));
+        }
+        if let Some(phase_deg) = bass2.phase_deg {
+            lines.push(format!("bass2_phase_deg={phase_deg}"));
         }
     }
 

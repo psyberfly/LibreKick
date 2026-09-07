@@ -20,7 +20,8 @@ pub const PREVIEW_SAMPLE_RATE: f32 = 4_000.0;
 #[derive(Clone, Copy)]
 pub struct KickDspParams {
     pub kick_level: f32,
-    pub bass_level: f32,
+    /// Per-slot bass levels (index 0 = Note 1, 1 = Note 2).
+    pub bass_levels: [f32; 2],
     pub trigger_active: bool,
     pub midi_trigger: bool,
     pub midi_velocity: f32,
@@ -46,6 +47,8 @@ struct SeqEvent {
     abs_bar: f64,
     /// Arrange row: 0-11 = bass semitones, 12 = kick lane.
     row: u8,
+    /// Bass note slot (0 = Note 1, 1 = Note 2); ignored for the kick lane.
+    slot: u8,
     is_on: bool,
 }
 
@@ -63,6 +66,8 @@ pub struct KickEngine {
     arrange_abs_bars: f64,
     /// Absolute bar position at which the current bass note ends.
     arrange_bass_off_abs: f64,
+    /// Bass slot of the currently sounding note (0 = Note 1, 1 = Note 2).
+    bass_slot: usize,
 }
 
 impl Default for KickEngine {
@@ -77,6 +82,7 @@ impl Default for KickEngine {
             arrange_active: false,
             arrange_abs_bars: 0.0,
             arrange_bass_off_abs: f64::MAX,
+            bass_slot: 0,
         }
     }
 }
@@ -97,7 +103,6 @@ impl KickEngine {
         let shared_snapshot = shared::snapshot(shared_handle);
 
         let kick_phase_offset = shared_snapshot.kick_phase_deg / 360.0;
-        let bass_phase_offset = shared_snapshot.bass_phase_deg / 360.0;
 
         if params.trigger_active && !self.last_trigger_param {
             LOGGER.debug("kick trigger via trigger_active rising edge");
@@ -170,6 +175,7 @@ impl KickEngine {
                         timing: timing.min(block_samples.saturating_sub(1) as u32),
                         abs_bar: fire,
                         row: note.row,
+                        slot: note.slot,
                         is_on: true,
                     };
                     seq_count += 1;
@@ -183,6 +189,7 @@ impl KickEngine {
                     timing: timing.min(block_samples.saturating_sub(1) as u32),
                     abs_bar: off,
                     row: 0,
+                    slot: 0,
                     is_on: false,
                 };
                 seq_count += 1;
@@ -238,14 +245,19 @@ impl KickEngine {
             waveform: shared_snapshot.kick_oscillator_waveform,
         };
 
-        let bass_voice_params = BassVoiceParams {
-            level: params.bass_level,
-            tuning_scale,
-            note_length_ms: shared_snapshot.bass_note_length_ms,
-            base_cutoff_hz: shared_snapshot.bass_cutoff_hz,
-            filter_mode: shared_snapshot.bass_filter_mode,
-            waveform: shared_snapshot.bass_oscillator_waveform,
-        };
+        // Per-slot bass params; the active slot follows the last note played.
+        let bass_voice_params: [BassVoiceParams; shared::BASS_SLOT_COUNT] =
+            std::array::from_fn(|index| {
+                let slot = &shared_snapshot.bass[index];
+                BassVoiceParams {
+                    level: params.bass_levels[index],
+                    tuning_scale,
+                    note_length_ms: slot.note_length_ms,
+                    base_cutoff_hz: slot.cutoff_hz,
+                    filter_mode: slot.filter_mode,
+                    waveform: slot.oscillator_waveform,
+                }
+            });
 
         let mut bass_event_index = 0usize;
         let bass_event_count = if override_on {
@@ -277,18 +289,20 @@ impl KickEngine {
                     );
                 } else if event.is_on {
                     // Bass rows 0-11: row 0 = B (+11 semitones) .. row 11 = C (+0)
+                    let slot = (event.slot as usize).min(shared::BASS_SLOT_COUNT - 1);
+                    let bass = &shared_snapshot.bass[slot];
                     let semitone = 11 - event.row.min(11) as i32;
-                    let note_hz = if shared_snapshot.bass_keytrack_enabled {
-                        shared_snapshot.bass_pitch_hz
-                            * 2.0_f32.powf(semitone as f32 / 12.0)
+                    let note_hz = if bass.keytrack_enabled {
+                        bass.pitch_hz * 2.0_f32.powf(semitone as f32 / 12.0)
                     } else {
-                        shared_snapshot.bass_pitch_hz
+                        bass.pitch_hz
                     };
+                    self.bass_slot = slot;
                     self.bass_voice.note_on(
                         note_hz,
                         gate_velocity,
-                        bass_phase_offset,
-                        shared_snapshot.bass_retrigger,
+                        bass.phase_deg / 360.0,
+                        bass.retrigger,
                         true,
                     );
                     self.arrange_bass_off_abs = event.abs_bar + note_len_bars;
@@ -308,22 +322,26 @@ impl KickEngine {
                 }
 
                 if event.is_note_on {
-                    let note_hz = if shared_snapshot.bass_keytrack_enabled {
+                    // DAW MIDI always plays Note 1 (slot 0); Note 2 is only
+                    // reachable via arrange notes in override mode.
+                    let bass = &shared_snapshot.bass[0];
+                    let note_hz = if bass.keytrack_enabled {
                         // Keytrack: base pitch is C; each semitone above shifts
                         // up. note % 12 gives the pitch class (C=0 .. B=11),
                         // covering both control ranges (24-35 and 48-59).
                         let semitone = (event.note % 12) as f32;
-                        shared_snapshot.bass_pitch_hz * 2.0_f32.powf(semitone / 12.0)
+                        bass.pitch_hz * 2.0_f32.powf(semitone / 12.0)
                     } else {
                         // Keytrack off: always the instrument's base pitch.
-                        shared_snapshot.bass_pitch_hz
+                        bass.pitch_hz
                     };
+                    self.bass_slot = 0;
                     self.bass_voice.note_on(
                         note_hz,
                         event.velocity.clamp(0.0, 1.0),
-                        bass_phase_offset,
-                        shared_snapshot.bass_retrigger,
-                        shared_snapshot.bass_legato_voice_steal,
+                        bass.phase_deg / 360.0,
+                        bass.retrigger,
+                        bass.legato_voice_steal,
                     );
                 } else {
                     self.bass_voice.note_off();
@@ -338,9 +356,9 @@ impl KickEngine {
                 &shared_snapshot.pitch_lut,
             );
             let bass_sample = self.bass_voice.next_sample(
-                bass_voice_params,
-                &shared_snapshot.bass_amp_lut,
-                &shared_snapshot.bass_filter_lut,
+                bass_voice_params[self.bass_slot],
+                &shared_snapshot.bass[self.bass_slot].amp_lut,
+                &shared_snapshot.bass[self.bass_slot].filter_lut,
             );
             let limited_sample = (kick_sample + bass_sample).clamp(-1.0, 1.0);
 
@@ -386,6 +404,8 @@ pub struct ArrangeNoteSpec {
     pub is_kick: bool,
     /// Semitone offset above the base bass pitch (bass only).
     pub semitone: i32,
+    /// Which bass note slot plays it (0 = Note 1, 1 = Note 2; bass only).
+    pub slot: u8,
     /// Note start time in seconds within the clip.
     pub start_seconds: f32,
 }
@@ -454,7 +474,7 @@ pub fn render_arrangement_preview(
     preview_rate: f32,
     shared: &shared::SharedSnapshot,
     kick_level: f32,
-    bass_level: f32,
+    bass_levels: [f32; 2],
 ) -> (Vec<f32>, Vec<f32>) {
     let total_samples = (total_seconds * preview_rate).ceil().max(1.0) as usize;
     let mut kick_buffer = vec![0.0_f32; total_samples];
@@ -469,14 +489,18 @@ pub fn render_arrangement_preview(
         pitch_hz: shared.kick_pitch_hz,
         waveform: shared.kick_oscillator_waveform,
     };
-    let bass_params = BassVoiceParams {
-        level: bass_level,
-        tuning_scale,
-        note_length_ms: shared.bass_note_length_ms,
-        base_cutoff_hz: shared.bass_cutoff_hz,
-        filter_mode: shared.bass_filter_mode,
-        waveform: shared.bass_oscillator_waveform,
-    };
+    let bass_params: [BassVoiceParams; shared::BASS_SLOT_COUNT] =
+        std::array::from_fn(|index| {
+            let slot = &shared.bass[index];
+            BassVoiceParams {
+                level: bass_levels[index],
+                tuning_scale,
+                note_length_ms: slot.note_length_ms,
+                base_cutoff_hz: slot.cutoff_hz,
+                filter_mode: slot.filter_mode,
+                waveform: slot.oscillator_waveform,
+            }
+        });
 
     for note in notes {
         let start = (note.start_seconds * preview_rate) as usize;
@@ -500,28 +524,30 @@ pub fn render_arrangement_preview(
                 *slot += voice.next_sample(kick_params, &shared.amp_lut, &shared.pitch_lut);
             }
         } else {
-            let note_hz = if shared.bass_keytrack_enabled {
-                shared.bass_pitch_hz * 2.0_f32.powf(note.semitone as f32 / 12.0)
+            let slot_index = (note.slot as usize).min(shared::BASS_SLOT_COUNT - 1);
+            let bass = &shared.bass[slot_index];
+            let note_hz = if bass.keytrack_enabled {
+                bass.pitch_hz * 2.0_f32.powf(note.semitone as f32 / 12.0)
             } else {
-                shared.bass_pitch_hz
+                bass.pitch_hz
             };
             let mut voice = BassVoice::default();
             voice.set_sample_rate(preview_rate);
             voice.note_on(
                 note_hz,
                 1.0,
-                shared.bass_phase_deg / 360.0,
-                shared.bass_retrigger,
-                shared.bass_legato_voice_steal,
+                bass.phase_deg / 360.0,
+                bass.retrigger,
+                bass.legato_voice_steal,
             );
-            for slot in bass_buffer.iter_mut().skip(start) {
+            for buf_slot in bass_buffer.iter_mut().skip(start) {
                 if !voice.is_active() {
                     break;
                 }
-                *slot += voice.next_sample(
-                    bass_params,
-                    &shared.bass_amp_lut,
-                    &shared.bass_filter_lut,
+                *buf_slot += voice.next_sample(
+                    bass_params[slot_index],
+                    &bass.amp_lut,
+                    &bass.filter_lut,
                 );
             }
         }

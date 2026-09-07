@@ -65,7 +65,8 @@ pub fn create_testing_editor(
                 // Mirror the level params into state so patch dirty-tracking
                 // and saving observe the current values.
                 state.kick_level = params.kick_level.value();
-                state.bass_level = params.bass_level.value();
+                state.bass_levels =
+                    [params.bass1_level.value(), params.bass2_level.value()];
 
                 let (undo_shortcut, redo_shortcut, cut_shortcut, delete_shortcut) =
                     if ui.ctx().wants_keyboard_input() {

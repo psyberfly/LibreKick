@@ -52,15 +52,24 @@ pub(crate) fn render(
                                 let before = state.snapshot();
                                 match patches::load_patch(&patch_name) {
                                     Ok(patch) => {
-                                        let (kick_level, bass_level) =
+                                        let (kick_level, bass_levels) =
                                             state.apply_patch_data(patch);
                                         if let Some(level) = kick_level {
                                             setter.set_parameter(&params.kick_level, level);
                                             state.kick_level = level;
                                         }
-                                        if let Some(level) = bass_level {
-                                            setter.set_parameter(&params.bass_level, level);
-                                            state.bass_level = level;
+                                        for (index, level) in
+                                            bass_levels.iter().enumerate()
+                                        {
+                                            if let Some(level) = level {
+                                                let param = if index == 0 {
+                                                    &params.bass1_level
+                                                } else {
+                                                    &params.bass2_level
+                                                };
+                                                setter.set_parameter(param, *level);
+                                                state.bass_levels[index] = *level;
+                                            }
                                         }
                                         state.mark_patch_clean(patch_name.clone());
                                         state.commit_history_if_changed(&before);

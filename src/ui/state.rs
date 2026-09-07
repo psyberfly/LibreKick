@@ -45,6 +45,41 @@ pub(super) struct Curve {
     pub(super) bends: Vec<f32>,
 }
 
+/// All per-slot bass settings. The bass page has two slots (Note 1 / Note 2);
+/// arrange notes pick which slot they play.
+#[derive(Clone, PartialEq)]
+pub(super) struct BassSlot {
+    pub(super) amp_curve: Curve,
+    pub(super) filter_curve: Curve,
+    pub(super) oscillator_waveform: shared::Waveform,
+    pub(super) retrigger: bool,
+    pub(super) legato_voice_steal: bool,
+    pub(super) note_length_ms: f32,
+    pub(super) pitch_hz: f32,
+    pub(super) cutoff_hz: f32,
+    pub(super) filter_mode: shared::BassFilterMode,
+    pub(super) keytrack_enabled: bool,
+    pub(super) phase_deg: f32,
+}
+
+impl Default for BassSlot {
+    fn default() -> Self {
+        Self {
+            amp_curve: Curve::default_amplitude(),
+            filter_curve: Curve::default_pitch(),
+            oscillator_waveform: shared::Waveform::Saw,
+            retrigger: true,
+            legato_voice_steal: false,
+            note_length_ms: 220.0,
+            pitch_hz: 55.0,
+            cutoff_hz: 120.0,
+            filter_mode: shared::BassFilterMode::LowPass,
+            keytrack_enabled: false,
+            phase_deg: 0.0,
+        }
+    }
+}
+
 /// Core patch data shared between EditorSnapshot and PatchSnapshot.
 /// This eliminates duplication of ~20 fields between the two structs.
 #[derive(Clone, PartialEq)]
@@ -62,17 +97,8 @@ pub(super) struct CorePatchData {
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
-    pub(super) bass_amp_curve: Curve,
-    pub(super) bass_filter_curve: Curve,
-    pub(super) bass_oscillator_waveform: shared::Waveform,
-    pub(super) bass_retrigger: bool,
-    pub(super) bass_legato_voice_steal: bool,
-    pub(super) bass_note_length_ms: f32,
-    pub(super) bass_pitch_hz: f32,
-    pub(super) bass_cutoff_hz: f32,
-    pub(super) bass_filter_mode: shared::BassFilterMode,
-    pub(super) bass_keytrack_enabled: bool,
-    pub(super) bass_phase_deg: f32,
+    /// Bass settings for both note slots (index 0 = Note 1, 1 = Note 2).
+    pub(super) bass: [BassSlot; 2],
     pub(super) num_bars: f32,
     pub(super) note_size: NoteSize,
     pub(super) use_daw_tempo: bool,
@@ -99,7 +125,8 @@ pub(super) struct PatchSnapshot {
     pub(super) core: CorePatchData,
     // Patch-only fields
     pub(super) kick_level: f32,
-    pub(super) bass_level: f32,
+    /// Per-slot bass levels (index 0 = Note 1, 1 = Note 2).
+    pub(super) bass_levels: [f32; 2],
     pub(super) description: String,
 }
 
@@ -132,11 +159,13 @@ impl Curve {
 /// A note placed on the arrange page MIDI channel.
 /// `row`: 0-11 = bass octave (B at top .. C at bottom), 12 = kick lane.
 /// `bar_pos`: position in bars (fractional, e.g. 1.5 = middle of bar 2).
+/// `slot`: which bass note slot plays it (0 = Note 1, 1 = Note 2; bass rows only).
 /// Notes are fixed-length: one beat (0.25 bars in 4/4).
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct ArrangeNote {
     pub(super) row: usize,
     pub(super) bar_pos: f32,
+    pub(super) slot: u8,
 }
 
 /// Note size options for the arrange grid, expressed as a fraction of a 4/4 bar.
@@ -201,8 +230,6 @@ pub(super) struct BezierUiState {
     pub(super) active_page: UiPage,
     pub(super) amplitude_curve: Curve,
     pub(super) pitch_curve: Curve,
-    pub(super) bass_amp_curve: Curve,
-    pub(super) bass_filter_curve: Curve,
     pub(super) active_curve: CurveKind,
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
@@ -216,19 +243,14 @@ pub(super) struct BezierUiState {
     /// patch dirty-tracking and saving can see it.
     pub(super) kick_level: f32,
     pub(super) note_length_ms: f32,
-    pub(super) bass_note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
-    pub(super) bass_cutoff_hz: f32,
-    pub(super) bass_pitch_hz: f32,
-    /// Mirror of the `bass_level` plugin parameter, synced each frame.
-    pub(super) bass_level: f32,
-    pub(super) bass_retrigger: bool,
-    pub(super) bass_legato_voice_steal: bool,
-    pub(super) bass_filter_mode: shared::BassFilterMode,
-    pub(super) bass_oscillator_waveform: shared::Waveform,
-    pub(super) bass_keytrack_enabled: bool,
-    /// Bass oscillator start phase in degrees (0-360), applied on retrigger.
-    pub(super) bass_phase_deg: f32,
+    /// Mirror of the `bass1_level`/`bass2_level` plugin parameters, synced
+    /// each frame (index 0 = Note 1, 1 = Note 2).
+    pub(super) bass_levels: [f32; 2],
+    /// Bass settings for both note slots (index 0 = Note 1, 1 = Note 2).
+    pub(super) bass: [BassSlot; 2],
+    /// Which bass slot the bass page is currently editing (0 or 1).
+    pub(super) bass_selected: usize,
     pub(super) manual_tempo: f32,
     pub(super) use_daw_tempo: bool,
     pub(super) num_bars: f32,
@@ -296,8 +318,6 @@ impl Default for BezierUiState {
             active_page: UiPage::Kick,
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
-            bass_amp_curve: Curve::default_amplitude(),
-            bass_filter_curve: Curve::default_pitch(),
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A432,
             keytrack_enabled: false,
@@ -308,17 +328,10 @@ impl Default for BezierUiState {
             kick_phase_deg: 0.0,
             kick_level: 0.8,
             note_length_ms: note_length_max_ms,
-            bass_note_length_ms: 220.0,
             note_length_max_ms,
-            bass_cutoff_hz: 120.0,
-            bass_pitch_hz: 55.0,
-            bass_level: 0.8,
-            bass_retrigger: true,
-            bass_legato_voice_steal: false,
-            bass_filter_mode: shared::BassFilterMode::LowPass,
-            bass_oscillator_waveform: shared::Waveform::Saw,
-            bass_keytrack_enabled: false,
-            bass_phase_deg: 0.0,
+            bass_levels: [0.8; 2],
+            bass: [BassSlot::default(), BassSlot::default()],
+            bass_selected: 0,
             manual_tempo: 120.0,
             use_daw_tempo: true,
             num_bars: 1.0,
@@ -448,17 +461,7 @@ impl BezierUiState {
                 note_length_ms: self.note_length_ms,
                 note_length_max_ms: self.note_length_max_ms,
                 waveform_zoom_percent: self.waveform_zoom_percent,
-                bass_amp_curve: self.bass_amp_curve.clone(),
-                bass_filter_curve: self.bass_filter_curve.clone(),
-                bass_oscillator_waveform: self.bass_oscillator_waveform,
-                bass_retrigger: self.bass_retrigger,
-                bass_legato_voice_steal: self.bass_legato_voice_steal,
-                bass_note_length_ms: self.bass_note_length_ms,
-                bass_pitch_hz: self.bass_pitch_hz,
-                bass_cutoff_hz: self.bass_cutoff_hz,
-                bass_filter_mode: self.bass_filter_mode,
-                bass_keytrack_enabled: self.bass_keytrack_enabled,
-                bass_phase_deg: self.bass_phase_deg,
+                bass: self.bass.clone(),
                 num_bars: self.num_bars,
                 note_size: self.note_size,
                 use_daw_tempo: self.use_daw_tempo,
@@ -487,17 +490,7 @@ impl BezierUiState {
         self.note_length_max_ms = snapshot.core.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.core.waveform_zoom_percent;
         self.selected_point = snapshot.selected_point;
-        self.bass_amp_curve = snapshot.core.bass_amp_curve;
-        self.bass_filter_curve = snapshot.core.bass_filter_curve;
-        self.bass_oscillator_waveform = snapshot.core.bass_oscillator_waveform;
-        self.bass_retrigger = snapshot.core.bass_retrigger;
-        self.bass_legato_voice_steal = snapshot.core.bass_legato_voice_steal;
-        self.bass_note_length_ms = snapshot.core.bass_note_length_ms;
-        self.bass_pitch_hz = snapshot.core.bass_pitch_hz;
-        self.bass_cutoff_hz = snapshot.core.bass_cutoff_hz;
-        self.bass_filter_mode = snapshot.core.bass_filter_mode;
-        self.bass_keytrack_enabled = snapshot.core.bass_keytrack_enabled;
-        self.bass_phase_deg = snapshot.core.bass_phase_deg;
+        self.bass = snapshot.core.bass;
         self.num_bars = snapshot.core.num_bars;
         self.note_size = snapshot.core.note_size;
         self.use_daw_tempo = snapshot.core.use_daw_tempo;
@@ -574,17 +567,7 @@ impl BezierUiState {
                 note_length_ms: self.note_length_ms,
                 note_length_max_ms: self.note_length_max_ms,
                 waveform_zoom_percent: self.waveform_zoom_percent,
-                bass_amp_curve: self.bass_amp_curve.clone(),
-                bass_filter_curve: self.bass_filter_curve.clone(),
-                bass_oscillator_waveform: self.bass_oscillator_waveform,
-                bass_retrigger: self.bass_retrigger,
-                bass_legato_voice_steal: self.bass_legato_voice_steal,
-                bass_note_length_ms: self.bass_note_length_ms,
-                bass_pitch_hz: self.bass_pitch_hz,
-                bass_cutoff_hz: self.bass_cutoff_hz,
-                bass_filter_mode: self.bass_filter_mode,
-                bass_keytrack_enabled: self.bass_keytrack_enabled,
-                bass_phase_deg: self.bass_phase_deg,
+                bass: self.bass.clone(),
                 num_bars: self.num_bars,
                 note_size: self.note_size,
                 use_daw_tempo: self.use_daw_tempo,
@@ -593,7 +576,7 @@ impl BezierUiState {
                 midi_notes: self.midi_notes.clone(),
             },
             kick_level: self.kick_level,
-            bass_level: self.bass_level,
+            bass_levels: self.bass_levels,
             description: self.patch_description.clone(),
         }
     }
@@ -645,27 +628,36 @@ impl BezierUiState {
         shared::set_kick_pitch_hz(shared, self.kick_pitch_hz);
         shared::set_kick_phase_deg(shared, self.kick_phase_deg);
 
-        // Bass curves and settings
-        let bass_amp_lut = curve_lut(&self.bass_amp_curve.points, &self.bass_amp_curve.bends);
-        let bass_filter_lut = curve_lut(&self.bass_filter_curve.points, &self.bass_filter_curve.bends);
-        shared::set_bass_amp_lut(shared, bass_amp_lut);
-        shared::set_bass_filter_lut(shared, bass_filter_lut);
-        shared::set_bass_note_length_ms(shared, self.bass_note_length_ms);
-        shared::set_bass_cutoff_hz(shared, self.bass_cutoff_hz);
-        shared::set_bass_filter_mode(shared, self.bass_filter_mode);
-        shared::set_bass_pitch_hz(shared, self.bass_pitch_hz);
-        shared::set_bass_retrigger(shared, self.bass_retrigger);
-        shared::set_bass_legato_voice_steal(shared, self.bass_legato_voice_steal);
-        shared::set_bass_oscillator_waveform(shared, self.bass_oscillator_waveform);
-        shared::set_bass_keytrack_enabled(shared, self.bass_keytrack_enabled);
-        shared::set_bass_phase_deg(shared, self.bass_phase_deg);
+        // Bass curves and settings — both note slots
+        for (index, slot) in self.bass.iter().enumerate() {
+            let bass_amp_lut = curve_lut(&slot.amp_curve.points, &slot.amp_curve.bends);
+            let bass_filter_lut =
+                curve_lut(&slot.filter_curve.points, &slot.filter_curve.bends);
+            shared::set_bass_slot(
+                shared,
+                index,
+                shared::BassSlotParams {
+                    amp_lut: bass_amp_lut,
+                    filter_lut: bass_filter_lut,
+                    note_length_ms: slot.note_length_ms,
+                    cutoff_hz: slot.cutoff_hz,
+                    filter_mode: slot.filter_mode,
+                    pitch_hz: slot.pitch_hz,
+                    retrigger: slot.retrigger,
+                    legato_voice_steal: slot.legato_voice_steal,
+                    oscillator_waveform: slot.oscillator_waveform,
+                    keytrack_enabled: slot.keytrack_enabled,
+                    phase_deg: slot.phase_deg,
+                },
+            );
+        }
 
         // Arrange pattern and override
         shared::set_arrange_override(shared, self.arrange_override);
-        let arrange_notes: Vec<(usize, f32)> = self
+        let arrange_notes: Vec<(usize, f32, u8)> = self
             .midi_notes
             .iter()
-            .map(|note| (note.row, note.bar_pos))
+            .map(|note| (note.row, note.bar_pos, note.slot))
             .collect();
         shared::set_arrange_pattern(
             shared,
@@ -704,32 +696,8 @@ impl BezierUiState {
                 .map(|point| (point.x, point.y))
                 .collect(),
             pitch_bends: self.pitch_curve.bends.clone(),
-            bass: Some(patches::BassPatchData {
-                oscillator_waveform: waveform_to_patch(self.bass_oscillator_waveform)
-                    .to_owned(),
-                retrigger: self.bass_retrigger,
-                legato_voice_steal: self.bass_legato_voice_steal,
-                note_length_ms: self.bass_note_length_ms,
-                pitch_hz: self.bass_pitch_hz,
-                cutoff_hz: self.bass_cutoff_hz,
-                filter_mode: bass_filter_mode_to_patch(self.bass_filter_mode).to_owned(),
-                amp_points: self
-                    .bass_amp_curve
-                    .points
-                    .iter()
-                    .map(|point| (point.x, point.y))
-                    .collect(),
-                amp_bends: self.bass_amp_curve.bends.clone(),
-                filter_points: self
-                    .bass_filter_curve
-                    .points
-                    .iter()
-                    .map(|point| (point.x, point.y))
-                    .collect(),
-                filter_bends: self.bass_filter_curve.bends.clone(),
-                level: Some(self.bass_level),
-                phase_deg: Some(self.bass_phase_deg),
-            }),
+            bass: Some(bass_slot_to_patch(&self.bass[0], Some(self.bass_levels[0]))),
+            bass2: Some(bass_slot_to_patch(&self.bass[1], Some(self.bass_levels[1]))),
             kick: Some(patches::KickPatchData {
                 oscillator_waveform: waveform_to_patch(self.kick_oscillator_waveform)
                     .to_owned(),
@@ -748,7 +716,7 @@ impl BezierUiState {
                 notes: self
                     .midi_notes
                     .iter()
-                    .map(|note| (note.row, note.bar_pos))
+                    .map(|note| (note.row, note.bar_pos, note.slot))
                     .collect(),
             }),
         }
@@ -760,7 +728,7 @@ impl BezierUiState {
     pub(super) fn apply_patch_data(
         &mut self,
         patch: patches::PatchData,
-    ) -> (Option<f32>, Option<f32>) {
+    ) -> (Option<f32>, [Option<f32>; 2]) {
         self.patch_description = patch.description;
         self.amplitude_curve.points =
             points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
@@ -787,35 +755,20 @@ impl BezierUiState {
             app_cfg.waveform_zoom_max_percent,
         );
 
-        let bass_level = patch.bass.as_ref().and_then(|bass| bass.level);
+        let bass_levels = [
+            patch.bass.as_ref().and_then(|bass| bass.level),
+            patch.bass2.as_ref().and_then(|bass| bass.level),
+        ];
         if let Some(bass) = patch.bass {
-            if let Some(waveform) = waveform_from_patch(&bass.oscillator_waveform) {
-                self.bass_oscillator_waveform = waveform;
-            }
-            self.bass_retrigger = bass.retrigger;
-            self.bass_legato_voice_steal = bass.legato_voice_steal;
-            self.bass_note_length_ms = bass.note_length_ms.clamp(1.0, 1000.0);
-            self.bass_pitch_hz = bass.pitch_hz.clamp(20.0, 2_000.0);
-            self.bass_cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
-            if let Some(mode) = bass_filter_mode_from_patch(&bass.filter_mode) {
-                self.bass_filter_mode = mode;
-            }
-            self.bass_amp_curve.points = points_from_patch(
-                &bass.amp_points,
-                &Curve::default_amplitude().points,
-            );
-            self.bass_amp_curve.bends =
-                bends_from_patch(&bass.amp_bends, self.bass_amp_curve.points.len());
-            self.bass_filter_curve.points = points_from_patch(
-                &bass.filter_points,
-                &Curve::default_pitch().points,
-            );
-            self.bass_filter_curve.bends =
-                bends_from_patch(&bass.filter_bends, self.bass_filter_curve.points.len());
-            if let Some(phase_deg) = bass.phase_deg {
-                self.bass_phase_deg = phase_deg.clamp(0.0, 360.0);
-            }
+            apply_bass_patch(&mut self.bass[0], &bass);
         }
+        // Note 2 defaults to a duplicate of Note 1 when the patch has no
+        // second slot saved.
+        self.bass[1] = self.bass[0].clone();
+        if let Some(bass2) = patch.bass2 {
+            apply_bass_patch(&mut self.bass[1], &bass2);
+        }
+        self.bass_selected = 0;
 
         let kick_level = patch.kick.as_ref().and_then(|kick| kick.level);
         if let Some(kick) = patch.kick {
@@ -843,8 +796,12 @@ impl BezierUiState {
             self.midi_notes = arrange
                 .notes
                 .into_iter()
-                .filter(|(row, _)| *row < 13)
-                .map(|(row, bar_pos)| ArrangeNote { row, bar_pos })
+                .filter(|(row, _, _)| *row < 13)
+                .map(|(row, bar_pos, slot)| ArrangeNote {
+                    row,
+                    bar_pos,
+                    slot: slot.min(1),
+                })
                 .collect();
             self.dragging_note = None;
             self.midi_channel_scroll_offset = 0.0;
@@ -856,7 +813,59 @@ impl BezierUiState {
         self.selected_point = Some(selected_index);
         self.selected_points = vec![selected_index];
 
-        (kick_level, bass_level)
+        (kick_level, bass_levels)
+    }
+}
+
+fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatchData {
+    patches::BassPatchData {
+        oscillator_waveform: waveform_to_patch(slot.oscillator_waveform).to_owned(),
+        retrigger: slot.retrigger,
+        legato_voice_steal: slot.legato_voice_steal,
+        note_length_ms: slot.note_length_ms,
+        pitch_hz: slot.pitch_hz,
+        cutoff_hz: slot.cutoff_hz,
+        filter_mode: bass_filter_mode_to_patch(slot.filter_mode).to_owned(),
+        amp_points: slot
+            .amp_curve
+            .points
+            .iter()
+            .map(|point| (point.x, point.y))
+            .collect(),
+        amp_bends: slot.amp_curve.bends.clone(),
+        filter_points: slot
+            .filter_curve
+            .points
+            .iter()
+            .map(|point| (point.x, point.y))
+            .collect(),
+        filter_bends: slot.filter_curve.bends.clone(),
+        level,
+        phase_deg: Some(slot.phase_deg),
+    }
+}
+
+fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
+    if let Some(waveform) = waveform_from_patch(&bass.oscillator_waveform) {
+        slot.oscillator_waveform = waveform;
+    }
+    slot.retrigger = bass.retrigger;
+    slot.legato_voice_steal = bass.legato_voice_steal;
+    slot.note_length_ms = bass.note_length_ms.clamp(1.0, 1000.0);
+    slot.pitch_hz = bass.pitch_hz.clamp(20.0, 2_000.0);
+    slot.cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
+    if let Some(mode) = bass_filter_mode_from_patch(&bass.filter_mode) {
+        slot.filter_mode = mode;
+    }
+    slot.amp_curve.points =
+        points_from_patch(&bass.amp_points, &Curve::default_amplitude().points);
+    slot.amp_curve.bends = bends_from_patch(&bass.amp_bends, slot.amp_curve.points.len());
+    slot.filter_curve.points =
+        points_from_patch(&bass.filter_points, &Curve::default_pitch().points);
+    slot.filter_curve.bends =
+        bends_from_patch(&bass.filter_bends, slot.filter_curve.points.len());
+    if let Some(phase_deg) = bass.phase_deg {
+        slot.phase_deg = phase_deg.clamp(0.0, 360.0);
     }
 }
 
