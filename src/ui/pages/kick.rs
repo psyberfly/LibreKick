@@ -7,7 +7,7 @@ use crate::ui::components::{
     oscillator_panel, panel, waveform_preview as shared_waveform_preview,
 };
 use crate::ui::helpers::{
-    axis_x_label, axis_y_label, constrain_curve_points, curve_lut, effective_waveform_zoom,
+    axis_x_label, axis_y_label, constrain_curve_points, effective_waveform_zoom,
     envelope_value_linear, normalize_segment_bends, point_value_label,
     to_normalized_with_note_end, to_screen_with_note_end, waveform_preview_points,
 };
@@ -62,10 +62,8 @@ pub(crate) fn render_controls(
     });
     ui.add_space(8.0 * ui_scale);
 
-    shared::set_kick_oscillator_waveform(shared_for_ui, state.kick_oscillator_waveform);
-    shared::set_kick_retrigger(shared_for_ui, state.kick_retrigger);
-    shared::set_kick_legato_voice_steal(shared_for_ui, state.kick_legato_voice_steal);
-    shared::set_kick_pitch_hz(shared_for_ui, state.kick_pitch_hz);
+    // Sync UI state to shared state for DSP
+    state.sync_to_shared(shared_for_ui);
 
     ui.horizontal(|ui| {
         ui.label("Curve:");
@@ -880,11 +878,6 @@ pub(crate) fn render_editor(
         shared::set_keytrack_enabled(&shared_for_ui, state.keytrack_enabled);
         state.note_length_ms = note_end_ms.clamp(0.0, max_note_length_ms);
         shared::set_note_length_ms(&shared_for_ui, state.note_length_ms);
-
-        let amplitude_lut = curve_lut(&state.amplitude_curve.points, &state.amplitude_curve.bends);
-        let pitch_lut = curve_lut(&state.pitch_curve.points, &state.pitch_curve.bends);
-        shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Amplitude, amplitude_lut);
-        shared::set_curve_lut(&shared_for_ui, shared::CurveKind::Pitch, pitch_lut);
 
         let waveform_points = waveform_preview_points(
             graph_rect,

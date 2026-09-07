@@ -58,6 +58,10 @@ impl Default for LibreKickParams {
 impl Default for LibreKick {
     fn default() -> Self {
         let shared = shared::new_shared_state();
+        
+        // Initialize shared state from the default patch so DSP has correct
+        // curves/settings before the editor opens.
+        ui::init_shared_from_default(&shared);
 
         Self {
             params: Arc::new(LibreKickParams::default()),

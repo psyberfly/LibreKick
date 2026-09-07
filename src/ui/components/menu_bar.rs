@@ -103,6 +103,18 @@ pub(crate) fn render(
                                 state.mark_patch_clean(patch_name.clone());
                                 state.patch_status = Some(format!("Saved patch: {patch_name}"));
                                 state.refresh_patch_list();
+                                
+                                // Set the newly saved patch as the default
+                                match patches::set_default_patch_name(&patch_name) {
+                                    Ok(()) => {
+                                        state.default_patch_name = Some(patch_name.clone());
+                                    }
+                                    Err(error) => {
+                                        state.patch_status = Some(format!(
+                                            "Saved patch but failed to set as default: {error}"
+                                        ));
+                                    }
+                                }
                             }
                             Err(error) => {
                                 state.patch_status = Some(format!("Failed to save patch: {error}"));

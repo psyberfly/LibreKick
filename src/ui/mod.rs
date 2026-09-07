@@ -28,6 +28,13 @@ const WAVEFORM_PREVIEW_DURATION_SECONDS: f32 = 1.0;
 const WAVEFORM_PREVIEW_MAX_CYCLES_PER_PIXEL: f32 = 0.3;
 const AMP_DB_FLOOR: f32 = -30.0;
 
+/// Initializes the shared state from the default UI state/patch.
+/// Called at plugin load so DSP has correct curves before the editor opens.
+pub fn init_shared_from_default(shared: &shared::SharedStateHandle) {
+    let ui_state = state::BezierUiState::default();
+    ui_state.sync_to_shared(shared);
+}
+
 pub fn create_testing_editor(
     editor_state: Arc<EguiState>,
     shared_state: shared::SharedStateHandle,

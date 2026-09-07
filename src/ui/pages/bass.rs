@@ -4,7 +4,7 @@ use nih_plug::prelude::ParamSetter;
 
 use crate::ui::{
     components::{envelope_editor, oscillator_panel, panel, waveform_preview},
-    helpers::{axis_x_label, curve_lut, effective_waveform_zoom, waveform_preview_points},
+    helpers::{axis_x_label, effective_waveform_zoom, waveform_preview_points},
     state::BezierUiState,
     theme::{themed_font, APP_THEME},
 };
@@ -162,17 +162,9 @@ pub(crate) fn render(
         adaptive_zoom_factor,
     );
 
-    let bass_amp_lut = curve_lut(&state.bass_amp_curve.points, &state.bass_amp_curve.bends);
-    let bass_filter_lut = curve_lut(&state.bass_filter_curve.points, &state.bass_filter_curve.bends);
-    shared::set_bass_amp_lut(shared_for_ui, bass_amp_lut);
-    shared::set_bass_filter_lut(shared_for_ui, bass_filter_lut);
-    shared::set_bass_note_length_ms(shared_for_ui, state.bass_note_length_ms);
-    shared::set_bass_cutoff_hz(shared_for_ui, state.bass_cutoff_hz);
-    shared::set_bass_filter_mode(shared_for_ui, state.bass_filter_mode);
-    shared::set_bass_pitch_hz(shared_for_ui, state.bass_pitch_hz);
-    shared::set_bass_retrigger(shared_for_ui, state.bass_retrigger);
-    shared::set_bass_legato_voice_steal(shared_for_ui, state.bass_legato_voice_steal);
-    shared::set_bass_oscillator_waveform(shared_for_ui, state.bass_oscillator_waveform);
+    // Sync UI state to shared state for DSP
+    state.sync_to_shared(shared_for_ui);
+
     waveform_preview::draw(
         &painter,
         graph_rect,

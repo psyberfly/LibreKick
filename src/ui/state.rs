@@ -458,6 +458,38 @@ impl BezierUiState {
         self.new_patch_name = patch_name;
     }
 
+    /// Syncs the current UI state (curves, oscillator settings, etc.) into the
+    /// shared state so the DSP can use them. Called at plugin initialization
+    /// and every frame the kick/bass pages render.
+    pub fn sync_to_shared(&self, shared: &shared::SharedStateHandle) {
+        use crate::ui::helpers::curve_lut;
+
+        // Kick curves and settings
+        let amp_lut = curve_lut(&self.amplitude_curve.points, &self.amplitude_curve.bends);
+        let pitch_lut = curve_lut(&self.pitch_curve.points, &self.pitch_curve.bends);
+        shared::set_curve_lut(shared, shared::CurveKind::Amplitude, amp_lut);
+        shared::set_curve_lut(shared, shared::CurveKind::Pitch, pitch_lut);
+        shared::set_keytrack_enabled(shared, self.keytrack_enabled);
+        shared::set_note_length_ms(shared, self.note_length_ms);
+        shared::set_kick_oscillator_waveform(shared, self.kick_oscillator_waveform);
+        shared::set_kick_retrigger(shared, self.kick_retrigger);
+        shared::set_kick_legato_voice_steal(shared, self.kick_legato_voice_steal);
+        shared::set_kick_pitch_hz(shared, self.kick_pitch_hz);
+
+        // Bass curves and settings
+        let bass_amp_lut = curve_lut(&self.bass_amp_curve.points, &self.bass_amp_curve.bends);
+        let bass_filter_lut = curve_lut(&self.bass_filter_curve.points, &self.bass_filter_curve.bends);
+        shared::set_bass_amp_lut(shared, bass_amp_lut);
+        shared::set_bass_filter_lut(shared, bass_filter_lut);
+        shared::set_bass_note_length_ms(shared, self.bass_note_length_ms);
+        shared::set_bass_cutoff_hz(shared, self.bass_cutoff_hz);
+        shared::set_bass_filter_mode(shared, self.bass_filter_mode);
+        shared::set_bass_pitch_hz(shared, self.bass_pitch_hz);
+        shared::set_bass_retrigger(shared, self.bass_retrigger);
+        shared::set_bass_legato_voice_steal(shared, self.bass_legato_voice_steal);
+        shared::set_bass_oscillator_waveform(shared, self.bass_oscillator_waveform);
+    }
+
     pub(super) fn to_patch_data(&self, name: String) -> patches::PatchData {
         patches::PatchData {
             name,
