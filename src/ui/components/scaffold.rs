@@ -25,7 +25,7 @@ pub(crate) fn render(
     let section_height = available.y.max(320.0 * ui_scale);
 
     // Fixed nav menu width (scaled with the rest of the UI).
-    let menu_width = 100.0 * ui_scale;
+    let menu_width = 130.0 * ui_scale;
 
     ui.horizontal(|ui| {
         // Page content on the left — fixed width.

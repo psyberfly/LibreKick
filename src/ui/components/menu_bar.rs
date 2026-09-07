@@ -31,46 +31,11 @@ pub(crate) fn render(
                 .strong()
                 .color(APP_THEME.axis_title()),
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            // Right-align the control group to the page-content right edge.
-            let page_right = row_left + page_width;
-            let pad = (ui.available_rect_before_wrap().right() - page_right).max(0.0);
-            ui.add_space(pad);
 
-            let button_size = egui::Vec2::splat(30.0 * ui_scale);
-            if ui
-                .add(egui::Button::new("?").min_size(button_size))
-                .clicked()
-            {
-                state.show_help_popup = true;
-            }
+        ui.add_space(12.0 * ui_scale);
 
-            ui.add_space(10.0 * ui_scale);
-
-            let redo_clicked = ui
-                .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">").min_size(button_size))
-                .on_hover_ui(|ui| {
-                    apply_ui_text_scale(ui, ui_scale);
-                    ui.label("Redo (Ctrl/Cmd + Y)");
-                })
-                .clicked();
-            let undo_clicked = ui
-                .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<").min_size(button_size))
-                .on_hover_ui(|ui| {
-                    apply_ui_text_scale(ui, ui_scale);
-                    ui.label("Undo (Ctrl/Cmd + Z)");
-                })
-                .clicked();
-            if redo_clicked {
-                *history_action_applied |= state.redo();
-            }
-            if undo_clicked {
-                *history_action_applied |= state.undo();
-            }
-
-            ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                ui.menu_button("Patches", |ui| {
+        // Patches button + name + description (left-aligned).
+        ui.menu_button("Patches", |ui| {
                     apply_ui_text_scale(ui, ui_scale);
                     ui.set_min_width(300.0 * ui_scale);
                     ui.label(format!("Dir: {}", config::patches_dir()));
@@ -192,29 +157,66 @@ pub(crate) fn render(
                     }
                 });
 
-                let text: &str = if state.patch_description.is_empty() {
-                    "No description"
-                } else {
-                    state.patch_description.as_str()
-                };
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(text)
-                            .small()
-                            .italics()
-                            .color(APP_THEME.axis_tick()),
-                    )
-                    .truncate(),
-                )
-                .on_hover_text("Edit the description in the Patches menu");
-                });
+        ui.label(
+            egui::RichText::new(state.selected_patch_indicator_text())
+                .small()
+                .color(APP_THEME.axis_tick()),
+        );
 
-                ui.label(
-                    egui::RichText::new(state.selected_patch_indicator_text())
+        if !state.patch_description.is_empty() {
+            ui.label(
+                egui::RichText::new("-")
+                    .small()
+                    .color(APP_THEME.axis_tick()),
+            );
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(state.patch_description.as_str())
                         .small()
+                        .italics()
                         .color(APP_THEME.axis_tick()),
-                );
-            });
+                )
+                .truncate(),
+            )
+            .on_hover_text("Edit the description in the Patches menu");
+        }
+
+        // Right-align undo/redo/help to the page-content right edge.
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let page_right = row_left + page_width;
+            let pad = (ui.available_rect_before_wrap().right() - page_right).max(0.0);
+            ui.add_space(pad);
+
+            let button_size = egui::Vec2::splat(30.0 * ui_scale);
+            if ui
+                .add(egui::Button::new("?").min_size(button_size))
+                .clicked()
+            {
+                state.show_help_popup = true;
+            }
+
+            ui.add_space(10.0 * ui_scale);
+
+            let redo_clicked = ui
+                .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">").min_size(button_size))
+                .on_hover_ui(|ui| {
+                    apply_ui_text_scale(ui, ui_scale);
+                    ui.label("Redo (Ctrl/Cmd + Y)");
+                })
+                .clicked();
+            let undo_clicked = ui
+                .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<").min_size(button_size))
+                .on_hover_ui(|ui| {
+                    apply_ui_text_scale(ui, ui_scale);
+                    ui.label("Undo (Ctrl/Cmd + Z)");
+                })
+                .clicked();
+            if redo_clicked {
+                *history_action_applied |= state.redo();
+            }
+            if undo_clicked {
+                *history_action_applied |= state.undo();
+            }
         });
     });
 
