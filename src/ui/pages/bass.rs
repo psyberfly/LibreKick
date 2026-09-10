@@ -85,6 +85,7 @@ pub(crate) fn render(
                     retrigger: &mut state.bass[sel].retrigger,
                     legato_voice_steal: &mut state.bass[sel].legato_voice_steal,
                     pitch_hz: Some(&mut state.bass[sel].pitch_hz),
+                    tuning_a4_hz: state.tuning_standard.a4_hz(),
                     phase_deg: Some(&mut state.bass[sel].phase_deg),
                     note_length_ms: Some(&mut state.bass[sel].note_length_ms),
                     level: Some((

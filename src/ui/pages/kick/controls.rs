@@ -31,6 +31,7 @@ pub(super) fn render(
                 retrigger: &mut state.kick_retrigger,
                 legato_voice_steal: &mut state.kick_legato_voice_steal,
                 pitch_hz: Some(&mut state.kick_pitch_hz),
+                tuning_a4_hz: state.tuning_standard.a4_hz(),
                 phase_deg: Some(&mut state.kick_phase_deg),
                 note_length_ms: Some(&mut state.note_length_ms),
                 level: Some((&params.kick_level, setter)),

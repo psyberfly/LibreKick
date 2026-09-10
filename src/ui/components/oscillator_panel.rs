@@ -2,13 +2,15 @@ use nih_plug::prelude::{FloatParam, ParamSetter};
 use nih_plug_egui::egui;
 
 use crate::shared;
-use crate::ui::helpers::float_param_slider;
+use crate::ui::helpers::{float_param_slider, note_name_from_hz};
 
 pub(crate) struct OscillatorPanelModel<'a> {
     pub(crate) waveform: &'a mut shared::Waveform,
     pub(crate) retrigger: &'a mut bool,
     pub(crate) legato_voice_steal: &'a mut bool,
     pub(crate) pitch_hz: Option<&'a mut f32>,
+    /// Tuning reference for converting Hz to a note label.
+    pub(crate) tuning_a4_hz: f32,
     /// Oscillator start phase in degrees (0-360), applied on retrigger.
     pub(crate) phase_deg: Option<&'a mut f32>,
     pub(crate) note_length_ms: Option<&'a mut f32>,
@@ -49,7 +51,8 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, model: OscillatorPanelMod
                         if changed {
                             *pitch_hz = (*pitch_hz).clamp(20.0, 2_000.0);
                         }
-                        ui.label(format!("{:.2}Hz", *pitch_hz));
+                        let note = note_name_from_hz(*pitch_hz, model.tuning_a4_hz);
+                        ui.label(format!("{:.2}Hz ({note})", *pitch_hz));
                     });
                 });
             }
