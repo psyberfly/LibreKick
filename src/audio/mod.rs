@@ -255,6 +255,7 @@ impl KickEngine {
                     note_length_ms: slot.note_length_ms,
                     base_cutoff_hz: slot.cutoff_hz,
                     filter_mode: slot.filter_mode,
+                    filter_slope: slot.filter_slope,
                     waveform: slot.oscillator_waveform,
                 }
             });
@@ -498,6 +499,7 @@ pub fn render_arrangement_preview(
                 note_length_ms: slot.note_length_ms,
                 base_cutoff_hz: slot.cutoff_hz,
                 filter_mode: slot.filter_mode,
+                filter_slope: slot.filter_slope,
                 waveform: slot.oscillator_waveform,
             }
         });

@@ -58,6 +58,7 @@ pub(super) struct BassSlot {
     pub(super) pitch_hz: f32,
     pub(super) cutoff_hz: f32,
     pub(super) filter_mode: shared::BassFilterMode,
+    pub(super) filter_slope: shared::BassFilterSlope,
     pub(super) keytrack_enabled: bool,
     pub(super) phase_deg: f32,
 }
@@ -74,6 +75,7 @@ impl Default for BassSlot {
             pitch_hz: 55.0,
             cutoff_hz: 120.0,
             filter_mode: shared::BassFilterMode::LowPass,
+            filter_slope: shared::BassFilterSlope::S6dB,
             keytrack_enabled: false,
             phase_deg: 0.0,
         }
@@ -642,6 +644,7 @@ impl BezierUiState {
                     note_length_ms: slot.note_length_ms,
                     cutoff_hz: slot.cutoff_hz,
                     filter_mode: slot.filter_mode,
+                    filter_slope: slot.filter_slope,
                     pitch_hz: slot.pitch_hz,
                     retrigger: slot.retrigger,
                     legato_voice_steal: slot.legato_voice_steal,
@@ -651,8 +654,6 @@ impl BezierUiState {
                 },
             );
         }
-
-        // Arrange pattern and override
         shared::set_arrange_override(shared, self.arrange_override);
         let arrange_notes: Vec<(usize, f32, u8)> = self
             .midi_notes
@@ -826,6 +827,7 @@ fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatch
         pitch_hz: slot.pitch_hz,
         cutoff_hz: slot.cutoff_hz,
         filter_mode: bass_filter_mode_to_patch(slot.filter_mode).to_owned(),
+        filter_slope: bass_filter_slope_to_patch(slot.filter_slope).to_owned(),
         amp_points: slot
             .amp_curve
             .points
@@ -856,6 +858,9 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
     slot.cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
     if let Some(mode) = bass_filter_mode_from_patch(&bass.filter_mode) {
         slot.filter_mode = mode;
+    }
+    if let Some(slope) = bass_filter_slope_from_patch(&bass.filter_slope) {
+        slot.filter_slope = slope;
     }
     slot.amp_curve.points =
         points_from_patch(&bass.amp_points, &Curve::default_amplitude().points);
@@ -899,6 +904,25 @@ fn bass_filter_mode_from_patch(raw: &str) -> Option<shared::BassFilterMode> {
         "lowpass" | "low" => Some(shared::BassFilterMode::LowPass),
         "highpass" | "high" => Some(shared::BassFilterMode::HighPass),
         "bandpass" | "bp" => Some(shared::BassFilterMode::BandPass),
+        _ => None,
+    }
+}
+
+fn bass_filter_slope_to_patch(slope: shared::BassFilterSlope) -> &'static str {
+    match slope {
+        shared::BassFilterSlope::S6dB => "6db",
+        shared::BassFilterSlope::S12dB => "12db",
+        shared::BassFilterSlope::S18dB => "18db",
+        shared::BassFilterSlope::S24dB => "24db",
+    }
+}
+
+fn bass_filter_slope_from_patch(raw: &str) -> Option<shared::BassFilterSlope> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "6db" | "6" => Some(shared::BassFilterSlope::S6dB),
+        "12db" | "12" => Some(shared::BassFilterSlope::S12dB),
+        "18db" | "18" => Some(shared::BassFilterSlope::S18dB),
+        "24db" | "24" => Some(shared::BassFilterSlope::S24dB),
         _ => None,
     }
 }

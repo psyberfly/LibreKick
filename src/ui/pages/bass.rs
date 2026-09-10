@@ -136,6 +136,30 @@ pub(crate) fn render(
                     "BP",
                 );
             });
+            ui.add_space(4.0 * ui_scale);
+            ui.horizontal(|ui| {
+                ui.label("Slope:");
+                ui.selectable_value(
+                    &mut state.bass[sel].filter_slope,
+                    shared::BassFilterSlope::S6dB,
+                    "6 dB",
+                );
+                ui.selectable_value(
+                    &mut state.bass[sel].filter_slope,
+                    shared::BassFilterSlope::S12dB,
+                    "12 dB",
+                );
+                ui.selectable_value(
+                    &mut state.bass[sel].filter_slope,
+                    shared::BassFilterSlope::S18dB,
+                    "18 dB",
+                );
+                ui.selectable_value(
+                    &mut state.bass[sel].filter_slope,
+                    shared::BassFilterSlope::S24dB,
+                    "24 dB",
+                );
+            });
             ui.label("Cutoff");
             let cutoff_changed = ui
                 .add(crate::ui::helpers::slider_fine_step(
@@ -220,6 +244,7 @@ pub(crate) fn render(
             note_length_ms: state.bass[sel].note_length_ms,
             base_cutoff_hz: state.bass[sel].cutoff_hz,
             filter_mode: state.bass[sel].filter_mode,
+            filter_slope: state.bass[sel].filter_slope,
             waveform: state.bass[sel].oscillator_waveform,
         },
         state.bass[sel].pitch_hz,

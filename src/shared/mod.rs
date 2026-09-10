@@ -109,6 +109,30 @@ pub enum BassFilterMode {
     BandPass,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BassFilterSlope {
+    /// 6 dB/octave (first-order, 1 pole).
+    S6dB,
+    /// 12 dB/octave (second-order, 2 poles).
+    S12dB,
+    /// 18 dB/octave (third-order, 3 poles).
+    S18dB,
+    /// 24 dB/octave (fourth-order, 4 poles).
+    S24dB,
+}
+
+impl BassFilterSlope {
+    /// Number of cascaded one-pole stages for this slope.
+    pub const fn poles(&self) -> usize {
+        match self {
+            Self::S6dB => 1,
+            Self::S12dB => 2,
+            Self::S18dB => 3,
+            Self::S24dB => 4,
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum OscilloscopeSignal {
     Kick,
@@ -136,6 +160,7 @@ pub struct BassSlotParams {
     pub note_length_ms: f32,
     pub cutoff_hz: f32,
     pub filter_mode: BassFilterMode,
+    pub filter_slope: BassFilterSlope,
     pub pitch_hz: f32,
     pub retrigger: bool,
     pub legato_voice_steal: bool,
@@ -154,6 +179,7 @@ impl Default for BassSlotParams {
             note_length_ms: app_cfg.note_length_max_ms,
             cutoff_hz: 120.0,
             filter_mode: BassFilterMode::LowPass,
+            filter_slope: BassFilterSlope::S6dB,
             pitch_hz: 55.0,
             retrigger: true,
             legato_voice_steal: false,

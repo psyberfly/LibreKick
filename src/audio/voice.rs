@@ -1,6 +1,6 @@
 use std::f32::consts::TAU;
 
-use crate::shared::{BassFilterMode, Waveform, CURVE_LUT_SIZE};
+use crate::shared::{BassFilterMode, BassFilterSlope, Waveform, CURVE_LUT_SIZE};
 
 use super::oscillator::Oscillator;
 
@@ -22,6 +22,7 @@ pub struct BassVoiceParams {
     pub note_length_ms: f32,
     pub base_cutoff_hz: f32,
     pub filter_mode: BassFilterMode,
+    pub filter_slope: BassFilterSlope,
     pub waveform: Waveform,
 }
 
@@ -39,9 +40,9 @@ pub struct BassVoice {
     time_seconds: f32,
     note_hz: f32,
     velocity: f32,
-    hp_prev_in: f32,
-    hp_prev_out: f32,
-    lp_prev_out: f32,
+    hp_prev_in: [f32; BassFilterSlope::S24dB.poles()],
+    hp_prev_out: [f32; BassFilterSlope::S24dB.poles()],
+    lp_prev_out: [f32; BassFilterSlope::S24dB.poles()],
 }
 
 impl Default for KickVoice {
@@ -64,9 +65,9 @@ impl Default for BassVoice {
             time_seconds: 0.0,
             note_hz: 55.0,
             velocity: 1.0,
-            hp_prev_in: 0.0,
-            hp_prev_out: 0.0,
-            lp_prev_out: 0.0,
+            hp_prev_in: [0.0; BassFilterSlope::S24dB.poles()],
+            hp_prev_out: [0.0; BassFilterSlope::S24dB.poles()],
+            lp_prev_out: [0.0; BassFilterSlope::S24dB.poles()],
         }
     }
 }
@@ -173,9 +174,9 @@ impl BassVoice {
     }
 
     fn reset_filter_state(&mut self) {
-        self.hp_prev_in = 0.0;
-        self.hp_prev_out = 0.0;
-        self.lp_prev_out = 0.0;
+        self.hp_prev_in = [0.0; BassFilterSlope::S24dB.poles()];
+        self.hp_prev_out = [0.0; BassFilterSlope::S24dB.poles()];
+        self.lp_prev_out = [0.0; BassFilterSlope::S24dB.poles()];
     }
 
     pub fn note_on(
@@ -236,18 +237,33 @@ impl BassVoice {
         let hp_alpha = rc / (rc + dt);
         let lp_alpha = dt / (rc + dt);
 
-        let hp = hp_alpha * (self.hp_prev_out + raw - self.hp_prev_in);
-        self.hp_prev_in = raw;
-        self.hp_prev_out = hp;
+        let poles = params.filter_slope.poles();
+
+        let mut hp = raw;
+        for i in 0..poles {
+            let y = hp_alpha * (self.hp_prev_out[i] + hp - self.hp_prev_in[i]);
+            self.hp_prev_in[i] = hp;
+            self.hp_prev_out[i] = y;
+            hp = y;
+        }
+
         let filtered = match params.filter_mode {
             BassFilterMode::LowPass => {
-                self.lp_prev_out = self.lp_prev_out + lp_alpha * (raw - self.lp_prev_out);
-                self.lp_prev_out
+                let mut x = raw;
+                for i in 0..poles {
+                    x = self.lp_prev_out[i] + lp_alpha * (x - self.lp_prev_out[i]);
+                    self.lp_prev_out[i] = x;
+                }
+                x
             }
             BassFilterMode::HighPass => hp,
             BassFilterMode::BandPass => {
-                self.lp_prev_out = self.lp_prev_out + lp_alpha * (hp - self.lp_prev_out);
-                self.lp_prev_out
+                let mut x = hp;
+                for i in 0..poles {
+                    x = self.lp_prev_out[i] + lp_alpha * (x - self.lp_prev_out[i]);
+                    self.lp_prev_out[i] = x;
+                }
+                x
             }
         };
 

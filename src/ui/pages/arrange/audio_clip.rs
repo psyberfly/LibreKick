@@ -341,6 +341,7 @@ fn preview_hash(
         bass.pitch_hz.to_bits().hash(&mut hasher);
         bass.phase_deg.to_bits().hash(&mut hasher);
         (bass.filter_mode as u8).hash(&mut hasher);
+        (bass.filter_slope as u8).hash(&mut hasher);
         (bass.oscillator_waveform as u8).hash(&mut hasher);
         bass.retrigger.hash(&mut hasher);
         bass.legato_voice_steal.hash(&mut hasher);
