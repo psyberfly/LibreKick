@@ -173,6 +173,19 @@ pub(crate) fn render(
                 state.bass[sel].cutoff_hz = state.bass[sel].cutoff_hz.clamp(20.0, 8_000.0);
             }
 
+            ui.label("Drive");
+            let drive_changed = ui
+                .add(crate::ui::helpers::slider_fine_step(
+                    ui,
+                    egui::Slider::new(&mut state.bass[sel].filter_drive, 0.0..=1.0)
+                        .show_value(false),
+                    0.01,
+                ))
+                .changed();
+            if drive_changed {
+                state.bass[sel].filter_drive = state.bass[sel].filter_drive.clamp(0.0, 1.0);
+            }
+
             ui.add_space(8.0 * ui_scale);
             envelope_drag_active |= envelope_editor::render(
                 ui,
@@ -246,6 +259,7 @@ pub(crate) fn render(
             base_cutoff_hz: state.bass[sel].cutoff_hz,
             filter_mode: state.bass[sel].filter_mode,
             filter_slope: state.bass[sel].filter_slope,
+            filter_drive: state.bass[sel].filter_drive,
             waveform: state.bass[sel].oscillator_waveform,
         },
         state.bass[sel].pitch_hz,

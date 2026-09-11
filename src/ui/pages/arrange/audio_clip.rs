@@ -28,15 +28,16 @@ pub(super) fn render(
         ui.add_space(4.0 * ui_scale);
 
         // Zoom controls
-        ui.horizontal(|ui| {
-            if ui.button("-").clicked() {
-                state.clip_zoom = (state.clip_zoom - 0.25).max(1.0);
-            }
-            ui.label(format!("Zoom {:.0}%", state.clip_zoom * 100.0));
-            if ui.button("+").clicked() {
-                state.clip_zoom = (state.clip_zoom + 0.25).min(4.0);
-            }
-        });
+        ui.add(crate::ui::helpers::slider_fine_step(
+            ui,
+            egui::Slider::new(&mut state.clip_zoom, 1.0..=4.0)
+                .text("Zoom")
+                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
+                .custom_parser(|s| {
+                    s.trim_end_matches('%').parse::<f64>().ok().map(|v| v / 100.0)
+                }),
+            0.25,
+        ));
 
         ui.add_space(4.0 * ui_scale);
 
@@ -342,6 +343,7 @@ fn preview_hash(
         bass.phase_deg.to_bits().hash(&mut hasher);
         (bass.filter_mode as u8).hash(&mut hasher);
         (bass.filter_slope as u8).hash(&mut hasher);
+        bass.filter_drive.to_bits().hash(&mut hasher);
         (bass.oscillator_waveform as u8).hash(&mut hasher);
         bass.retrigger.hash(&mut hasher);
         bass.legato_voice_steal.hash(&mut hasher);

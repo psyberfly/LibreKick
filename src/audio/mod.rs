@@ -256,6 +256,7 @@ impl KickEngine {
                     base_cutoff_hz: slot.cutoff_hz,
                     filter_mode: slot.filter_mode,
                     filter_slope: slot.filter_slope,
+                    filter_drive: slot.filter_drive,
                     waveform: slot.oscillator_waveform,
                 }
             });
@@ -500,6 +501,7 @@ pub fn render_arrangement_preview(
                 base_cutoff_hz: slot.cutoff_hz,
                 filter_mode: slot.filter_mode,
                 filter_slope: slot.filter_slope,
+                filter_drive: slot.filter_drive,
                 waveform: slot.oscillator_waveform,
             }
         });

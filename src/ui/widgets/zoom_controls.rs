@@ -1,32 +1,20 @@
 use nih_plug_egui::egui;
 use crate::config::AppConfig;
+use crate::ui::helpers::slider_fine_step;
 
-/// Renders zoom controls: - button, zoom percentage label, + button
+/// Renders a zoom slider.
 /// Returns true if zoom value changed
 pub fn render(
     ui: &mut egui::Ui,
     zoom_percent: &mut f32,
     config: &AppConfig,
 ) -> bool {
-    let mut changed = false;
-    
-    if ui.button("-").clicked() {
-        *zoom_percent = (*zoom_percent - config.waveform_zoom_step_percent).clamp(
-            config.waveform_zoom_min_percent,
-            config.waveform_zoom_max_percent,
-        );
-        changed = true;
-    }
-    
-    ui.label(format!("Zoom {:.0}%", zoom_percent));
-    
-    if ui.button("+").clicked() {
-        *zoom_percent = (*zoom_percent + config.waveform_zoom_step_percent).clamp(
-            config.waveform_zoom_min_percent,
-            config.waveform_zoom_max_percent,
-        );
-        changed = true;
-    }
-    
-    changed
+    let slider = egui::Slider::new(
+        zoom_percent,
+        config.waveform_zoom_min_percent..=config.waveform_zoom_max_percent,
+    )
+    .text("Zoom")
+    .suffix("%");
+    let slider = slider_fine_step(ui, slider, config.waveform_zoom_step_percent as f64);
+    ui.add(slider).changed()
 }

@@ -89,6 +89,8 @@ pub struct BassPatchData {
     pub filter_mode: String,
     /// 6db / 12db / 24db. Defaults to "6db" for older patches.
     pub filter_slope: String,
+    /// 0..1, amount of pre-filter saturation. Defaults to 0.0.
+    pub filter_drive: f32,
     pub amp_points: Vec<(f32, f32)>,
     pub amp_bends: Vec<f32>,
     pub filter_points: Vec<(f32, f32)>,
@@ -294,6 +296,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut bass_cutoff_hz: Option<f32> = None;
     let mut bass_filter_mode: Option<String> = None;
     let mut bass_filter_slope: Option<String> = None;
+    let mut bass_filter_drive: Option<f32> = None;
     let mut bass_amp_points: Option<Vec<(f32, f32)>> = None;
     let mut bass_amp_bends: Option<Vec<f32>> = None;
     let mut bass_filter_points: Option<Vec<(f32, f32)>> = None;
@@ -398,6 +401,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             "bass_filter_slope" => {
                 bass_seen = true;
                 bass_filter_slope = Some(value.to_owned());
+            }
+            "bass_filter_drive" => {
+                bass_seen = true;
+                bass_filter_drive = value.parse::<f32>().ok();
             }
             "bass_amp_points" => {
                 bass_seen = true;
@@ -514,6 +521,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 cutoff_hz: bass_cutoff_hz.unwrap_or(120.0),
                 filter_mode: bass_filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
                 filter_slope: bass_filter_slope.unwrap_or_else(|| "6db".to_owned()),
+                filter_drive: bass_filter_drive.unwrap_or(0.0).clamp(0.0, 1.0),
                 amp_points: bass_amp_points.unwrap_or_default(),
                 amp_bends: bass_amp_bends.unwrap_or_default(),
                 filter_points: bass_filter_points.unwrap_or_default(),
@@ -568,6 +576,7 @@ struct BassRaw {
     cutoff_hz: Option<f32>,
     filter_mode: Option<String>,
     filter_slope: Option<String>,
+    filter_drive: Option<f32>,
     amp_points: Option<Vec<(f32, f32)>>,
     amp_bends: Option<Vec<f32>>,
     filter_points: Option<Vec<(f32, f32)>>,
@@ -588,6 +597,7 @@ impl BassRaw {
             "cutoff_hz" => self.cutoff_hz = value.parse::<f32>().ok(),
             "filter_mode" => self.filter_mode = Some(value.to_owned()),
             "filter_slope" => self.filter_slope = Some(value.to_owned()),
+            "filter_drive" => self.filter_drive = value.parse::<f32>().ok(),
             "amp_points" => {
                 if !value.is_empty() {
                     self.amp_points = Some(parse_points(value, "bass2_amp_points")?);
@@ -621,6 +631,7 @@ impl BassRaw {
             cutoff_hz: self.cutoff_hz.unwrap_or(120.0),
             filter_mode: self.filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
             filter_slope: self.filter_slope.unwrap_or_else(|| "6db".to_owned()),
+            filter_drive: self.filter_drive.unwrap_or(0.0).clamp(0.0, 1.0),
             amp_points: self.amp_points.unwrap_or_default(),
             amp_bends: self.amp_bends.unwrap_or_default(),
             filter_points: self.filter_points.unwrap_or_default(),
@@ -727,6 +738,7 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("bass_cutoff_hz={}", bass.cutoff_hz));
         lines.push(format!("bass_filter_mode={}", bass.filter_mode));
         lines.push(format!("bass_filter_slope={}", bass.filter_slope));
+        lines.push(format!("bass_filter_drive={}", bass.filter_drive));
         lines.push(format!("bass_amp_points={}", points_to_string(&bass.amp_points)));
         lines.push(format!("bass_amp_bends={}", bends_to_string(&bass.amp_bends)));
         lines.push(format!(
@@ -760,6 +772,7 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("bass2_cutoff_hz={}", bass2.cutoff_hz));
         lines.push(format!("bass2_filter_mode={}", bass2.filter_mode));
         lines.push(format!("bass2_filter_slope={}", bass2.filter_slope));
+        lines.push(format!("bass2_filter_drive={}", bass2.filter_drive));
         lines.push(format!(
             "bass2_amp_points={}",
             points_to_string(&bass2.amp_points)

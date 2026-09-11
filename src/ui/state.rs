@@ -59,6 +59,7 @@ pub(super) struct BassSlot {
     pub(super) cutoff_hz: f32,
     pub(super) filter_mode: shared::BassFilterMode,
     pub(super) filter_slope: shared::BassFilterSlope,
+    pub(super) filter_drive: f32,
     pub(super) keytrack_enabled: bool,
     pub(super) phase_deg: f32,
 }
@@ -76,6 +77,7 @@ impl Default for BassSlot {
             cutoff_hz: 120.0,
             filter_mode: shared::BassFilterMode::LowPass,
             filter_slope: shared::BassFilterSlope::S6dB,
+            filter_drive: 0.0,
             keytrack_enabled: false,
             phase_deg: 0.0,
         }
@@ -645,6 +647,7 @@ impl BezierUiState {
                     cutoff_hz: slot.cutoff_hz,
                     filter_mode: slot.filter_mode,
                     filter_slope: slot.filter_slope,
+                    filter_drive: slot.filter_drive,
                     pitch_hz: slot.pitch_hz,
                     retrigger: slot.retrigger,
                     legato_voice_steal: slot.legato_voice_steal,
@@ -828,6 +831,7 @@ fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatch
         cutoff_hz: slot.cutoff_hz,
         filter_mode: bass_filter_mode_to_patch(slot.filter_mode).to_owned(),
         filter_slope: bass_filter_slope_to_patch(slot.filter_slope).to_owned(),
+        filter_drive: slot.filter_drive,
         amp_points: slot
             .amp_curve
             .points
@@ -856,6 +860,7 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
     slot.note_length_ms = bass.note_length_ms.clamp(1.0, 1000.0);
     slot.pitch_hz = bass.pitch_hz.clamp(20.0, 2_000.0);
     slot.cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
+    slot.filter_drive = bass.filter_drive.clamp(0.0, 1.0);
     if let Some(mode) = bass_filter_mode_from_patch(&bass.filter_mode) {
         slot.filter_mode = mode;
     }

@@ -23,6 +23,7 @@ pub struct BassVoiceParams {
     pub base_cutoff_hz: f32,
     pub filter_mode: BassFilterMode,
     pub filter_slope: BassFilterSlope,
+    pub filter_drive: f32,
     pub waveform: Waveform,
 }
 
@@ -238,8 +239,14 @@ impl BassVoice {
         let lp_alpha = dt / (rc + dt);
 
         let poles = params.filter_slope.poles();
+        let drive = params.filter_drive.clamp(0.0, 1.0);
+        let driven = if drive > 0.0 {
+            (raw * (1.0 + drive * 4.0)).tanh()
+        } else {
+            raw
+        };
 
-        let mut hp = raw;
+        let mut hp = driven;
         for i in 0..poles {
             let y = hp_alpha * (self.hp_prev_out[i] + hp - self.hp_prev_in[i]);
             self.hp_prev_in[i] = hp;
@@ -249,7 +256,7 @@ impl BassVoice {
 
         let filtered = match params.filter_mode {
             BassFilterMode::LowPass => {
-                let mut x = raw;
+                let mut x = driven;
                 for i in 0..poles {
                     x = self.lp_prev_out[i] + lp_alpha * (x - self.lp_prev_out[i]);
                     self.lp_prev_out[i] = x;
