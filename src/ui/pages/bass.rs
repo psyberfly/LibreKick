@@ -187,13 +187,93 @@ pub(crate) fn render(
             }
 
             ui.add_space(8.0 * ui_scale);
+
+            // Header rows for the filter envelope editor: 1/2 selector and
+            // per-filter On toggles, both right-aligned.
+            let selected_filter_index;
+            {
+                let slot = &mut state.bass[sel];
+                let filter_selected = &mut slot.filter_selected;
+                let filter_enabled = &mut slot.filter_enabled;
+                let filter_2_enabled = &mut slot.filter_2_enabled;
+                let box_size = Vec2::splat(24.0 * ui_scale);
+
+                ui.horizontal(|ui| {
+                    ui.label("Filter Cutoff Envelope");
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            for i in (0..2).rev() {
+                                let selected = *filter_selected == i;
+                                let (rect, response) =
+                                    ui.allocate_exact_size(box_size, Sense::click());
+                                ui.painter().rect_filled(
+                                    rect,
+                                    2.0,
+                                    if selected {
+                                        accent_color()
+                                    } else {
+                                        APP_THEME.graph_bg()
+                                    },
+                                );
+                                ui.painter().rect_stroke(
+                                    rect,
+                                    2.0,
+                                    Stroke::new(1.0, APP_THEME.grid_line()),
+                                    egui::StrokeKind::Inside,
+                                );
+                                ui.painter().text(
+                                    rect.center(),
+                                    Align2::CENTER_CENTER,
+                                    format!("{}", i + 1),
+                                    themed_font(11.0 * ui_scale),
+                                    if selected {
+                                        Color32::WHITE
+                                    } else {
+                                        APP_THEME.axis_tick()
+                                    },
+                                );
+                                if response.clicked() || response.secondary_clicked() {
+                                    *filter_selected = i;
+                                }
+                            }
+                        },
+                    );
+                });
+
+                ui.horizontal(|ui| {
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            ui.checkbox(filter_2_enabled, "On 2");
+                            ui.checkbox(filter_enabled, "On 1");
+                        },
+                    );
+                });
+
+                selected_filter_index = *filter_selected;
+            }
+
+            let (selected_filter_curve, selected_filter_point) = if selected_filter_index == 0 {
+                (
+                    &mut state.bass[sel].filter_curve,
+                    &mut state.bass_filter_selected_point,
+                )
+            } else {
+                (
+                    &mut state.bass[sel].filter_curve_2,
+                    &mut state.bass_filter_2_selected_point,
+                )
+            };
+            let filter_envelope_id =
+                format!("bass-filter-envelope-{}-{}", sel, selected_filter_index);
             envelope_drag_active |= envelope_editor::render(
                 ui,
                 ui_scale,
-                "bass-filter-envelope",
-                "Filter Cutoff Envelope",
-                &mut state.bass[sel].filter_curve,
-                &mut state.bass_filter_selected_point,
+                filter_envelope_id.as_str(),
+                "",
+                selected_filter_curve,
+                selected_filter_point,
             );
         });
     });
@@ -249,6 +329,7 @@ pub(crate) fn render(
     let preview_rate = audio::PREVIEW_SAMPLE_RATE;
     let amp_lut = curve_lut(&state.bass[sel].amp_curve.points, &state.bass[sel].amp_curve.bends);
     let filter_lut = curve_lut(&state.bass[sel].filter_curve.points, &state.bass[sel].filter_curve.bends);
+    let filter_2_lut = curve_lut(&state.bass[sel].filter_curve_2.points, &state.bass[sel].filter_curve_2.bends);
     let preview_samples = audio::render_bass_preview(
         preview_rate,
         note_end_ms * 0.001,
@@ -260,11 +341,14 @@ pub(crate) fn render(
             filter_mode: state.bass[sel].filter_mode,
             filter_slope: state.bass[sel].filter_slope,
             filter_drive: state.bass[sel].filter_drive,
+            filter_enabled: state.bass[sel].filter_enabled,
+            filter_2_enabled: state.bass[sel].filter_2_enabled,
             waveform: state.bass[sel].oscillator_waveform,
         },
         state.bass[sel].pitch_hz,
         &amp_lut,
         &filter_lut,
+        &filter_2_lut,
         state.bass[sel].phase_deg / 360.0,
         state.bass[sel].retrigger,
         state.bass[sel].legato_voice_steal,

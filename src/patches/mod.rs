@@ -91,10 +91,14 @@ pub struct BassPatchData {
     pub filter_slope: String,
     /// 0..1, amount of pre-filter saturation. Defaults to 0.0.
     pub filter_drive: f32,
+    pub filter_enabled: bool,
+    pub filter_2_enabled: bool,
     pub amp_points: Vec<(f32, f32)>,
     pub amp_bends: Vec<f32>,
     pub filter_points: Vec<(f32, f32)>,
     pub filter_bends: Vec<f32>,
+    pub filter_2_points: Vec<(f32, f32)>,
+    pub filter_2_bends: Vec<f32>,
     /// Bass level (B Level macro). `None` for patches saved before level support.
     pub level: Option<f32>,
     /// Oscillator start phase in degrees. `None` for older patches.
@@ -301,6 +305,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut bass_amp_bends: Option<Vec<f32>> = None;
     let mut bass_filter_points: Option<Vec<(f32, f32)>> = None;
     let mut bass_filter_bends: Option<Vec<f32>> = None;
+    let mut bass_filter_enabled: Option<bool> = None;
+    let mut bass_filter_2_enabled: Option<bool> = None;
+    let mut bass_filter_2_points: Option<Vec<(f32, f32)>> = None;
+    let mut bass_filter_2_bends: Option<Vec<f32>> = None;
     let mut bass_level: Option<f32> = None;
     let mut bass_phase_deg: Option<f32> = None;
 
@@ -426,6 +434,24 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 bass_seen = true;
                 bass_filter_bends = Some(parse_bends(value, "bass_filter_bends")?);
             }
+            "bass_filter_enabled" => {
+                bass_seen = true;
+                bass_filter_enabled = value.parse::<bool>().ok();
+            }
+            "bass_filter_2_enabled" => {
+                bass_seen = true;
+                bass_filter_2_enabled = value.parse::<bool>().ok();
+            }
+            "bass_filter_2_points" => {
+                bass_seen = true;
+                if !value.is_empty() {
+                    bass_filter_2_points = Some(parse_points(value, "bass_filter_2_points")?);
+                }
+            }
+            "bass_filter_2_bends" => {
+                bass_seen = true;
+                bass_filter_2_bends = Some(parse_bends(value, "bass_filter_2_bends")?);
+            }
             "bass_level" => {
                 bass_seen = true;
                 bass_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
@@ -522,10 +548,14 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 filter_mode: bass_filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
                 filter_slope: bass_filter_slope.unwrap_or_else(|| "6db".to_owned()),
                 filter_drive: bass_filter_drive.unwrap_or(0.0).clamp(0.0, 1.0),
+                filter_enabled: bass_filter_enabled.unwrap_or(true),
+                filter_2_enabled: bass_filter_2_enabled.unwrap_or(false),
                 amp_points: bass_amp_points.unwrap_or_default(),
                 amp_bends: bass_amp_bends.unwrap_or_default(),
                 filter_points: bass_filter_points.unwrap_or_default(),
                 filter_bends: bass_filter_bends.unwrap_or_default(),
+                filter_2_points: bass_filter_2_points.unwrap_or_default(),
+                filter_2_bends: bass_filter_2_bends.unwrap_or_default(),
                 level: bass_level,
                 phase_deg: bass_phase_deg,
             })
@@ -577,10 +607,14 @@ struct BassRaw {
     filter_mode: Option<String>,
     filter_slope: Option<String>,
     filter_drive: Option<f32>,
+    filter_enabled: Option<bool>,
+    filter_2_enabled: Option<bool>,
     amp_points: Option<Vec<(f32, f32)>>,
     amp_bends: Option<Vec<f32>>,
     filter_points: Option<Vec<(f32, f32)>>,
     filter_bends: Option<Vec<f32>>,
+    filter_2_points: Option<Vec<(f32, f32)>>,
+    filter_2_bends: Option<Vec<f32>>,
     level: Option<f32>,
     phase_deg: Option<f32>,
 }
@@ -598,6 +632,8 @@ impl BassRaw {
             "filter_mode" => self.filter_mode = Some(value.to_owned()),
             "filter_slope" => self.filter_slope = Some(value.to_owned()),
             "filter_drive" => self.filter_drive = value.parse::<f32>().ok(),
+            "filter_enabled" => self.filter_enabled = value.parse::<bool>().ok(),
+            "filter_2_enabled" => self.filter_2_enabled = value.parse::<bool>().ok(),
             "amp_points" => {
                 if !value.is_empty() {
                     self.amp_points = Some(parse_points(value, "bass2_amp_points")?);
@@ -610,6 +646,12 @@ impl BassRaw {
                 }
             }
             "filter_bends" => self.filter_bends = Some(parse_bends(value, "bass2_filter_bends")?),
+            "filter_2_points" => {
+                if !value.is_empty() {
+                    self.filter_2_points = Some(parse_points(value, "bass2_filter_2_points")?);
+                }
+            }
+            "filter_2_bends" => self.filter_2_bends = Some(parse_bends(value, "bass2_filter_2_bends")?),
             "level" => self.level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0)),
             "phase_deg" => {
                 self.phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0))
@@ -632,10 +674,14 @@ impl BassRaw {
             filter_mode: self.filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
             filter_slope: self.filter_slope.unwrap_or_else(|| "6db".to_owned()),
             filter_drive: self.filter_drive.unwrap_or(0.0).clamp(0.0, 1.0),
+            filter_enabled: self.filter_enabled.unwrap_or(true),
+            filter_2_enabled: self.filter_2_enabled.unwrap_or(false),
             amp_points: self.amp_points.unwrap_or_default(),
             amp_bends: self.amp_bends.unwrap_or_default(),
             filter_points: self.filter_points.unwrap_or_default(),
             filter_bends: self.filter_bends.unwrap_or_default(),
+            filter_2_points: self.filter_2_points.unwrap_or_default(),
+            filter_2_bends: self.filter_2_bends.unwrap_or_default(),
             level: self.level,
             phase_deg: self.phase_deg,
         }
@@ -739,6 +785,8 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("bass_filter_mode={}", bass.filter_mode));
         lines.push(format!("bass_filter_slope={}", bass.filter_slope));
         lines.push(format!("bass_filter_drive={}", bass.filter_drive));
+        lines.push(format!("bass_filter_enabled={}", bass.filter_enabled));
+        lines.push(format!("bass_filter_2_enabled={}", bass.filter_2_enabled));
         lines.push(format!("bass_amp_points={}", points_to_string(&bass.amp_points)));
         lines.push(format!("bass_amp_bends={}", bends_to_string(&bass.amp_bends)));
         lines.push(format!(
@@ -748,6 +796,14 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!(
             "bass_filter_bends={}",
             bends_to_string(&bass.filter_bends)
+        ));
+        lines.push(format!(
+            "bass_filter_2_points={}",
+            points_to_string(&bass.filter_2_points)
+        ));
+        lines.push(format!(
+            "bass_filter_2_bends={}",
+            bends_to_string(&bass.filter_2_bends)
         ));
         if let Some(level) = bass.level {
             lines.push(format!("bass_level={level}"));
@@ -773,6 +829,8 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("bass2_filter_mode={}", bass2.filter_mode));
         lines.push(format!("bass2_filter_slope={}", bass2.filter_slope));
         lines.push(format!("bass2_filter_drive={}", bass2.filter_drive));
+        lines.push(format!("bass2_filter_enabled={}", bass2.filter_enabled));
+        lines.push(format!("bass2_filter_2_enabled={}", bass2.filter_2_enabled));
         lines.push(format!(
             "bass2_amp_points={}",
             points_to_string(&bass2.amp_points)
@@ -788,6 +846,14 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!(
             "bass2_filter_bends={}",
             bends_to_string(&bass2.filter_bends)
+        ));
+        lines.push(format!(
+            "bass2_filter_2_points={}",
+            points_to_string(&bass2.filter_2_points)
+        ));
+        lines.push(format!(
+            "bass2_filter_2_bends={}",
+            bends_to_string(&bass2.filter_2_bends)
         ));
         if let Some(level) = bass2.level {
             lines.push(format!("bass2_level={level}"));

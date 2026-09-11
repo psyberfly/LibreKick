@@ -24,6 +24,8 @@ pub struct BassVoiceParams {
     pub filter_mode: BassFilterMode,
     pub filter_slope: BassFilterSlope,
     pub filter_drive: f32,
+    pub filter_enabled: bool,
+    pub filter_2_enabled: bool,
     pub waveform: Waveform,
 }
 
@@ -211,6 +213,7 @@ impl BassVoice {
         params: BassVoiceParams,
         bass_amp_lut: &[f32; CURVE_LUT_SIZE],
         bass_filter_lut: &[f32; CURVE_LUT_SIZE],
+        bass_filter_2_lut: &[f32; CURVE_LUT_SIZE],
     ) -> f32 {
         if !self.oscillator.is_active() {
             return 0.0;
@@ -222,7 +225,21 @@ impl BassVoice {
             .min(CURVE_LUT_SIZE - 1);
 
         let amp_env = bass_amp_lut[lut_index].clamp(0.0, 1.0);
-        let cutoff_env = bass_filter_lut[lut_index].clamp(0.0, 1.0);
+        let cutoff_env_1 = bass_filter_lut[lut_index].clamp(0.0, 1.0);
+        let cutoff_env_2 = bass_filter_2_lut[lut_index].clamp(0.0, 1.0);
+
+        // Combine the two filter envelopes additively around the neutral point
+        // (cutoff_env = 1.0 means the base cutoff). Each active envelope adds
+        // its own deviation from 1.0, so the two filters run in tandem rather
+        // than as a series (multiplicative) chain.
+        let mut combined_env = 1.0_f32;
+        if params.filter_enabled {
+            combined_env += cutoff_env_1 - 1.0;
+        }
+        if params.filter_2_enabled {
+            combined_env += cutoff_env_2 - 1.0;
+        }
+        let cutoff_env = combined_env.clamp(0.0, 1.0);
 
         let amplitude = params.level.clamp(0.0, 1.0) * self.velocity * amp_env;
         let frequency = (self.note_hz * params.tuning_scale.max(0.5)).clamp(20.0, 20_000.0);

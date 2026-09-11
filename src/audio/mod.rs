@@ -257,6 +257,8 @@ impl KickEngine {
                     filter_mode: slot.filter_mode,
                     filter_slope: slot.filter_slope,
                     filter_drive: slot.filter_drive,
+                    filter_enabled: slot.filter_enabled,
+                    filter_2_enabled: slot.filter_2_enabled,
                     waveform: slot.oscillator_waveform,
                 }
             });
@@ -361,6 +363,7 @@ impl KickEngine {
                 bass_voice_params[self.bass_slot],
                 &shared_snapshot.bass[self.bass_slot].amp_lut,
                 &shared_snapshot.bass[self.bass_slot].filter_lut,
+                &shared_snapshot.bass[self.bass_slot].filter_2_lut,
             );
             let limited_sample = (kick_sample + bass_sample).clamp(-1.0, 1.0);
 
@@ -449,6 +452,7 @@ pub fn render_bass_preview(
     note_hz: f32,
     amp_lut: &[f32; shared::CURVE_LUT_SIZE],
     filter_lut: &[f32; shared::CURVE_LUT_SIZE],
+    filter_2_lut: &[f32; shared::CURVE_LUT_SIZE],
     phase_offset: f32,
     retrigger: bool,
     legato_voice_steal: bool,
@@ -462,7 +466,7 @@ pub fn render_bass_preview(
         if !voice.is_active() {
             break;
         }
-        *slot = voice.next_sample(params, amp_lut, filter_lut);
+        *slot = voice.next_sample(params, amp_lut, filter_lut, filter_2_lut);
     }
     buffer
 }
@@ -502,6 +506,8 @@ pub fn render_arrangement_preview(
                 filter_mode: slot.filter_mode,
                 filter_slope: slot.filter_slope,
                 filter_drive: slot.filter_drive,
+                filter_enabled: slot.filter_enabled,
+                filter_2_enabled: slot.filter_2_enabled,
                 waveform: slot.oscillator_waveform,
             }
         });
@@ -552,6 +558,7 @@ pub fn render_arrangement_preview(
                     bass_params[slot_index],
                     &bass.amp_lut,
                     &bass.filter_lut,
+                    &bass.filter_2_lut,
                 );
             }
         }

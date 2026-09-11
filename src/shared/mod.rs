@@ -157,6 +157,9 @@ pub const BASS_SLOT_COUNT: usize = 2;
 pub struct BassSlotParams {
     pub amp_lut: [f32; CURVE_LUT_SIZE],
     pub filter_lut: [f32; CURVE_LUT_SIZE],
+    pub filter_2_lut: [f32; CURVE_LUT_SIZE],
+    pub filter_enabled: bool,
+    pub filter_2_enabled: bool,
     pub note_length_ms: f32,
     pub cutoff_hz: f32,
     pub filter_mode: BassFilterMode,
@@ -177,6 +180,9 @@ impl Default for BassSlotParams {
         Self {
             amp_lut: [0.0; CURVE_LUT_SIZE],
             filter_lut: [0.0; CURVE_LUT_SIZE],
+            filter_2_lut: [0.0; CURVE_LUT_SIZE],
+            filter_enabled: true,
+            filter_2_enabled: false,
             note_length_ms: app_cfg.note_length_max_ms,
             cutoff_hz: 120.0,
             filter_mode: BassFilterMode::LowPass,

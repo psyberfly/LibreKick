@@ -51,6 +51,7 @@ pub(super) struct Curve {
 pub(super) struct BassSlot {
     pub(super) amp_curve: Curve,
     pub(super) filter_curve: Curve,
+    pub(super) filter_curve_2: Curve,
     pub(super) oscillator_waveform: shared::Waveform,
     pub(super) retrigger: bool,
     pub(super) legato_voice_steal: bool,
@@ -60,6 +61,9 @@ pub(super) struct BassSlot {
     pub(super) filter_mode: shared::BassFilterMode,
     pub(super) filter_slope: shared::BassFilterSlope,
     pub(super) filter_drive: f32,
+    pub(super) filter_enabled: bool,
+    pub(super) filter_2_enabled: bool,
+    pub(super) filter_selected: usize,
     pub(super) keytrack_enabled: bool,
     pub(super) phase_deg: f32,
 }
@@ -69,6 +73,7 @@ impl Default for BassSlot {
         Self {
             amp_curve: Curve::default_amplitude(),
             filter_curve: Curve::default_pitch(),
+            filter_curve_2: Curve::default_pitch(),
             oscillator_waveform: shared::Waveform::Saw,
             retrigger: true,
             legato_voice_steal: false,
@@ -78,6 +83,9 @@ impl Default for BassSlot {
             filter_mode: shared::BassFilterMode::LowPass,
             filter_slope: shared::BassFilterSlope::S6dB,
             filter_drive: 0.0,
+            filter_enabled: true,
+            filter_2_enabled: false,
+            filter_selected: 0,
             keytrack_enabled: false,
             phase_deg: 0.0,
         }
@@ -121,6 +129,7 @@ pub(super) struct EditorSnapshot {
     pub(super) selected_point: Option<usize>,
     pub(super) bass_amp_selected_point: Option<usize>,
     pub(super) bass_filter_selected_point: Option<usize>,
+    pub(super) bass_filter_2_selected_point: Option<usize>,
 }
 
 /// Patch snapshot for save/load - includes patch metadata
@@ -287,6 +296,7 @@ pub(super) struct BezierUiState {
     pub(super) selected_point: Option<usize>,
     pub(super) bass_amp_selected_point: Option<usize>,
     pub(super) bass_filter_selected_point: Option<usize>,
+    pub(super) bass_filter_2_selected_point: Option<usize>,
     pub(super) selected_points: Vec<usize>,
     pub(super) selection_drag_start: Option<Pos2>,
     pub(super) selection_drag_current: Option<Pos2>,
@@ -364,6 +374,7 @@ impl Default for BezierUiState {
             selected_point: Some(1),
             bass_amp_selected_point: Some(1),
             bass_filter_selected_point: Some(1),
+            bass_filter_2_selected_point: Some(1),
             selected_points: vec![1],
             selection_drag_start: None,
             selection_drag_current: None,
@@ -468,6 +479,7 @@ impl BezierUiState {
             selected_point: self.selected_point,
             bass_amp_selected_point: self.bass_amp_selected_point,
             bass_filter_selected_point: self.bass_filter_selected_point,
+            bass_filter_2_selected_point: self.bass_filter_2_selected_point,
         }
     }
 
@@ -496,6 +508,7 @@ impl BezierUiState {
         self.dragging_note = None;
         self.bass_amp_selected_point = snapshot.bass_amp_selected_point;
         self.bass_filter_selected_point = snapshot.bass_filter_selected_point;
+        self.bass_filter_2_selected_point = snapshot.bass_filter_2_selected_point;
     }
 
     pub(super) fn commit_history_if_changed(&mut self, before: &EditorSnapshot) {
@@ -629,12 +642,17 @@ impl BezierUiState {
             let bass_amp_lut = curve_lut(&slot.amp_curve.points, &slot.amp_curve.bends);
             let bass_filter_lut =
                 curve_lut(&slot.filter_curve.points, &slot.filter_curve.bends);
+            let bass_filter_2_lut =
+                curve_lut(&slot.filter_curve_2.points, &slot.filter_curve_2.bends);
             shared::set_bass_slot(
                 shared,
                 index,
                 shared::BassSlotParams {
                     amp_lut: bass_amp_lut,
                     filter_lut: bass_filter_lut,
+                    filter_2_lut: bass_filter_2_lut,
+                    filter_enabled: slot.filter_enabled,
+                    filter_2_enabled: slot.filter_2_enabled,
                     note_length_ms: slot.note_length_ms,
                     cutoff_hz: slot.cutoff_hz,
                     filter_mode: slot.filter_mode,
@@ -824,6 +842,8 @@ fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatch
         filter_mode: bass_filter_mode_to_patch(slot.filter_mode).to_owned(),
         filter_slope: bass_filter_slope_to_patch(slot.filter_slope).to_owned(),
         filter_drive: slot.filter_drive,
+        filter_enabled: slot.filter_enabled,
+        filter_2_enabled: slot.filter_2_enabled,
         amp_points: slot
             .amp_curve
             .points
@@ -838,6 +858,13 @@ fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatch
             .map(|point| (point.x, point.y))
             .collect(),
         filter_bends: slot.filter_curve.bends.clone(),
+        filter_2_points: slot
+            .filter_curve_2
+            .points
+            .iter()
+            .map(|point| (point.x, point.y))
+            .collect(),
+        filter_2_bends: slot.filter_curve_2.bends.clone(),
         level,
         phase_deg: Some(slot.phase_deg),
     }
@@ -853,6 +880,8 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
     slot.pitch_hz = bass.pitch_hz.clamp(20.0, 2_000.0);
     slot.cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
     slot.filter_drive = bass.filter_drive.clamp(0.0, 1.0);
+    slot.filter_enabled = bass.filter_enabled;
+    slot.filter_2_enabled = bass.filter_2_enabled;
     if let Some(mode) = bass_filter_mode_from_patch(&bass.filter_mode) {
         slot.filter_mode = mode;
     }
@@ -866,6 +895,10 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
         points_from_patch(&bass.filter_points, &Curve::default_pitch().points);
     slot.filter_curve.bends =
         bends_from_patch(&bass.filter_bends, slot.filter_curve.points.len());
+    slot.filter_curve_2.points =
+        points_from_patch(&bass.filter_2_points, &Curve::default_pitch().points);
+    slot.filter_curve_2.bends =
+        bends_from_patch(&bass.filter_2_bends, slot.filter_curve_2.points.len());
     if let Some(phase_deg) = bass.phase_deg {
         slot.phase_deg = phase_deg.clamp(0.0, 360.0);
     }

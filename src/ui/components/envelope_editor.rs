@@ -21,7 +21,9 @@ pub(crate) fn render(
     let mut drag_active = false;
 
     ui.group(|ui| {
-        ui.label(title);
+        if !title.is_empty() {
+            ui.label(title);
+        }
         let desired_height = (180.0 * ui_scale).max(140.0);
         let desired_width = ui.available_width().max(180.0 * ui_scale);
         let (outer_rect, response) =
