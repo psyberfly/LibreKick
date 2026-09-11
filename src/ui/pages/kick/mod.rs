@@ -8,7 +8,6 @@
 // - graph: Axes, grid, background rendering
 // - curve_editor: Point dragging, selection, deletion
 // - bend_editor: Ctrl+click bend editing
-// - shift_lock: Shift-lock vertical dragging
 // - waveform: Waveform preview overlay
 
 mod controls;
@@ -29,8 +28,6 @@ use crate::ui::theme::{self as ui_theme, apply_ui_text_scale, themed_font, APP_T
 
 // Constants used across kick page modules
 const AXIS_SUBDIVISIONS: usize = 10;
-const SHIFT_LOCK_X_FREEZE_AFTER_VERTICAL_RELEASE_SECONDS: f64 = 0.250;
-const SHIFT_LOCK_X_REENGAGE_HORIZONTAL_PIXELS: f32 = 4.0;
 const EDGE_BEND_HIT_RADIUS_PIXELS: f32 = 14.0;
 
 /// Main render function for kick page content wrapper.
@@ -58,7 +55,6 @@ pub(crate) fn render_controls(
 /// - Graph rendering (axes, grid, backgrounds)
 /// - Point editing (drag, select, delete)
 /// - Bend editing (Ctrl+click curve bending)
-/// - Shift-lock mode (vertical-only dragging)
 /// - Waveform preview overlay
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_editor(
@@ -110,12 +106,6 @@ pub(crate) fn render_editor(
                         app_cfg.waveform_zoom_max_percent,
                     );
             }
-        }
-        if !shift_down {
-            state.shift_locked_point = None;
-            state.shift_lock_x_freeze_until_seconds = 0.0;
-            state.shift_lock_require_horizontal_reengage = false;
-            state.shift_lock_reengage_anchor_screen_x = None;
         }
         let left_axis_padding = (62.0 * ui_scale).clamp(52.0, 120.0);
         let bottom_axis_padding = (52.0 * ui_scale).clamp(40.0, 110.0);
@@ -282,11 +272,6 @@ pub(crate) fn render_editor(
         let mut selected_points = state.selected_points.clone();
         let mut selection_drag_start = state.selection_drag_start;
         let mut selection_drag_current = state.selection_drag_current;
-        let mut shift_locked_point = state.shift_locked_point;
-        let mut shift_lock_x_freeze_until_seconds = state.shift_lock_x_freeze_until_seconds;
-        let mut shift_lock_require_horizontal_reengage =
-            state.shift_lock_require_horizontal_reengage;
-        let mut shift_lock_reengage_anchor_screen_x = state.shift_lock_reengage_anchor_screen_x;
         let mut edge_bend_drag_segment = state.edge_bend_drag_segment;
         let mut edge_bend_drag_start_pointer_y = state.edge_bend_drag_start_pointer_y;
         let mut edge_bend_drag_start_value = state.edge_bend_drag_start_value;
@@ -294,26 +279,12 @@ pub(crate) fn render_editor(
         let mut bend_hover_point: Option<Pos2> = None;
         let mut bend_hover_value: Option<f32> = None;
         let mut bend_hover_polyline: Vec<Pos2> = Vec::new();
-        let mut shift_snap_candidate: Option<usize> = None;
         let mut remove_selected_requested = graph_has_focus && (cut_shortcut || delete_shortcut);
 
         let curve_point_count = state.active_curve().points.len();
-        shift_locked_point = shift_locked_point.filter(|&idx| idx < curve_point_count);
-        if shift_locked_point.is_none() {
-            shift_lock_x_freeze_until_seconds = 0.0;
-            shift_lock_require_horizontal_reengage = false;
-            shift_lock_reengage_anchor_screen_x = None;
-        }
         selected_points.retain(|&idx| idx < curve_point_count);
         if selected_points.is_empty() {
             if let Some(idx) = selected_point.filter(|idx| *idx < curve_point_count) {
-                selected_points.push(idx);
-            }
-        }
-        if shift_down {
-            if let Some(idx) = shift_locked_point {
-                selected_point = Some(idx);
-                selected_points.clear();
                 selected_points.push(idx);
             }
         }
@@ -359,12 +330,6 @@ pub(crate) fn render_editor(
                     selected_point = Some(i);
                     selected_points.clear();
                     selected_points.push(i);
-                    if shift_down {
-                        shift_locked_point = Some(i);
-                        shift_lock_x_freeze_until_seconds = 0.0;
-                        shift_lock_require_horizontal_reengage = false;
-                        shift_lock_reengage_anchor_screen_x = None;
-                    }
                 }
 
                 if response.secondary_clicked() {
@@ -373,12 +338,6 @@ pub(crate) fn render_editor(
                     if !selected_points.contains(&i) {
                         selected_points.clear();
                         selected_points.push(i);
-                    }
-                    if shift_down {
-                        shift_locked_point = Some(i);
-                        shift_lock_x_freeze_until_seconds = 0.0;
-                        shift_lock_require_horizontal_reengage = false;
-                        shift_lock_reengage_anchor_screen_x = None;
                     }
                 }
 
@@ -396,9 +355,6 @@ pub(crate) fn render_editor(
 
                 if response.dragged() {
                     graph_response.request_focus();
-                    if shift_down && shift_locked_point == Some(i) {
-                        continue;
-                    }
                     point_dragging_this_frame = true;
                     if let Some(pointer_pos) = response.interact_pointer_pos() {
                         let mut new_point = to_normalized_with_note_end(
@@ -406,22 +362,20 @@ pub(crate) fn render_editor(
                             graph_rect,
                             note_end_display_t,
                         );
-                        if shift_down {
-                            new_point.y = points[i].y;
-                        }
                         if i == 0 || i + 1 == points.len() {
                             new_point.x = points[i].x;
+                        }
+                        let primary_drag = response.dragged_by(egui::PointerButton::Primary);
+                        let secondary_drag = response.dragged_by(egui::PointerButton::Secondary);
+                        if shift_down && primary_drag {
+                            new_point.x = points[i].x;
+                        } else if shift_down && secondary_drag {
+                            new_point.y = points[i].y;
                         }
                         points[i] = new_point;
                         selected_point = Some(i);
                         selected_points.clear();
                         selected_points.push(i);
-                        if shift_down {
-                            shift_locked_point = Some(i);
-                            shift_lock_x_freeze_until_seconds = 0.0;
-                            shift_lock_require_horizontal_reengage = false;
-                            shift_lock_reengage_anchor_screen_x = None;
-                        }
                         constrain_curve_points(points);
                     }
                 }
@@ -563,103 +517,6 @@ pub(crate) fn render_editor(
                 }
             }
 
-            if shift_down {
-                let pointer_primary_down = ui.input(|i| i.pointer.primary_down());
-                let pointer_primary_released =
-                    ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-                let pointer_primary_clicked = ui.input(|i| i.pointer.primary_clicked());
-                let pointer_pos = ui.input(|i| i.pointer.hover_pos());
-
-                if let Some(pointer_pos) = pointer_pos.filter(|pos| graph_rect.contains(*pos)) {
-                    if shift_locked_point.is_none() {
-                        let snap_assist_radius = 30.0_f32;
-                        let mut best: Option<(usize, f32)> = None;
-                        for (idx, point) in points.iter().enumerate() {
-                            let screen =
-                                to_screen_with_note_end(*point, graph_rect, note_end_display_t);
-                            let distance = screen.distance(pointer_pos);
-                            if distance <= snap_assist_radius {
-                                if let Some((_, best_distance)) = best {
-                                    if distance < best_distance {
-                                        best = Some((idx, distance));
-                                    }
-                                } else {
-                                    best = Some((idx, distance));
-                                }
-                            }
-                        }
-
-                        if let Some((idx, _)) = best {
-                            shift_snap_candidate = Some(idx);
-                            if pointer_primary_clicked {
-                                shift_locked_point = Some(idx);
-                                shift_lock_x_freeze_until_seconds = 0.0;
-                                shift_lock_require_horizontal_reengage = false;
-                                shift_lock_reengage_anchor_screen_x = None;
-                                selected_point = Some(idx);
-                                selected_points.clear();
-                                selected_points.push(idx);
-                            }
-                        }
-                    }
-
-                    if let Some(idx) = shift_locked_point.filter(|&idx| idx < points.len()) {
-                        let locked_screen_x =
-                            to_screen_with_note_end(points[idx], graph_rect, note_end_display_t).x;
-                        let virtual_pointer_pos = Pos2::new(locked_screen_x, pointer_pos.y);
-                        let mapped_point = to_normalized_with_note_end(
-                            virtual_pointer_pos,
-                            graph_rect,
-                            note_end_display_t,
-                        );
-                        let mut new_point = points[idx];
-                        let now_seconds = ui.input(|i| i.time);
-                        if pointer_primary_released {
-                            shift_lock_x_freeze_until_seconds =
-                                now_seconds + SHIFT_LOCK_X_FREEZE_AFTER_VERTICAL_RELEASE_SECONDS;
-                            shift_lock_require_horizontal_reengage = true;
-                            shift_lock_reengage_anchor_screen_x = Some(locked_screen_x);
-                        }
-                        if pointer_primary_down {
-                            new_point.y = mapped_point.y;
-                            shift_lock_require_horizontal_reengage = true;
-                            shift_lock_reengage_anchor_screen_x = Some(locked_screen_x);
-                        } else {
-                            if shift_lock_require_horizontal_reengage {
-                                if let Some(anchor_x) = shift_lock_reengage_anchor_screen_x {
-                                    if (pointer_pos.x - anchor_x).abs()
-                                        >= SHIFT_LOCK_X_REENGAGE_HORIZONTAL_PIXELS
-                                    {
-                                        shift_lock_require_horizontal_reengage = false;
-                                        shift_lock_reengage_anchor_screen_x = None;
-                                    }
-                                } else {
-                                    shift_lock_reengage_anchor_screen_x = Some(pointer_pos.x);
-                                }
-                            }
-
-                            if now_seconds >= shift_lock_x_freeze_until_seconds
-                                && !shift_lock_require_horizontal_reengage
-                                && idx > 0
-                                && idx + 1 < points.len()
-                            {
-                                new_point.x = mapped_point.x;
-                            }
-                        }
-                        if (new_point.x - points[idx].x).abs() > f32::EPSILON
-                            || (new_point.y - points[idx].y).abs() > f32::EPSILON
-                        {
-                            points[idx] = new_point;
-                            point_dragging_this_frame = true;
-                            selected_point = Some(idx);
-                            selected_points.clear();
-                            selected_points.push(idx);
-                            shift_locked_point = Some(idx);
-                            constrain_curve_points(points);
-                        }
-                    }
-                }
-            }
 
             if graph_response.drag_started_by(egui::PointerButton::Primary)
                 && !point_dragging_this_frame
@@ -786,10 +643,6 @@ pub(crate) fn render_editor(
         state.selected_points = selected_points;
         state.selection_drag_start = selection_drag_start;
         state.selection_drag_current = selection_drag_current;
-        state.shift_locked_point = shift_locked_point;
-        state.shift_lock_x_freeze_until_seconds = shift_lock_x_freeze_until_seconds;
-        state.shift_lock_require_horizontal_reengage = shift_lock_require_horizontal_reengage;
-        state.shift_lock_reengage_anchor_screen_x = shift_lock_reengage_anchor_screen_x;
         state.edge_bend_drag_segment = edge_bend_drag_segment;
         state.edge_bend_drag_start_pointer_y = edge_bend_drag_start_pointer_y;
         state.edge_bend_drag_start_value = edge_bend_drag_start_value;
@@ -917,36 +770,6 @@ pub(crate) fn render_editor(
             painter.circle_stroke(*point, 7.0, Stroke::new(1.0, APP_THEME.point_outline()));
             painter.circle_stroke(*point, 10.5, Stroke::new(1.5, APP_THEME.node_ring()));
 
-            if shift_down && shift_snap_candidate == Some(i) {
-                painter.circle_stroke(
-                    *point,
-                    14.0,
-                    Stroke::new(1.5, Color32::from_rgba_unmultiplied(255, 72, 72, 180)),
-                );
-            }
-
-            if shift_down && state.shift_locked_point == Some(i) {
-                painter.circle_stroke(
-                    *point,
-                    15.0,
-                    Stroke::new(2.0, ui_theme::accent_color()),
-                );
-                let cross_len = 8.0;
-                painter.line_segment(
-                    [
-                        Pos2::new(point.x - cross_len, point.y),
-                        Pos2::new(point.x + cross_len, point.y),
-                    ],
-                    Stroke::new(1.6, APP_THEME.selected_point()),
-                );
-                painter.line_segment(
-                    [
-                        Pos2::new(point.x, point.y - cross_len),
-                        Pos2::new(point.x, point.y + cross_len),
-                    ],
-                    Stroke::new(1.6, APP_THEME.selected_point()),
-                );
-            }
 
             if let Some(value_point) = active_points.get(i).copied() {
                 let label = point_value_label(active_kind, value_point, tuning_a4_hz, state.kick_pitch_hz);
@@ -1010,7 +833,7 @@ pub(crate) fn render_editor(
             ui.label(format!("{} points selected.", state.selected_points.len()));
         }
         ui.label(
-            "Click/drag points to edit. Drag box to multi-select. Delete/Backspace/Ctrl(Cmd)+X removes selected points.",
+            "Click/drag points to edit. Shift+left drag = vertical-only, Shift+right drag = horizontal-only. Drag box to multi-select. Delete/Backspace/Ctrl(Cmd)+X removes selected points.",
         );
         });
     if point_dragging_this_frame && state.point_drag_snapshot.is_none() {
