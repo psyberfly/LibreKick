@@ -17,15 +17,21 @@ pub(crate) fn render(
     page_content: impl FnOnce(&mut egui::Ui, &mut BezierUiState),
 ) {
     let section_gap = (10.0 * ui_scale).max(8.0);
-    let page_width = 1500.0 * ui_scale;
-
-    menu_bar::render(ui, ui_scale, state, params, setter, page_width, history_action_applied);
 
     let available = ui.available_size_before_wrap();
     let section_height = available.y.max(320.0 * ui_scale);
 
     // Fixed nav menu width (scaled with the rest of the UI).
     let menu_width = 130.0 * ui_scale;
+
+    // Cap the page width so the nav menu always fits inside the window.
+    // Page contents can grow their min_rect beyond the allocated width (egui
+    // allocates what is actually used), which would otherwise push the nav
+    // column off the right edge of the window.
+    let page_width = (1500.0 * ui_scale)
+        .min((available.x - menu_width - section_gap).max(320.0 * ui_scale));
+
+    menu_bar::render(ui, ui_scale, state, params, setter, page_width, history_action_applied);
 
     ui.horizontal(|ui| {
         // Page content on the left — fixed width.
@@ -34,6 +40,7 @@ pub(crate) fn render(
             Layout::top_down(Align::Min),
             |ui| {
                 ui.set_max_width(page_width);
+                ui.set_clip_rect(ui.max_rect());
                 ui.group(|ui| {
                     page_content(ui, state);
                 });

@@ -57,19 +57,19 @@ pub(crate) fn render(
     let traces = [
         oscilloscope::OscilloscopeTrace {
             label: "Kick",
-            color: Color32::from_rgb(245, 170, 112),
+            color: Color32::from_rgb(255, 168, 60),
             samples: kick,
             visible: state.osc_show_kick,
         },
         oscilloscope::OscilloscopeTrace {
             label: "Bass",
-            color: Color32::from_rgb(96, 174, 255),
+            color: Color32::from_rgb(255, 210, 110),
             samples: bass,
             visible: state.osc_show_bass,
         },
         oscilloscope::OscilloscopeTrace {
             label: "Total",
-            color: Color32::from_rgb(114, 220, 129),
+            color: Color32::from_rgb(255, 240, 214),
             samples: sum,
             visible: state.osc_show_sum,
         },

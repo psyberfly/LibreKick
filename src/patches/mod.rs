@@ -4,6 +4,10 @@ use std::{
 };
 
 use crate::config;
+use crate::shared::{
+    LfoParams, LfoShape, ModDest, ModRouting, ModSource, BASS_LFO_COUNT,
+    BASS_MOD_SLOT_COUNT,
+};
 
 pub const PATCH_FILE_EXTENSION: &str = ".librekick_patch";
 pub const BUILTIN_DEFAULT_PATCH_NAME: &str = "default_psy_kick";
@@ -103,6 +107,31 @@ pub struct BassPatchData {
     pub level: Option<f32>,
     /// Oscillator start phase in degrees. `None` for older patches.
     pub phase_deg: Option<f32>,
+    /// OSC A level in the source mixer. Defaults to 1.0 for older patches,
+    /// which reproduces the original single-oscillator behaviour.
+    pub osc_a_level: f32,
+    /// Unison voice count. Defaults to 1 (no unison) for older patches.
+    pub osc_a_unison: i32,
+    pub osc_a_unison_detune: f32,
+    pub osc_a_unison_blend: f32,
+    pub osc_b_enabled: bool,
+    pub osc_b_waveform: String,
+    pub osc_b_level: f32,
+    pub osc_b_octave: i32,
+    pub osc_b_detune_cents: f32,
+    pub osc_b_unison: i32,
+    pub osc_b_unison_detune: f32,
+    pub osc_b_unison_blend: f32,
+    pub sub_enabled: bool,
+    pub sub_waveform: String,
+    pub sub_level: f32,
+    pub sub_octave: i32,
+    pub noise_enabled: bool,
+    pub noise_level: f32,
+    /// Per-slot LFOs. Defaults to all-disabled for older patches.
+    pub lfos: [LfoParams; BASS_LFO_COUNT],
+    /// Modulation matrix rows. Defaults to unassigned for older patches.
+    pub mod_matrix: [ModRouting; BASS_MOD_SLOT_COUNT],
 }
 
 pub fn set_default_patch_name(name: &str) -> Result<(), String> {
@@ -311,6 +340,26 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut bass_filter_2_bends: Option<Vec<f32>> = None;
     let mut bass_level: Option<f32> = None;
     let mut bass_phase_deg: Option<f32> = None;
+    let mut bass_osc_a_level: Option<f32> = None;
+    let mut bass_osc_a_unison: Option<i32> = None;
+    let mut bass_osc_a_unison_detune: Option<f32> = None;
+    let mut bass_osc_a_unison_blend: Option<f32> = None;
+    let mut bass_osc_b_unison: Option<i32> = None;
+    let mut bass_osc_b_unison_detune: Option<f32> = None;
+    let mut bass_osc_b_unison_blend: Option<f32> = None;
+    let mut bass_osc_b_enabled: Option<bool> = None;
+    let mut bass_osc_b_waveform: Option<String> = None;
+    let mut bass_osc_b_level: Option<f32> = None;
+    let mut bass_osc_b_octave: Option<i32> = None;
+    let mut bass_osc_b_detune_cents: Option<f32> = None;
+    let mut bass_sub_enabled: Option<bool> = None;
+    let mut bass_sub_waveform: Option<String> = None;
+    let mut bass_sub_level: Option<f32> = None;
+    let mut bass_sub_octave: Option<i32> = None;
+    let mut bass_noise_enabled: Option<bool> = None;
+    let mut bass_noise_level: Option<f32> = None;
+    let mut bass_lfos: Vec<(usize, LfoParams)> = Vec::new();
+    let mut bass_mod_matrix: Vec<(usize, ModRouting)> = Vec::new();
 
     // Second bass note slot, stored under `bass2_*` keys.
     let mut bass2_seen = false;
@@ -460,6 +509,81 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 bass_seen = true;
                 bass_phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0));
             }
+            "bass_osc_a_level" => {
+                bass_seen = true;
+                bass_osc_a_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
+            "bass_osc_a_unison" => {
+                bass_seen = true;
+                bass_osc_a_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8));
+            }
+            "bass_osc_a_unison_detune" => {
+                bass_seen = true;
+                bass_osc_a_unison_detune =
+                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0));
+            }
+            "bass_osc_a_unison_blend" => {
+                bass_seen = true;
+                bass_osc_a_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
+            "bass_osc_b_unison" => {
+                bass_seen = true;
+                bass_osc_b_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8));
+            }
+            "bass_osc_b_unison_detune" => {
+                bass_seen = true;
+                bass_osc_b_unison_detune =
+                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0));
+            }
+            "bass_osc_b_unison_blend" => {
+                bass_seen = true;
+                bass_osc_b_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
+            "bass_osc_b_enabled" => {
+                bass_seen = true;
+                bass_osc_b_enabled = value.parse::<bool>().ok();
+            }
+            "bass_osc_b_waveform" => {
+                bass_seen = true;
+                bass_osc_b_waveform = Some(value.to_owned());
+            }
+            "bass_osc_b_level" => {
+                bass_seen = true;
+                bass_osc_b_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
+            "bass_osc_b_octave" => {
+                bass_seen = true;
+                bass_osc_b_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4));
+            }
+            "bass_osc_b_detune_cents" => {
+                bass_seen = true;
+                bass_osc_b_detune_cents =
+                    value.parse::<f32>().ok().map(|v| v.clamp(-1200.0, 1200.0));
+            }
+            "bass_sub_enabled" => {
+                bass_seen = true;
+                bass_sub_enabled = value.parse::<bool>().ok();
+            }
+            "bass_sub_waveform" => {
+                bass_seen = true;
+                bass_sub_waveform = Some(value.to_owned());
+            }
+            "bass_sub_level" => {
+                bass_seen = true;
+                bass_sub_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
+            "bass_sub_octave" => {
+                bass_seen = true;
+                bass_sub_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4));
+            }
+            "bass_noise_enabled" => {
+                bass_seen = true;
+                bass_noise_enabled = value.parse::<bool>().ok();
+            }
+            "bass_noise_level" => {
+                bass_seen = true;
+                bass_noise_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
+            }
             "kick_oscillator_waveform" => {
                 kick_seen = true;
                 kick_oscillator_waveform = Some(value.to_owned());
@@ -509,7 +633,19 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 arrange_notes = Some(parse_arrange_notes(value));
             }
             _ => {
-                if let Some(rest) = key.strip_prefix("bass2_") {
+                if let Some(index) = parse_indexed_key(key, "bass_lfo_", BASS_LFO_COUNT) {
+                    bass_seen = true;
+                    if let Some(lfo) = parse_lfo_params(value) {
+                        bass_lfos.push((index, lfo));
+                    }
+                } else if let Some(index) =
+                    parse_indexed_key(key, "bass_mod_", BASS_MOD_SLOT_COUNT)
+                {
+                    bass_seen = true;
+                    if let Some(routing) = parse_mod_routing(value) {
+                        bass_mod_matrix.push((index, routing));
+                    }
+                } else if let Some(rest) = key.strip_prefix("bass2_") {
                     bass2_seen = true;
                     bass2_raw.parse_key(rest, value)?;
                 }
@@ -558,6 +694,43 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 filter_2_bends: bass_filter_2_bends.unwrap_or_default(),
                 level: bass_level,
                 phase_deg: bass_phase_deg,
+                osc_a_level: bass_osc_a_level.unwrap_or(1.0),
+                osc_a_unison: bass_osc_a_unison.unwrap_or(1),
+                osc_a_unison_detune: bass_osc_a_unison_detune.unwrap_or(15.0),
+                osc_a_unison_blend: bass_osc_a_unison_blend.unwrap_or(0.75),
+                osc_b_enabled: bass_osc_b_enabled.unwrap_or(false),
+                osc_b_waveform: bass_osc_b_waveform.unwrap_or_else(|| "saw".to_owned()),
+                osc_b_level: bass_osc_b_level.unwrap_or(0.5),
+                osc_b_octave: bass_osc_b_octave.unwrap_or(0),
+                osc_b_detune_cents: bass_osc_b_detune_cents.unwrap_or(0.0),
+                osc_b_unison: bass_osc_b_unison.unwrap_or(1),
+                osc_b_unison_detune: bass_osc_b_unison_detune.unwrap_or(15.0),
+                osc_b_unison_blend: bass_osc_b_unison_blend.unwrap_or(0.75),
+                sub_enabled: bass_sub_enabled.unwrap_or(false),
+                sub_waveform: bass_sub_waveform.unwrap_or_else(|| "sine".to_owned()),
+                sub_level: bass_sub_level.unwrap_or(0.5),
+                sub_octave: bass_sub_octave.unwrap_or(-1),
+                noise_enabled: bass_noise_enabled.unwrap_or(false),
+                noise_level: bass_noise_level.unwrap_or(0.25),
+                lfos: {
+                    let mut lfos = [LfoParams::default(); BASS_LFO_COUNT];
+                    for (index, lfo) in bass_lfos {
+                        if let Some(slot) = lfos.get_mut(index) {
+                            *slot = lfo;
+                        }
+                    }
+                    lfos
+                },
+                mod_matrix: {
+                    let mut matrix =
+                        [ModRouting::default(); BASS_MOD_SLOT_COUNT];
+                    for (index, routing) in bass_mod_matrix {
+                        if let Some(row) = matrix.get_mut(index) {
+                            *row = routing;
+                        }
+                    }
+                    matrix
+                },
             })
         } else {
             None
@@ -617,6 +790,28 @@ struct BassRaw {
     filter_2_bends: Option<Vec<f32>>,
     level: Option<f32>,
     phase_deg: Option<f32>,
+    osc_a_level: Option<f32>,
+    osc_a_unison: Option<i32>,
+    osc_a_unison_detune: Option<f32>,
+    osc_a_unison_blend: Option<f32>,
+    osc_b_enabled: Option<bool>,
+    osc_b_waveform: Option<String>,
+    osc_b_level: Option<f32>,
+    osc_b_octave: Option<i32>,
+    osc_b_detune_cents: Option<f32>,
+    osc_b_unison: Option<i32>,
+    osc_b_unison_detune: Option<f32>,
+    osc_b_unison_blend: Option<f32>,
+    sub_enabled: Option<bool>,
+    sub_waveform: Option<String>,
+    sub_level: Option<f32>,
+    sub_octave: Option<i32>,
+    noise_enabled: Option<bool>,
+    noise_level: Option<f32>,
+    /// (index, LFO) pairs from `bass2_lfo_<n>` keys.
+    lfos: Vec<(usize, LfoParams)>,
+    /// (index, routing) pairs from `bass2_mod_<n>` keys.
+    mod_matrix: Vec<(usize, ModRouting)>,
 }
 
 impl BassRaw {
@@ -656,7 +851,64 @@ impl BassRaw {
             "phase_deg" => {
                 self.phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0))
             }
-            _ => {}
+            "osc_a_level" => {
+                self.osc_a_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
+            }
+            "osc_a_unison" => {
+                self.osc_a_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8))
+            }
+            "osc_a_unison_detune" => {
+                self.osc_a_unison_detune =
+                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0))
+            }
+            "osc_a_unison_blend" => {
+                self.osc_a_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
+            }
+            "osc_b_unison" => {
+                self.osc_b_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8))
+            }
+            "osc_b_unison_detune" => {
+                self.osc_b_unison_detune =
+                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0))
+            }
+            "osc_b_unison_blend" => {
+                self.osc_b_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
+            }
+            "osc_b_enabled" => self.osc_b_enabled = value.parse::<bool>().ok(),
+            "osc_b_waveform" => self.osc_b_waveform = Some(value.to_owned()),
+            "osc_b_level" => {
+                self.osc_b_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
+            }
+            "osc_b_octave" => {
+                self.osc_b_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4))
+            }
+            "osc_b_detune_cents" => {
+                self.osc_b_detune_cents =
+                    value.parse::<f32>().ok().map(|v| v.clamp(-1200.0, 1200.0))
+            }
+            "sub_enabled" => self.sub_enabled = value.parse::<bool>().ok(),
+            "sub_waveform" => self.sub_waveform = Some(value.to_owned()),
+            "sub_level" => {
+                self.sub_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
+            }
+            "sub_octave" => self.sub_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4)),
+            "noise_enabled" => self.noise_enabled = value.parse::<bool>().ok(),
+            "noise_level" => {
+                self.noise_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
+            }
+            _ => {
+                if let Some(index) = parse_indexed_key(key, "lfo_", BASS_LFO_COUNT) {
+                    if let Some(lfo) = parse_lfo_params(value) {
+                        self.lfos.push((index, lfo));
+                    }
+                } else if let Some(index) =
+                    parse_indexed_key(key, "mod_", BASS_MOD_SLOT_COUNT)
+                {
+                    if let Some(routing) = parse_mod_routing(value) {
+                        self.mod_matrix.push((index, routing));
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -684,8 +936,118 @@ impl BassRaw {
             filter_2_bends: self.filter_2_bends.unwrap_or_default(),
             level: self.level,
             phase_deg: self.phase_deg,
+            osc_a_level: self.osc_a_level.unwrap_or(1.0),
+            osc_a_unison: self.osc_a_unison.unwrap_or(1),
+            osc_a_unison_detune: self.osc_a_unison_detune.unwrap_or(15.0),
+            osc_a_unison_blend: self.osc_a_unison_blend.unwrap_or(0.75),
+            osc_b_enabled: self.osc_b_enabled.unwrap_or(false),
+            osc_b_waveform: self.osc_b_waveform.unwrap_or_else(|| "saw".to_owned()),
+            osc_b_level: self.osc_b_level.unwrap_or(0.5),
+            osc_b_octave: self.osc_b_octave.unwrap_or(0),
+            osc_b_detune_cents: self.osc_b_detune_cents.unwrap_or(0.0),
+            osc_b_unison: self.osc_b_unison.unwrap_or(1),
+            osc_b_unison_detune: self.osc_b_unison_detune.unwrap_or(15.0),
+            osc_b_unison_blend: self.osc_b_unison_blend.unwrap_or(0.75),
+            sub_enabled: self.sub_enabled.unwrap_or(false),
+            sub_waveform: self.sub_waveform.unwrap_or_else(|| "sine".to_owned()),
+            sub_level: self.sub_level.unwrap_or(0.5),
+            sub_octave: self.sub_octave.unwrap_or(-1),
+            noise_enabled: self.noise_enabled.unwrap_or(false),
+            noise_level: self.noise_level.unwrap_or(0.25),
+            lfos: {
+                let mut lfos = [LfoParams::default(); BASS_LFO_COUNT];
+                for (index, lfo) in self.lfos {
+                    if let Some(slot) = lfos.get_mut(index) {
+                        *slot = lfo;
+                    }
+                }
+                lfos
+            },
+            mod_matrix: {
+                let mut matrix = [ModRouting::default(); BASS_MOD_SLOT_COUNT];
+                for (index, routing) in self.mod_matrix {
+                    if let Some(row) = matrix.get_mut(index) {
+                        *row = routing;
+                    }
+                }
+                matrix
+            },
         }
     }
+}
+
+/// Extracts the zero-based index from `<prefix><1-based n>` patch keys like
+/// `bass_lfo_3` / `mod_2`. Returns None when the key does not match or the
+/// index is out of range.
+fn parse_indexed_key(key: &str, prefix: &str, count: usize) -> Option<usize> {
+    let index = key.strip_prefix(prefix)?.parse::<usize>().ok()?;
+    if (1..=count).contains(&index) {
+        Some(index - 1)
+    } else {
+        None
+    }
+}
+
+/// `enabled,shape,rate_hz,rate_beats,tempo_sync,depth,phase_deg,retrigger`.
+fn parse_lfo_params(value: &str) -> Option<LfoParams> {
+    let mut parts = value.split(',');
+    let enabled = parts.next()?.parse::<bool>().ok()?;
+    let shape = LfoShape::from_key(parts.next()?.trim())?;
+    let rate_hz = parts.next()?.parse::<f32>().ok()?.clamp(0.01, 100.0);
+    let rate_beats = parts.next()?.parse::<f32>().ok()?.clamp(0.0625, 64.0);
+    let tempo_sync = parts.next()?.parse::<bool>().ok()?;
+    let depth = parts.next()?.parse::<f32>().ok()?.clamp(0.0, 1.0);
+    let phase_deg = parts.next()?.parse::<f32>().ok()?.clamp(0.0, 360.0);
+    let retrigger = parts
+        .next()
+        .and_then(|raw| raw.parse::<bool>().ok())
+        .unwrap_or(true);
+    Some(LfoParams {
+        enabled,
+        shape,
+        rate_hz,
+        rate_beats,
+        tempo_sync,
+        depth,
+        phase_deg,
+        retrigger,
+    })
+}
+
+fn lfo_to_string(lfo: &LfoParams) -> String {
+    format!(
+        "{},{},{},{},{},{},{},{}",
+        lfo.enabled,
+        lfo.shape.as_key(),
+        lfo.rate_hz,
+        lfo.rate_beats,
+        lfo.tempo_sync,
+        lfo.depth,
+        lfo.phase_deg,
+        lfo.retrigger
+    )
+}
+
+/// `source,dest,amount`.
+fn parse_mod_routing(value: &str) -> Option<ModRouting> {
+    let mut parts = value.split(',');
+    let source = ModSource::from_key(parts.next()?.trim())?;
+    let dest = ModDest::from_key(parts.next()?.trim())?;
+    let amount = parts.next()?.parse::<f32>().ok()?.clamp(-1.0, 1.0);
+    Some(ModRouting {
+        source,
+        dest,
+        amount,
+    })
+}
+
+fn mod_routing_to_string(routing: &ModRouting) -> String {
+    format!(
+        "{},{},{}",
+        routing.source.as_key(),
+        routing.dest.as_key(),
+        routing.amount
+    )
 }
 
 /// Parses arrange notes stored as `row,bar_pos[,slot]|...`.
@@ -760,6 +1122,14 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
     ensure_patches_dir()?;
 
     let path = patch_file_path(&patch.name)?;
+    let serialized = serialize_patch(patch);
+
+    fs::write(&path, serialized)
+        .map_err(|error| format!("Failed to save patch '{}': {error}", path.display()))
+}
+
+/// Renders a patch to its on-disk key=value representation.
+fn serialize_patch(patch: &PatchData) -> String {
     let mut lines = vec![
         format!("name={}", patch.name),
         format!("description={}", sanitize_patch_description(&patch.description)),
@@ -811,6 +1181,53 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         if let Some(phase_deg) = bass.phase_deg {
             lines.push(format!("bass_phase_deg={phase_deg}"));
         }
+        lines.push(format!("bass_osc_a_level={}", bass.osc_a_level));
+        lines.push(format!("bass_osc_a_unison={}", bass.osc_a_unison));
+        lines.push(format!(
+            "bass_osc_a_unison_detune={}",
+            bass.osc_a_unison_detune
+        ));
+        lines.push(format!(
+            "bass_osc_a_unison_blend={}",
+            bass.osc_a_unison_blend
+        ));
+        lines.push(format!("bass_osc_b_unison={}", bass.osc_b_unison));
+        lines.push(format!(
+            "bass_osc_b_unison_detune={}",
+            bass.osc_b_unison_detune
+        ));
+        lines.push(format!(
+            "bass_osc_b_unison_blend={}",
+            bass.osc_b_unison_blend
+        ));
+        lines.push(format!("bass_osc_b_enabled={}", bass.osc_b_enabled));
+        lines.push(format!("bass_osc_b_waveform={}", bass.osc_b_waveform));
+        lines.push(format!("bass_osc_b_level={}", bass.osc_b_level));
+        lines.push(format!("bass_osc_b_octave={}", bass.osc_b_octave));
+        lines.push(format!(
+            "bass_osc_b_detune_cents={}",
+            bass.osc_b_detune_cents
+        ));
+        lines.push(format!("bass_sub_enabled={}", bass.sub_enabled));
+        lines.push(format!("bass_sub_waveform={}", bass.sub_waveform));
+        lines.push(format!("bass_sub_level={}", bass.sub_level));
+        lines.push(format!("bass_sub_octave={}", bass.sub_octave));
+        lines.push(format!("bass_noise_enabled={}", bass.noise_enabled));
+        lines.push(format!("bass_noise_level={}", bass.noise_level));
+        for (index, lfo) in bass.lfos.iter().enumerate() {
+            if *lfo != LfoParams::default() {
+                lines.push(format!("bass_lfo_{}={}", index + 1, lfo_to_string(lfo)));
+            }
+        }
+        for (index, routing) in bass.mod_matrix.iter().enumerate() {
+            if *routing != ModRouting::default() {
+                lines.push(format!(
+                    "bass_mod_{}={}",
+                    index + 1,
+                    mod_routing_to_string(routing)
+                ));
+            }
+        }
     }
 
     if let Some(bass2) = &patch.bass2 {
@@ -861,6 +1278,53 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         if let Some(phase_deg) = bass2.phase_deg {
             lines.push(format!("bass2_phase_deg={phase_deg}"));
         }
+        lines.push(format!("bass2_osc_a_level={}", bass2.osc_a_level));
+        lines.push(format!("bass2_osc_a_unison={}", bass2.osc_a_unison));
+        lines.push(format!(
+            "bass2_osc_a_unison_detune={}",
+            bass2.osc_a_unison_detune
+        ));
+        lines.push(format!(
+            "bass2_osc_a_unison_blend={}",
+            bass2.osc_a_unison_blend
+        ));
+        lines.push(format!("bass2_osc_b_unison={}", bass2.osc_b_unison));
+        lines.push(format!(
+            "bass2_osc_b_unison_detune={}",
+            bass2.osc_b_unison_detune
+        ));
+        lines.push(format!(
+            "bass2_osc_b_unison_blend={}",
+            bass2.osc_b_unison_blend
+        ));
+        lines.push(format!("bass2_osc_b_enabled={}", bass2.osc_b_enabled));
+        lines.push(format!("bass2_osc_b_waveform={}", bass2.osc_b_waveform));
+        lines.push(format!("bass2_osc_b_level={}", bass2.osc_b_level));
+        lines.push(format!("bass2_osc_b_octave={}", bass2.osc_b_octave));
+        lines.push(format!(
+            "bass2_osc_b_detune_cents={}",
+            bass2.osc_b_detune_cents
+        ));
+        lines.push(format!("bass2_sub_enabled={}", bass2.sub_enabled));
+        lines.push(format!("bass2_sub_waveform={}", bass2.sub_waveform));
+        lines.push(format!("bass2_sub_level={}", bass2.sub_level));
+        lines.push(format!("bass2_sub_octave={}", bass2.sub_octave));
+        lines.push(format!("bass2_noise_enabled={}", bass2.noise_enabled));
+        lines.push(format!("bass2_noise_level={}", bass2.noise_level));
+        for (index, lfo) in bass2.lfos.iter().enumerate() {
+            if *lfo != LfoParams::default() {
+                lines.push(format!("bass2_lfo_{}={}", index + 1, lfo_to_string(lfo)));
+            }
+        }
+        for (index, routing) in bass2.mod_matrix.iter().enumerate() {
+            if *routing != ModRouting::default() {
+                lines.push(format!(
+                    "bass2_mod_{}={}",
+                    index + 1,
+                    mod_routing_to_string(routing)
+                ));
+            }
+        }
     }
 
     if let Some(kick) = &patch.kick {
@@ -887,10 +1351,7 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
         lines.push(format!("arrange_notes={}", arrange_notes_to_string(&arrange.notes)));
     }
 
-    let serialized = lines.join("\n");
-
-    fs::write(&path, serialized)
-        .map_err(|error| format!("Failed to save patch '{}': {error}", path.display()))
+    lines.join("\n")
 }
 
 pub fn load_patch(name: &str) -> Result<PatchData, String> {
@@ -975,4 +1436,94 @@ pub fn load_settings() -> Result<Option<UiSettingsData>, String> {
         tuning_a4_hz: tuning_a4_hz.unwrap_or(432.0),
         display_scale: display_scale.unwrap_or(1.0).clamp(0.5, 2.0),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal patch using only the pre-OSC-B key set.
+    const LEGACY_PATCH: &str = "\
+name=legacy
+tuning_a4_hz=432
+note_end_ms=145
+max_note_length_ms=1000
+waveform_zoom_percent=100
+amplitude_points=0.000000,1.000000|1.000000,0.000000
+pitch_points=0.000000,0.500000|1.000000,0.000000
+bass_oscillator_waveform=saw
+bass_pitch_hz=45
+bass_cutoff_hz=182
+bass_filter_mode=lowpass
+";
+
+    /// A patch saved before the source mixer existed must load with OSC A at
+    /// unity and every new source disabled, which reproduces the original
+    /// single-oscillator signal path exactly.
+    #[test]
+    fn legacy_patch_defaults_to_single_oscillator() {
+        let patch = parse_patch(LEGACY_PATCH, None).expect("legacy patch should parse");
+        let bass = patch.bass.expect("bass section should be present");
+
+        assert_eq!(bass.osc_a_level, 1.0);
+        assert!(!bass.osc_b_enabled);
+        assert!(!bass.sub_enabled);
+        assert!(!bass.noise_enabled);
+
+        // Pre-existing fields must keep their original values.
+        assert_eq!(bass.pitch_hz, 45.0);
+        assert_eq!(bass.cutoff_hz, 182.0);
+        assert_eq!(bass.oscillator_waveform, "saw");
+    }
+
+    /// The second slot shares the same backward-compatible defaults.
+    #[test]
+    fn legacy_second_slot_defaults_to_single_oscillator() {
+        let raw = format!("{LEGACY_PATCH}bass2_oscillator_waveform=saw\n");
+        let patch = parse_patch(&raw, None).expect("legacy patch should parse");
+        let bass2 = patch.bass2.expect("bass2 section should be present");
+
+        assert_eq!(bass2.osc_a_level, 1.0);
+        assert!(!bass2.osc_b_enabled);
+        assert!(!bass2.sub_enabled);
+        assert!(!bass2.noise_enabled);
+        assert_eq!(bass2.sub_octave, -1);
+    }
+
+    /// Source settings must survive a save/parse round trip for both slots.
+    #[test]
+    fn source_settings_round_trip() {
+        let mut patch = parse_patch(LEGACY_PATCH, None).expect("legacy patch should parse");
+        {
+            let bass = patch.bass.as_mut().expect("bass section");
+            bass.osc_a_level = 0.75;
+            bass.osc_b_enabled = true;
+            bass.osc_b_waveform = "square".to_owned();
+            bass.osc_b_level = 0.4;
+            bass.osc_b_octave = -1;
+            bass.osc_b_detune_cents = 12.0;
+            bass.sub_enabled = true;
+            bass.sub_waveform = "sine".to_owned();
+            bass.sub_level = 0.6;
+            bass.sub_octave = -2;
+            bass.noise_enabled = true;
+            bass.noise_level = 0.3;
+        }
+
+        let serialized = serialize_patch(&patch);
+        let reparsed = parse_patch(&serialized, None).expect("round trip should parse");
+        let bass = reparsed.bass.expect("bass section");
+
+        assert_eq!(bass.osc_a_level, 0.75);
+        assert!(bass.osc_b_enabled);
+        assert_eq!(bass.osc_b_waveform, "square");
+        assert_eq!(bass.osc_b_level, 0.4);
+        assert_eq!(bass.osc_b_octave, -1);
+        assert_eq!(bass.osc_b_detune_cents, 12.0);
+        assert!(bass.sub_enabled);
+        assert_eq!(bass.sub_level, 0.6);
+        assert_eq!(bass.sub_octave, -2);
+        assert!(bass.noise_enabled);
+        assert_eq!(bass.noise_level, 0.3);
+    }
 }

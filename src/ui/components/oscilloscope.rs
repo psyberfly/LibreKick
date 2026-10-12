@@ -1,5 +1,7 @@
 use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
+use crate::ui::theme::{crt_overlay, phosphor_color, APP_THEME};
+
 pub(crate) struct OscilloscopeSettings {
     pub(crate) zoom_x: f32,
     pub(crate) zoom_y: f32,
@@ -26,12 +28,12 @@ pub(crate) fn render(
     let graph_rect = outer_rect.shrink2(Vec2::new(14.0 * ui_scale, 16.0 * ui_scale));
     let painter = ui.painter_at(outer_rect);
 
-    painter.rect_filled(outer_rect, 4.0, Color32::from_rgb(16, 19, 22));
-    painter.rect_filled(graph_rect, 4.0, Color32::from_rgb(20, 24, 28));
+    painter.rect_filled(outer_rect, 4.0, APP_THEME.graph_bg());
+    painter.rect_filled(graph_rect, 4.0, APP_THEME.screen_bg());
     painter.rect_stroke(
         graph_rect,
         4.0,
-        Stroke::new(1.0, Color32::from_rgb(90, 95, 102)),
+        Stroke::new(1.0, APP_THEME.graph_border()),
         egui::StrokeKind::Inside,
     );
 
@@ -49,7 +51,7 @@ pub(crate) fn render(
         Align2::LEFT_TOP,
         "Realtime Oscilloscope",
         egui::FontId::proportional(11.0 * ui_scale),
-        Color32::from_rgb(185, 191, 198),
+        phosphor_color(),
     );
 
     let mut legend_x = graph_rect.left() + 8.0 * ui_scale;
@@ -69,14 +71,16 @@ pub(crate) fn render(
             Align2::LEFT_TOP,
             text,
             egui::FontId::proportional(10.0 * ui_scale),
-            Color32::from_rgb(185, 191, 198),
+            APP_THEME.axis_tick(),
         );
         legend_x += (text.len() as f32 * 7.0 + 36.0) * ui_scale;
     }
+
+    crt_overlay(&painter, outer_rect, 4.0);
 }
 
 fn draw_grid(painter: &egui::Painter, graph_rect: Rect, ui_scale: f32) {
-    let grid_color = Color32::from_rgba_unmultiplied(120, 130, 140, 30);
+    let grid_color = APP_THEME.grid_line();
     for i in 1..8 {
         let t = i as f32 / 8.0;
         let x = egui::lerp(graph_rect.x_range(), t);
@@ -98,7 +102,7 @@ fn draw_grid(painter: &egui::Painter, graph_rect: Rect, ui_scale: f32) {
     let mid_y = egui::lerp(graph_rect.y_range(), 0.5);
     painter.line_segment(
         [Pos2::new(graph_rect.left(), mid_y), Pos2::new(graph_rect.right(), mid_y)],
-        Stroke::new((1.5 * ui_scale).max(1.0), Color32::from_rgba_unmultiplied(170, 180, 190, 80)),
+        Stroke::new((1.5 * ui_scale).max(1.0), APP_THEME.waveform_midline()),
     );
 }
 
@@ -133,6 +137,8 @@ fn draw_trace(
             egui::lerp(graph_rect.x_range(), t1),
             egui::lerp(graph_rect.y_range(), (1.0 - ((y1 + 1.0) * 0.5)).clamp(0.0, 1.0)),
         );
+        // Wide translucent pass under the hot trace for a phosphor bloom.
+        painter.line_segment([p0, p1], Stroke::new(4.0, APP_THEME.trace_glow()));
         painter.line_segment([p0, p1], Stroke::new(1.5, color));
     }
 }

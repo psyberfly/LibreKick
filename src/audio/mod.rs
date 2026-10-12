@@ -1,3 +1,9 @@
+// The FX rack is implemented but not yet wired into the signal path; keeping
+// it compiled means its tests run and it cannot silently rot.
+#[allow(dead_code)]
+mod fx;
+mod lfo;
+pub(crate) use self::lfo::shape_at;
 mod oscillator;
 mod voice;
 
@@ -260,6 +266,27 @@ impl KickEngine {
                     filter_enabled: slot.filter_enabled,
                     filter_2_enabled: slot.filter_2_enabled,
                     waveform: slot.oscillator_waveform,
+                    osc_a_level: slot.osc_a_level,
+                    osc_a_unison: slot.osc_a_unison,
+                    osc_a_unison_detune: slot.osc_a_unison_detune,
+                    osc_a_unison_blend: slot.osc_a_unison_blend,
+                    osc_b_enabled: slot.osc_b_enabled,
+                    osc_b_waveform: slot.osc_b_waveform,
+                    osc_b_level: slot.osc_b_level,
+                    osc_b_octave: slot.osc_b_octave,
+                    osc_b_detune_cents: slot.osc_b_detune_cents,
+                    osc_b_unison: slot.osc_b_unison,
+                    osc_b_unison_detune: slot.osc_b_unison_detune,
+                    osc_b_unison_blend: slot.osc_b_unison_blend,
+                    sub_enabled: slot.sub_enabled,
+                    sub_waveform: slot.sub_waveform,
+                    sub_level: slot.sub_level,
+                    sub_octave: slot.sub_octave,
+                    noise_enabled: slot.noise_enabled,
+                    noise_level: slot.noise_level,
+                    lfos: slot.lfos,
+                    mod_matrix: slot.mod_matrix,
+                    beats_per_second: (tempo_bpm / 60.0) as f32,
                 }
             });
 
@@ -308,6 +335,7 @@ impl KickEngine {
                         bass.phase_deg / 360.0,
                         bass.retrigger,
                         true,
+                        &bass.lfos,
                     );
                     self.arrange_bass_off_abs = event.abs_bar + note_len_bars;
                 } else {
@@ -346,6 +374,7 @@ impl KickEngine {
                         bass.phase_deg / 360.0,
                         bass.retrigger,
                         bass.legato_voice_steal,
+                        &bass.lfos,
                     );
                 } else {
                     self.bass_voice.note_off();
@@ -397,6 +426,25 @@ impl KickEngine {
             );
             shared::commit_oscilloscope_frame(shared_handle);
         }
+
+        // One telemetry frame per block is plenty for UI animation.
+        let live = self.bass_voice.mod_snapshot();
+        shared::publish_bass_mod_telemetry(
+            shared_handle,
+            shared::BassModTelemetry {
+                active: self.bass_voice.is_active(),
+                slot: self.bass_slot,
+                env_phase: live.env_phase,
+                env_amp: live.env_amp,
+                env_filter_1: live.env_filter_1,
+                env_filter_2: live.env_filter_2,
+                lfo_values: live.lfo_values,
+                lfo_phases: live.lfo_phases,
+                velocity: live.velocity,
+                cutoff_hz: live.cutoff_hz,
+                sequence: 0,
+            },
+        );
 
         ProcessStatus::Normal
     }
@@ -461,7 +509,14 @@ pub fn render_bass_preview(
     let mut buffer = vec![0.0_f32; total_samples];
     let mut voice = BassVoice::default();
     voice.set_sample_rate(preview_rate);
-    voice.note_on(note_hz, 1.0, phase_offset, retrigger, legato_voice_steal);
+    voice.note_on(
+        note_hz,
+        1.0,
+        phase_offset,
+        retrigger,
+        legato_voice_steal,
+        &params.lfos,
+    );
     for slot in buffer.iter_mut() {
         if !voice.is_active() {
             break;
@@ -509,6 +564,27 @@ pub fn render_arrangement_preview(
                 filter_enabled: slot.filter_enabled,
                 filter_2_enabled: slot.filter_2_enabled,
                 waveform: slot.oscillator_waveform,
+                osc_a_level: slot.osc_a_level,
+                osc_a_unison: slot.osc_a_unison,
+                osc_a_unison_detune: slot.osc_a_unison_detune,
+                osc_a_unison_blend: slot.osc_a_unison_blend,
+                osc_b_enabled: slot.osc_b_enabled,
+                osc_b_waveform: slot.osc_b_waveform,
+                osc_b_level: slot.osc_b_level,
+                osc_b_octave: slot.osc_b_octave,
+                osc_b_detune_cents: slot.osc_b_detune_cents,
+                osc_b_unison: slot.osc_b_unison,
+                osc_b_unison_detune: slot.osc_b_unison_detune,
+                osc_b_unison_blend: slot.osc_b_unison_blend,
+                sub_enabled: slot.sub_enabled,
+                sub_waveform: slot.sub_waveform,
+                sub_level: slot.sub_level,
+                sub_octave: slot.sub_octave,
+                noise_enabled: slot.noise_enabled,
+                noise_level: slot.noise_level,
+                lfos: slot.lfos,
+                mod_matrix: slot.mod_matrix,
+                beats_per_second: (shared.arrange_manual_tempo / 60.0).max(0.0),
             }
         });
 
@@ -549,6 +625,7 @@ pub fn render_arrangement_preview(
                 bass.phase_deg / 360.0,
                 bass.retrigger,
                 bass.legato_voice_steal,
+                &bass.lfos,
             );
             for buf_slot in bass_buffer.iter_mut().skip(start) {
                 if !voice.is_active() {

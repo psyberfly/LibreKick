@@ -3,9 +3,11 @@ use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2
 use crate::ui::{
     helpers::{constrain_curve_points, envelope_value_linear, normalize_segment_bends},
     state::Curve,
-    theme::{themed_font, APP_THEME},
+    theme::{accent_color, crt_overlay, phosphor_color, themed_font, APP_THEME},
 };
 
+/// `live_phase`: normalized playback position 0..1. When Some, a vertical
+/// playhead and a glowing dot riding the curve are drawn, Serum-style.
 pub(crate) fn render(
     ui: &mut egui::Ui,
     ui_scale: f32,
@@ -13,6 +15,7 @@ pub(crate) fn render(
     title: &str,
     curve: &mut Curve,
     selected_point: &mut Option<usize>,
+    live_phase: Option<f32>,
 ) -> bool {
     const EDGE_BEND_HIT_RADIUS_PIXELS: f32 = 14.0;
 
@@ -31,14 +34,24 @@ pub(crate) fn render(
 
         let graph_rect = outer_rect.shrink2(Vec2::new(12.0 * ui_scale, 16.0 * ui_scale));
         let painter = ui.painter_at(outer_rect);
-        painter.rect_filled(outer_rect, 4.0, Color32::from_rgb(14, 17, 20));
-        painter.rect_filled(graph_rect, 4.0, Color32::from_rgb(19, 23, 27));
+        painter.rect_filled(outer_rect, 4.0, APP_THEME.graph_bg());
+        painter.rect_filled(graph_rect, 4.0, APP_THEME.screen_bg());
         painter.rect_stroke(
             graph_rect,
             4.0,
-            Stroke::new(1.0, Color32::from_rgb(70, 76, 84)),
+            Stroke::new(1.0, APP_THEME.graph_border()),
             egui::StrokeKind::Inside,
         );
+
+        // Quarter-value gridlines for a screen feel.
+        for step in 1..4 {
+            let y = egui::lerp(graph_rect.bottom()..=graph_rect.top(), step as f32 / 4.0);
+            painter.hline(
+                graph_rect.x_range(),
+                y,
+                Stroke::new(1.0, APP_THEME.grid_line()),
+            );
+        }
 
         let points = &mut curve.points;
         let bends = &mut curve.bends;
@@ -64,11 +77,46 @@ pub(crate) fn render(
             let y = envelope_value_linear(points, bends, t);
             sampled.push(to_screen(Pos2::new(t, y)));
         }
+        // Translucent fill under the curve, then a glow pass and the hot
+        // phosphor trace on top.
+        let mut fill_points = sampled.clone();
+        fill_points.push(Pos2::new(graph_rect.right(), graph_rect.bottom()));
+        fill_points.push(Pos2::new(graph_rect.left(), graph_rect.bottom()));
+        painter.add(egui::Shape::convex_polygon(
+            fill_points,
+            Color32::from_rgba_unmultiplied(255, 120, 20, 18),
+            Stroke::NONE,
+        ));
         for line in sampled.windows(2) {
             painter.line_segment(
                 [line[0], line[1]],
-                Stroke::new(2.0, Color32::from_rgb(245, 136, 78)),
+                Stroke::new(5.0, APP_THEME.trace_glow()),
             );
+        }
+        for line in sampled.windows(2) {
+            painter.line_segment(
+                [line[0], line[1]],
+                Stroke::new(2.0, accent_color()),
+            );
+        }
+
+        // Live playhead: vertical sweep line plus a glowing dot riding the
+        // drawn curve so the marker matches the bend shape exactly.
+        if let Some(phase) = live_phase {
+            let phase = phase.clamp(0.0, 1.0);
+            let x = egui::lerp(graph_rect.left()..=graph_rect.right(), phase);
+            painter.vline(
+                x,
+                graph_rect.y_range(),
+                Stroke::new(
+                    1.0,
+                    Color32::from_rgba_unmultiplied(255, 170, 80, 90),
+                ),
+            );
+            let dot_y = envelope_value_linear(points, bends, phase);
+            let dot = to_screen(Pos2::new(phase, dot_y));
+            painter.circle_filled(dot, 6.0 * ui_scale, APP_THEME.trace_glow());
+            painter.circle_filled(dot, 3.0 * ui_scale, phosphor_color());
         }
 
         if response.double_clicked() {
@@ -118,9 +166,9 @@ pub(crate) fn render(
             }
 
             let color = if *selected_point == Some(i) {
-                Color32::from_rgb(255, 198, 70)
+                Color32::from_rgb(255, 210, 110)
             } else {
-                Color32::from_rgb(235, 108, 62)
+                accent_color()
             };
             painter.circle_filled(screen, 4.5, color);
             painter.circle_stroke(screen, 5.5, Stroke::new(1.0, Color32::BLACK));
@@ -323,9 +371,11 @@ pub(crate) fn render(
                 Align2::LEFT_TOP,
                 format!("t={:.2} v={:.2}", sel.x, sel.y),
                 egui::FontId::proportional(10.0 * ui_scale),
-                Color32::from_rgb(180, 188, 198),
+                APP_THEME.axis_tick(),
             );
         }
+
+        crt_overlay(&painter, outer_rect, 4.0);
     });
 
     drag_active

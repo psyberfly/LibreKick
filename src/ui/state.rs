@@ -53,6 +53,31 @@ pub(super) struct BassSlot {
     pub(super) filter_curve: Curve,
     pub(super) filter_curve_2: Curve,
     pub(super) oscillator_waveform: shared::Waveform,
+    /// OSC A output level in the source mixer. 1.0 keeps pre-mixer behaviour.
+    pub(super) osc_a_level: f32,
+    /// Unison voice count for OSC A. 1 disables unison.
+    pub(super) osc_a_unison: i32,
+    /// Total unison detune spread for OSC A, in cents.
+    pub(super) osc_a_unison_detune: f32,
+    /// Outer-voice level for OSC A unison, 0..1.
+    pub(super) osc_a_unison_blend: f32,
+    pub(super) osc_b_enabled: bool,
+    pub(super) osc_b_waveform: shared::Waveform,
+    pub(super) osc_b_level: f32,
+    /// OSC B octave offset relative to OSC A.
+    pub(super) osc_b_octave: i32,
+    /// OSC B fine detune in cents.
+    pub(super) osc_b_detune_cents: f32,
+    pub(super) osc_b_unison: i32,
+    pub(super) osc_b_unison_detune: f32,
+    pub(super) osc_b_unison_blend: f32,
+    pub(super) sub_enabled: bool,
+    pub(super) sub_waveform: shared::Waveform,
+    pub(super) sub_level: f32,
+    /// Sub octave offset relative to OSC A (negative = below).
+    pub(super) sub_octave: i32,
+    pub(super) noise_enabled: bool,
+    pub(super) noise_level: f32,
     pub(super) retrigger: bool,
     pub(super) legato_voice_steal: bool,
     pub(super) note_length_ms: f32,
@@ -66,6 +91,12 @@ pub(super) struct BassSlot {
     pub(super) filter_selected: usize,
     pub(super) keytrack_enabled: bool,
     pub(super) phase_deg: f32,
+    /// Per-slot LFOs usable as modulation sources.
+    pub(super) lfos: [shared::LfoParams; shared::BASS_LFO_COUNT],
+    /// Modulation matrix rows routing sources to destinations.
+    pub(super) mod_matrix: [shared::ModRouting; shared::BASS_MOD_SLOT_COUNT],
+    /// Which LFO the LFO module is currently editing.
+    pub(super) lfo_selected: usize,
 }
 
 impl Default for BassSlot {
@@ -75,6 +106,24 @@ impl Default for BassSlot {
             filter_curve: Curve::default_pitch(),
             filter_curve_2: Curve::default_pitch(),
             oscillator_waveform: shared::Waveform::Saw,
+            osc_a_level: 1.0,
+            osc_a_unison: 1,
+            osc_a_unison_detune: 15.0,
+            osc_a_unison_blend: 0.75,
+            osc_b_enabled: false,
+            osc_b_waveform: shared::Waveform::Saw,
+            osc_b_level: 0.5,
+            osc_b_octave: 0,
+            osc_b_detune_cents: 0.0,
+            osc_b_unison: 1,
+            osc_b_unison_detune: 15.0,
+            osc_b_unison_blend: 0.75,
+            sub_enabled: false,
+            sub_waveform: shared::Waveform::Sine,
+            sub_level: 0.5,
+            sub_octave: -1,
+            noise_enabled: false,
+            noise_level: 0.25,
             retrigger: true,
             legato_voice_steal: false,
             note_length_ms: 220.0,
@@ -88,6 +137,9 @@ impl Default for BassSlot {
             filter_selected: 0,
             keytrack_enabled: false,
             phase_deg: 0.0,
+            lfos: [shared::LfoParams::default(); shared::BASS_LFO_COUNT],
+            mod_matrix: [shared::ModRouting::default(); shared::BASS_MOD_SLOT_COUNT],
+            lfo_selected: 0,
         }
     }
 }
@@ -662,8 +714,28 @@ impl BezierUiState {
                     retrigger: slot.retrigger,
                     legato_voice_steal: slot.legato_voice_steal,
                     oscillator_waveform: slot.oscillator_waveform,
+                    osc_a_level: slot.osc_a_level,
+                    osc_a_unison: slot.osc_a_unison,
+                    osc_a_unison_detune: slot.osc_a_unison_detune,
+                    osc_a_unison_blend: slot.osc_a_unison_blend,
+                    osc_b_enabled: slot.osc_b_enabled,
+                    osc_b_waveform: slot.osc_b_waveform,
+                    osc_b_level: slot.osc_b_level,
+                    osc_b_octave: slot.osc_b_octave,
+                    osc_b_detune_cents: slot.osc_b_detune_cents,
+                    osc_b_unison: slot.osc_b_unison,
+                    osc_b_unison_detune: slot.osc_b_unison_detune,
+                    osc_b_unison_blend: slot.osc_b_unison_blend,
+                    sub_enabled: slot.sub_enabled,
+                    sub_waveform: slot.sub_waveform,
+                    sub_level: slot.sub_level,
+                    sub_octave: slot.sub_octave,
+                    noise_enabled: slot.noise_enabled,
+                    noise_level: slot.noise_level,
                     keytrack_enabled: slot.keytrack_enabled,
                     phase_deg: slot.phase_deg,
+                    lfos: slot.lfos,
+                    mod_matrix: slot.mod_matrix,
                 },
             );
         }
@@ -867,6 +939,26 @@ fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatch
         filter_2_bends: slot.filter_curve_2.bends.clone(),
         level,
         phase_deg: Some(slot.phase_deg),
+        osc_a_level: slot.osc_a_level,
+        osc_a_unison: slot.osc_a_unison,
+        osc_a_unison_detune: slot.osc_a_unison_detune,
+        osc_a_unison_blend: slot.osc_a_unison_blend,
+        osc_b_enabled: slot.osc_b_enabled,
+        osc_b_waveform: waveform_to_patch(slot.osc_b_waveform).to_owned(),
+        osc_b_level: slot.osc_b_level,
+        osc_b_octave: slot.osc_b_octave,
+        osc_b_detune_cents: slot.osc_b_detune_cents,
+        osc_b_unison: slot.osc_b_unison,
+        osc_b_unison_detune: slot.osc_b_unison_detune,
+        osc_b_unison_blend: slot.osc_b_unison_blend,
+        sub_enabled: slot.sub_enabled,
+        sub_waveform: waveform_to_patch(slot.sub_waveform).to_owned(),
+        sub_level: slot.sub_level,
+        sub_octave: slot.sub_octave,
+        noise_enabled: slot.noise_enabled,
+        noise_level: slot.noise_level,
+        lfos: slot.lfos,
+        mod_matrix: slot.mod_matrix,
     }
 }
 
@@ -901,6 +993,39 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
         bends_from_patch(&bass.filter_2_bends, slot.filter_curve_2.points.len());
     if let Some(phase_deg) = bass.phase_deg {
         slot.phase_deg = phase_deg.clamp(0.0, 360.0);
+    }
+    slot.osc_a_level = bass.osc_a_level.clamp(0.0, 1.0);
+    slot.osc_a_unison = bass.osc_a_unison.clamp(1, 8);
+    slot.osc_a_unison_detune = bass.osc_a_unison_detune.clamp(0.0, 100.0);
+    slot.osc_a_unison_blend = bass.osc_a_unison_blend.clamp(0.0, 1.0);
+    slot.osc_b_unison = bass.osc_b_unison.clamp(1, 8);
+    slot.osc_b_unison_detune = bass.osc_b_unison_detune.clamp(0.0, 100.0);
+    slot.osc_b_unison_blend = bass.osc_b_unison_blend.clamp(0.0, 1.0);
+    slot.osc_b_enabled = bass.osc_b_enabled;
+    if let Some(waveform) = waveform_from_patch(&bass.osc_b_waveform) {
+        slot.osc_b_waveform = waveform;
+    }
+    slot.osc_b_level = bass.osc_b_level.clamp(0.0, 1.0);
+    slot.osc_b_octave = bass.osc_b_octave.clamp(-2, 2);
+    slot.osc_b_detune_cents = bass.osc_b_detune_cents.clamp(-50.0, 50.0);
+    slot.sub_enabled = bass.sub_enabled;
+    if let Some(waveform) = waveform_from_patch(&bass.sub_waveform) {
+        slot.sub_waveform = waveform;
+    }
+    slot.sub_level = bass.sub_level.clamp(0.0, 1.0);
+    slot.sub_octave = bass.sub_octave.clamp(-3, 0);
+    slot.noise_enabled = bass.noise_enabled;
+    slot.noise_level = bass.noise_level.clamp(0.0, 1.0);
+    slot.lfos = bass.lfos;
+    for lfo in slot.lfos.iter_mut() {
+        lfo.rate_hz = lfo.rate_hz.clamp(0.01, 100.0);
+        lfo.rate_beats = lfo.rate_beats.clamp(0.0625, 64.0);
+        lfo.depth = lfo.depth.clamp(0.0, 1.0);
+        lfo.phase_deg = lfo.phase_deg.clamp(0.0, 360.0);
+    }
+    slot.mod_matrix = bass.mod_matrix;
+    for routing in slot.mod_matrix.iter_mut() {
+        routing.amount = routing.amount.clamp(-1.0, 1.0);
     }
 }
 
