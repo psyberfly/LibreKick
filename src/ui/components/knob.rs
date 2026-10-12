@@ -12,6 +12,7 @@ const START_DEGREES: f32 = 90.0 + (360.0 - SWEEP_DEGREES) * 0.5;
 const DRAG_PIXELS_FULL_RANGE: f32 = 180.0;
 const DRAG_PIXELS_FINE_RANGE: f32 = 900.0;
 
+#[derive(Clone, Copy)]
 pub(crate) struct KnobStyle {
     pub(crate) diameter: f32,
     pub(crate) arc_color: Color32,

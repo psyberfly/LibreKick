@@ -23,13 +23,16 @@ pub(crate) fn render(
         .fill(APP_THEME.screen_bg())
         .stroke(Stroke::new(1.0, APP_THEME.graph_border()))
         .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(
-            (8.0 * ui_scale) as i8,
-            (6.0 * ui_scale) as i8,
-        ));
+        .inner_margin(egui::Margin::same((12.0 * ui_scale) as i8));
 
     let inner = frame.show(ui, |ui| {
         ui.set_width(ui.available_width());
+        // Minimum 12px (scaled) between controls inside a module panel.
+        let spacing = ui.spacing().item_spacing;
+        ui.spacing_mut().item_spacing = egui::Vec2::new(
+            spacing.x.max(12.0 * ui_scale),
+            spacing.y.max(12.0 * ui_scale),
+        );
         if header.min_height > 0.0 {
             ui.set_min_height(header.min_height);
         }

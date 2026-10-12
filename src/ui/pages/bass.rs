@@ -94,7 +94,8 @@ pub(crate) fn render(
         }
         mod_ring_offset(dest, &ring_matrix, &telemetry, ring_pitch)
     };
-    let ring_style = |dest: shared::ModDest| knob::KnobStyle {
+    let ring_style = |dest: shared::ModDest, diameter: f32| knob::KnobStyle {
+        diameter,
         mod_arc: ring(dest),
         ..knob::KnobStyle::default()
     };
@@ -125,6 +126,7 @@ pub(crate) fn render(
                 );
 
                 ui.add_space(6.0 * ui_scale);
+                let dial = fit_knob_diameter(ui, 5, ui_scale);
                 ui.horizontal(|ui| {
                     let level_param = if sel == 0 {
                         &params.bass1_level
@@ -137,7 +139,10 @@ pub(crate) fn render(
                         "LEVEL",
                         level_param,
                         setter,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
 
                     let note = note_name_from_hz(
@@ -153,7 +158,7 @@ pub(crate) fn render(
                         20.0,
                         2_000.0,
                         &pitch_display,
-                        ring_style(shared::ModDest::Pitch),
+                        ring_style(shared::ModDest::Pitch, dial),
                     );
 
                     let phase_display = format!("{:.0}\u{00b0}", state.bass[sel].phase_deg);
@@ -165,7 +170,10 @@ pub(crate) fn render(
                         0.0,
                         360.0,
                         &phase_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
 
                     let length_display = format!("{:.0} ms", state.bass[sel].note_length_ms);
@@ -177,7 +185,10 @@ pub(crate) fn render(
                         1.0,
                         1_000.0,
                         &length_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
 
                     let osc_a_display = format!("{:.0}%", state.bass[sel].osc_a_level * 100.0);
@@ -189,12 +200,13 @@ pub(crate) fn render(
                         0.0,
                         1.0,
                         &osc_a_display,
-                        ring_style(shared::ModDest::OscAMix),
+                        ring_style(shared::ModDest::OscAMix, dial),
                     );
                 });
 
                 ui.add_space(6.0 * ui_scale);
-                ui.horizontal_wrapped(|ui| {
+                let dial = fit_knob_diameter(ui, 3, ui_scale);
+                ui.horizontal(|ui| {
                     let voices_display = format!("{}", state.bass[sel].osc_a_unison);
                     let voices_id = format!("bass-osc-a-unison-{sel}");
                     knob::int_range_knob(
@@ -206,7 +218,10 @@ pub(crate) fn render(
                         1,
                         8,
                         &voices_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
 
                     let detune_display =
@@ -219,7 +234,7 @@ pub(crate) fn render(
                         0.0,
                         100.0,
                         &detune_display,
-                        ring_style(shared::ModDest::UnisonDetune),
+                        ring_style(shared::ModDest::UnisonDetune, dial),
                     );
 
                     let blend_display =
@@ -232,7 +247,10 @@ pub(crate) fn render(
                         0.0,
                         1.0,
                         &blend_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
                 });
 
@@ -277,6 +295,7 @@ pub(crate) fn render(
                 ],
             );
             ui.add_space(6.0 * ui_scale);
+            let dial = fit_knob_diameter(ui, 2, ui_scale);
             ui.horizontal(|ui| {
                 // While a note plays, the readout shows the modulated value
                 // (telemetry) rather than the static knob setting.
@@ -293,7 +312,7 @@ pub(crate) fn render(
                     20.0,
                     8_000.0,
                     &cutoff_display,
-                    ring_style(shared::ModDest::Cutoff),
+                    ring_style(shared::ModDest::Cutoff, dial),
                 );
 
                 let drive_display = format!("{:.0}%", state.bass[sel].filter_drive * 100.0);
@@ -305,7 +324,7 @@ pub(crate) fn render(
                     0.0,
                     1.0,
                     &drive_display,
-                    ring_style(shared::ModDest::FilterDrive),
+                    ring_style(shared::ModDest::FilterDrive, dial),
                 );
             });
 
@@ -341,7 +360,8 @@ pub(crate) fn render(
                     ],
                 );
                 ui.add_space(6.0 * ui_scale);
-                ui.horizontal_wrapped(|ui| {
+                let dial = fit_knob_diameter(ui, 6, ui_scale);
+                ui.horizontal(|ui| {
                     let level_display = format!("{:.0}%", state.bass[sel].osc_b_level * 100.0);
                     knob::range_knob(
                         ui,
@@ -351,7 +371,7 @@ pub(crate) fn render(
                         0.0,
                         1.0,
                         &level_display,
-                        ring_style(shared::ModDest::OscBMix),
+                        ring_style(shared::ModDest::OscBMix, dial),
                     );
 
                     let octave_display = format!("{:+}", state.bass[sel].osc_b_octave);
@@ -365,7 +385,10 @@ pub(crate) fn render(
                         -2,
                         2,
                         &octave_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
 
                     let detune_display =
@@ -378,7 +401,7 @@ pub(crate) fn render(
                         -50.0,
                         50.0,
                         &detune_display,
-                        ring_style(shared::ModDest::OscBDetune),
+                        ring_style(shared::ModDest::OscBDetune, dial),
                     );
 
                     let voices_display = format!("{}", state.bass[sel].osc_b_unison);
@@ -392,7 +415,10 @@ pub(crate) fn render(
                         1,
                         8,
                         &voices_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
 
                     let spread_display =
@@ -405,7 +431,7 @@ pub(crate) fn render(
                         0.0,
                         100.0,
                         &spread_display,
-                        ring_style(shared::ModDest::UnisonDetune),
+                        ring_style(shared::ModDest::UnisonDetune, dial),
                     );
 
                     let blend_display =
@@ -418,7 +444,10 @@ pub(crate) fn render(
                         0.0,
                         1.0,
                         &blend_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
                 });
             },
@@ -444,7 +473,8 @@ pub(crate) fn render(
                     ],
                 );
                 ui.add_space(6.0 * ui_scale);
-                ui.horizontal_wrapped(|ui| {
+                let dial = fit_knob_diameter(ui, 2, ui_scale);
+                ui.horizontal(|ui| {
                     let level_display = format!("{:.0}%", state.bass[sel].sub_level * 100.0);
                     knob::range_knob(
                         ui,
@@ -454,7 +484,7 @@ pub(crate) fn render(
                         0.0,
                         1.0,
                         &level_display,
-                        ring_style(shared::ModDest::SubMix),
+                        ring_style(shared::ModDest::SubMix, dial),
                     );
 
                     let octave_display = format!("{:+}", state.bass[sel].sub_octave);
@@ -468,7 +498,10 @@ pub(crate) fn render(
                         -3,
                         0,
                         &octave_display,
-                        knob::KnobStyle::default(),
+                        knob::KnobStyle {
+                            diameter: dial,
+                            ..knob::KnobStyle::default()
+                        },
                     );
                 });
             },
@@ -493,7 +526,10 @@ pub(crate) fn render(
                     0.0,
                     1.0,
                     &level_display,
-                    ring_style(shared::ModDest::NoiseMix),
+                    ring_style(
+                        shared::ModDest::NoiseMix,
+                        fit_knob_diameter(ui, 1, ui_scale),
+                    ),
                 );
             },
         );
@@ -545,8 +581,13 @@ pub(crate) fn render(
                 );
 
                 ui.add_space(6.0 * ui_scale);
-                ui.horizontal_wrapped(|ui| {
+                let dial = fit_knob_diameter(ui, 3, ui_scale);
+                ui.horizontal(|ui| {
                     let lfo = &mut state.bass[sel].lfos[lfo_index];
+                    let dial_style = knob::KnobStyle {
+                        diameter: dial,
+                        ..knob::KnobStyle::default()
+                    };
                     if lfo.tempo_sync {
                         let rate_display = format!("{:.2} bt", lfo.rate_beats);
                         knob::log_range_knob(
@@ -557,7 +598,7 @@ pub(crate) fn render(
                             0.0625,
                             64.0,
                             &rate_display,
-                            knob::KnobStyle::default(),
+                            dial_style,
                         );
                     } else {
                         let rate_display = format!("{:.2} Hz", lfo.rate_hz);
@@ -569,7 +610,7 @@ pub(crate) fn render(
                             0.01,
                             100.0,
                             &rate_display,
-                            knob::KnobStyle::default(),
+                            dial_style,
                         );
                     }
 
@@ -582,7 +623,7 @@ pub(crate) fn render(
                         0.0,
                         1.0,
                         &depth_display,
-                        knob::KnobStyle::default(),
+                        dial_style,
                     );
 
                     let phase_display = format!("{:.0}\u{00b0}", lfo.phase_deg);
@@ -594,7 +635,7 @@ pub(crate) fn render(
                         0.0,
                         360.0,
                         &phase_display,
-                        knob::KnobStyle::default(),
+                        dial_style,
                     );
                 });
 
@@ -775,11 +816,12 @@ pub(crate) fn render(
     });
 
     ui.add_space(10.0 * ui_scale);
-    let remaining_height = ui
-        .available_height()
-        .clamp((160.0 * ui_scale).max(120.0), 400.0 * ui_scale);
+    // Fixed height: available_height() inside a ScrollArea is bounded by the
+    // viewport, so the preview would collapse to a sliver at the bottom of
+    // the page and break the scroll range.
+    let scope_height = 280.0 * ui_scale;
     let (outer_rect, _) = ui.allocate_exact_size(
-        Vec2::new(ui.available_width().max(260.0 * ui_scale), remaining_height),
+        Vec2::new(ui.available_width().max(260.0 * ui_scale), scope_height),
         Sense::hover(),
     );
     let graph_rect = outer_rect.shrink2(Vec2::new(14.0 * ui_scale, 18.0 * ui_scale));
@@ -1044,6 +1086,16 @@ fn draw_lfo_display(
             painter.circle_filled(dot, 2.5 * ui_scale, phosphor_color());
         }
     }
+}
+
+/// Knob diameter (unscaled points) that spreads `count` knobs evenly across
+/// the row's available width so module panels do not sit half-empty. The
+/// knob widget cell is `diameter` wide; clamped to a sane visual range.
+fn fit_knob_diameter(ui: &egui::Ui, count: usize, ui_scale: f32) -> f32 {
+    let count = count.max(1) as f32;
+    let gap = ui.spacing().item_spacing.x;
+    let cell = (ui.available_width() - gap * (count - 1.0)).max(0.0) / count;
+    (cell / ui_scale).clamp(38.0, 118.0)
 }
 
 /// Deterministic 0..1-ish value per step for drawing the Random shape.
