@@ -237,8 +237,8 @@ impl ModSource {
             Self::Lfo3 => "LFO 3",
             Self::Lfo4 => "LFO 4",
             Self::EnvAmp => "ENV AMP",
-            Self::EnvFilter1 => "ENV CUT 1",
-            Self::EnvFilter2 => "ENV CUT 2",
+            Self::EnvFilter1 => "ENV FC 1",
+            Self::EnvFilter2 => "ENV FC 2",
             Self::Velocity => "VELOCITY",
             Self::KeyTrack => "KEYTRACK",
         }

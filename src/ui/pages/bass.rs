@@ -750,7 +750,7 @@ pub(crate) fn render(
             &mut columns[1],
             ui_scale,
             section::SectionHeader {
-                title: "ENV - CUTOFF",
+                title: "ENV - FILTER CUTOFF",
                 enabled: None,
                 min_height: 0.0,
             },

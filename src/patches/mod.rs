@@ -26,7 +26,7 @@ pub(crate) fn sanitize_patch_description(raw: &str) -> String {
         .collect()
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct PatchData {
     pub name: String,
     /// Free-form patch description shown in the menu bar. Empty when unset.
@@ -53,7 +53,7 @@ pub struct PatchData {
 }
 
 /// Arrange page settings stored inside a patch file.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ArrangePatchData {
     pub num_bars: f32,
     /// Note size label: "1/16", "1/8", "1/4", or "1".
@@ -69,7 +69,7 @@ pub struct ArrangePatchData {
 }
 
 /// Kick oscillator settings stored inside a patch file.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct KickPatchData {
     pub oscillator_waveform: String,
     pub retrigger: bool,
@@ -82,11 +82,13 @@ pub struct KickPatchData {
 }
 
 /// Bass instrument settings stored inside a patch file.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BassPatchData {
     pub oscillator_waveform: String,
     pub retrigger: bool,
     pub legato_voice_steal: bool,
+    /// OSC A keytrack toggle. Defaults to `false` for older patches.
+    pub keytrack_enabled: bool,
     pub note_length_ms: f32,
     pub pitch_hz: f32,
     pub cutoff_hz: f32,
@@ -320,48 +322,10 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut pitch_points: Option<Vec<(f32, f32)>> = None;
     let mut pitch_bends: Option<Vec<f32>> = None;
 
+    // Bass note slots share the same raw parser, keyed by `bass_*` and
+    // `bass2_*` prefixes respectively.
     let mut bass_seen = false;
-    let mut bass_oscillator_waveform: Option<String> = None;
-    let mut bass_retrigger: Option<bool> = None;
-    let mut bass_legato_voice_steal: Option<bool> = None;
-    let mut bass_note_length_ms: Option<f32> = None;
-    let mut bass_pitch_hz: Option<f32> = None;
-    let mut bass_cutoff_hz: Option<f32> = None;
-    let mut bass_filter_mode: Option<String> = None;
-    let mut bass_filter_slope: Option<String> = None;
-    let mut bass_filter_drive: Option<f32> = None;
-    let mut bass_amp_points: Option<Vec<(f32, f32)>> = None;
-    let mut bass_amp_bends: Option<Vec<f32>> = None;
-    let mut bass_filter_points: Option<Vec<(f32, f32)>> = None;
-    let mut bass_filter_bends: Option<Vec<f32>> = None;
-    let mut bass_filter_enabled: Option<bool> = None;
-    let mut bass_filter_2_enabled: Option<bool> = None;
-    let mut bass_filter_2_points: Option<Vec<(f32, f32)>> = None;
-    let mut bass_filter_2_bends: Option<Vec<f32>> = None;
-    let mut bass_level: Option<f32> = None;
-    let mut bass_phase_deg: Option<f32> = None;
-    let mut bass_osc_a_level: Option<f32> = None;
-    let mut bass_osc_a_unison: Option<i32> = None;
-    let mut bass_osc_a_unison_detune: Option<f32> = None;
-    let mut bass_osc_a_unison_blend: Option<f32> = None;
-    let mut bass_osc_b_unison: Option<i32> = None;
-    let mut bass_osc_b_unison_detune: Option<f32> = None;
-    let mut bass_osc_b_unison_blend: Option<f32> = None;
-    let mut bass_osc_b_enabled: Option<bool> = None;
-    let mut bass_osc_b_waveform: Option<String> = None;
-    let mut bass_osc_b_level: Option<f32> = None;
-    let mut bass_osc_b_octave: Option<i32> = None;
-    let mut bass_osc_b_detune_cents: Option<f32> = None;
-    let mut bass_sub_enabled: Option<bool> = None;
-    let mut bass_sub_waveform: Option<String> = None;
-    let mut bass_sub_level: Option<f32> = None;
-    let mut bass_sub_octave: Option<i32> = None;
-    let mut bass_noise_enabled: Option<bool> = None;
-    let mut bass_noise_level: Option<f32> = None;
-    let mut bass_lfos: Vec<(usize, LfoParams)> = Vec::new();
-    let mut bass_mod_matrix: Vec<(usize, ModRouting)> = Vec::new();
-
-    // Second bass note slot, stored under `bass2_*` keys.
+    let mut bass_raw = BassRaw::default();
     let mut bass2_seen = false;
     let mut bass2_raw = BassRaw::default();
 
@@ -427,163 +391,6 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             "amplitude_bends" => amplitude_bends = Some(parse_bends(value, "amplitude_bends")?),
             "pitch_points" => pitch_points = Some(parse_points(value, "pitch_points")?),
             "pitch_bends" => pitch_bends = Some(parse_bends(value, "pitch_bends")?),
-            "bass_oscillator_waveform" => {
-                bass_seen = true;
-                bass_oscillator_waveform = Some(value.to_owned());
-            }
-            "bass_retrigger" => {
-                bass_seen = true;
-                bass_retrigger = value.parse::<bool>().ok();
-            }
-            "bass_legato_voice_steal" => {
-                bass_seen = true;
-                bass_legato_voice_steal = value.parse::<bool>().ok();
-            }
-            "bass_note_length_ms" => {
-                bass_seen = true;
-                bass_note_length_ms = value.parse::<f32>().ok();
-            }
-            "bass_pitch_hz" => {
-                bass_seen = true;
-                bass_pitch_hz = value.parse::<f32>().ok();
-            }
-            "bass_cutoff_hz" => {
-                bass_seen = true;
-                bass_cutoff_hz = value.parse::<f32>().ok();
-            }
-            "bass_filter_mode" => {
-                bass_seen = true;
-                bass_filter_mode = Some(value.to_owned());
-            }
-            "bass_filter_slope" => {
-                bass_seen = true;
-                bass_filter_slope = Some(value.to_owned());
-            }
-            "bass_filter_drive" => {
-                bass_seen = true;
-                bass_filter_drive = value.parse::<f32>().ok();
-            }
-            "bass_amp_points" => {
-                bass_seen = true;
-                if !value.is_empty() {
-                    bass_amp_points = Some(parse_points(value, "bass_amp_points")?);
-                }
-            }
-            "bass_amp_bends" => {
-                bass_seen = true;
-                bass_amp_bends = Some(parse_bends(value, "bass_amp_bends")?);
-            }
-            "bass_filter_points" => {
-                bass_seen = true;
-                if !value.is_empty() {
-                    bass_filter_points = Some(parse_points(value, "bass_filter_points")?);
-                }
-            }
-            "bass_filter_bends" => {
-                bass_seen = true;
-                bass_filter_bends = Some(parse_bends(value, "bass_filter_bends")?);
-            }
-            "bass_filter_enabled" => {
-                bass_seen = true;
-                bass_filter_enabled = value.parse::<bool>().ok();
-            }
-            "bass_filter_2_enabled" => {
-                bass_seen = true;
-                bass_filter_2_enabled = value.parse::<bool>().ok();
-            }
-            "bass_filter_2_points" => {
-                bass_seen = true;
-                if !value.is_empty() {
-                    bass_filter_2_points = Some(parse_points(value, "bass_filter_2_points")?);
-                }
-            }
-            "bass_filter_2_bends" => {
-                bass_seen = true;
-                bass_filter_2_bends = Some(parse_bends(value, "bass_filter_2_bends")?);
-            }
-            "bass_level" => {
-                bass_seen = true;
-                bass_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
-            }
-            "bass_phase_deg" => {
-                bass_seen = true;
-                bass_phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0));
-            }
-            "bass_osc_a_level" => {
-                bass_seen = true;
-                bass_osc_a_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
-            }
-            "bass_osc_a_unison" => {
-                bass_seen = true;
-                bass_osc_a_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8));
-            }
-            "bass_osc_a_unison_detune" => {
-                bass_seen = true;
-                bass_osc_a_unison_detune =
-                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0));
-            }
-            "bass_osc_a_unison_blend" => {
-                bass_seen = true;
-                bass_osc_a_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
-            }
-            "bass_osc_b_unison" => {
-                bass_seen = true;
-                bass_osc_b_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8));
-            }
-            "bass_osc_b_unison_detune" => {
-                bass_seen = true;
-                bass_osc_b_unison_detune =
-                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0));
-            }
-            "bass_osc_b_unison_blend" => {
-                bass_seen = true;
-                bass_osc_b_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
-            }
-            "bass_osc_b_enabled" => {
-                bass_seen = true;
-                bass_osc_b_enabled = value.parse::<bool>().ok();
-            }
-            "bass_osc_b_waveform" => {
-                bass_seen = true;
-                bass_osc_b_waveform = Some(value.to_owned());
-            }
-            "bass_osc_b_level" => {
-                bass_seen = true;
-                bass_osc_b_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
-            }
-            "bass_osc_b_octave" => {
-                bass_seen = true;
-                bass_osc_b_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4));
-            }
-            "bass_osc_b_detune_cents" => {
-                bass_seen = true;
-                bass_osc_b_detune_cents =
-                    value.parse::<f32>().ok().map(|v| v.clamp(-1200.0, 1200.0));
-            }
-            "bass_sub_enabled" => {
-                bass_seen = true;
-                bass_sub_enabled = value.parse::<bool>().ok();
-            }
-            "bass_sub_waveform" => {
-                bass_seen = true;
-                bass_sub_waveform = Some(value.to_owned());
-            }
-            "bass_sub_level" => {
-                bass_seen = true;
-                bass_sub_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
-            }
-            "bass_sub_octave" => {
-                bass_seen = true;
-                bass_sub_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4));
-            }
-            "bass_noise_enabled" => {
-                bass_seen = true;
-                bass_noise_enabled = value.parse::<bool>().ok();
-            }
-            "bass_noise_level" => {
-                bass_seen = true;
-                bass_noise_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0));
-            }
             "kick_oscillator_waveform" => {
                 kick_seen = true;
                 kick_oscillator_waveform = Some(value.to_owned());
@@ -633,21 +440,15 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 arrange_notes = Some(parse_arrange_notes(value));
             }
             _ => {
-                if let Some(index) = parse_indexed_key(key, "bass_lfo_", BASS_LFO_COUNT) {
-                    bass_seen = true;
-                    if let Some(lfo) = parse_lfo_params(value) {
-                        bass_lfos.push((index, lfo));
-                    }
-                } else if let Some(index) =
-                    parse_indexed_key(key, "bass_mod_", BASS_MOD_SLOT_COUNT)
-                {
-                    bass_seen = true;
-                    if let Some(routing) = parse_mod_routing(value) {
-                        bass_mod_matrix.push((index, routing));
-                    }
-                } else if let Some(rest) = key.strip_prefix("bass2_") {
+                // `bass2_*` is checked first: `bass_` is not a prefix of
+                // `bass2_`, so either order is safe — this just reads more
+                // obviously correct.
+                if let Some(rest) = key.strip_prefix("bass2_") {
                     bass2_seen = true;
                     bass2_raw.parse_key(rest, value)?;
+                } else if let Some(rest) = key.strip_prefix("bass_") {
+                    bass_seen = true;
+                    bass_raw.parse_key(rest, value)?;
                 }
             }
         }
@@ -673,65 +474,7 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
         pitch_points: pitch_points.ok_or_else(|| "Missing pitch_points".to_owned())?,
         pitch_bends: pitch_bends.unwrap_or_default(),
         bass: if bass_seen {
-            Some(BassPatchData {
-                oscillator_waveform: bass_oscillator_waveform
-                    .unwrap_or_else(|| "saw".to_owned()),
-                retrigger: bass_retrigger.unwrap_or(true),
-                legato_voice_steal: bass_legato_voice_steal.unwrap_or(false),
-                note_length_ms: bass_note_length_ms.unwrap_or(220.0),
-                pitch_hz: bass_pitch_hz.unwrap_or(55.0),
-                cutoff_hz: bass_cutoff_hz.unwrap_or(120.0),
-                filter_mode: bass_filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
-                filter_slope: bass_filter_slope.unwrap_or_else(|| "6db".to_owned()),
-                filter_drive: bass_filter_drive.unwrap_or(0.0).clamp(0.0, 1.0),
-                filter_enabled: bass_filter_enabled.unwrap_or(true),
-                filter_2_enabled: bass_filter_2_enabled.unwrap_or(false),
-                amp_points: bass_amp_points.unwrap_or_default(),
-                amp_bends: bass_amp_bends.unwrap_or_default(),
-                filter_points: bass_filter_points.unwrap_or_default(),
-                filter_bends: bass_filter_bends.unwrap_or_default(),
-                filter_2_points: bass_filter_2_points.unwrap_or_default(),
-                filter_2_bends: bass_filter_2_bends.unwrap_or_default(),
-                level: bass_level,
-                phase_deg: bass_phase_deg,
-                osc_a_level: bass_osc_a_level.unwrap_or(1.0),
-                osc_a_unison: bass_osc_a_unison.unwrap_or(1),
-                osc_a_unison_detune: bass_osc_a_unison_detune.unwrap_or(15.0),
-                osc_a_unison_blend: bass_osc_a_unison_blend.unwrap_or(0.75),
-                osc_b_enabled: bass_osc_b_enabled.unwrap_or(false),
-                osc_b_waveform: bass_osc_b_waveform.unwrap_or_else(|| "saw".to_owned()),
-                osc_b_level: bass_osc_b_level.unwrap_or(0.5),
-                osc_b_octave: bass_osc_b_octave.unwrap_or(0),
-                osc_b_detune_cents: bass_osc_b_detune_cents.unwrap_or(0.0),
-                osc_b_unison: bass_osc_b_unison.unwrap_or(1),
-                osc_b_unison_detune: bass_osc_b_unison_detune.unwrap_or(15.0),
-                osc_b_unison_blend: bass_osc_b_unison_blend.unwrap_or(0.75),
-                sub_enabled: bass_sub_enabled.unwrap_or(false),
-                sub_waveform: bass_sub_waveform.unwrap_or_else(|| "sine".to_owned()),
-                sub_level: bass_sub_level.unwrap_or(0.5),
-                sub_octave: bass_sub_octave.unwrap_or(-1),
-                noise_enabled: bass_noise_enabled.unwrap_or(false),
-                noise_level: bass_noise_level.unwrap_or(0.25),
-                lfos: {
-                    let mut lfos = [LfoParams::default(); BASS_LFO_COUNT];
-                    for (index, lfo) in bass_lfos {
-                        if let Some(slot) = lfos.get_mut(index) {
-                            *slot = lfo;
-                        }
-                    }
-                    lfos
-                },
-                mod_matrix: {
-                    let mut matrix =
-                        [ModRouting::default(); BASS_MOD_SLOT_COUNT];
-                    for (index, routing) in bass_mod_matrix {
-                        if let Some(row) = matrix.get_mut(index) {
-                            *row = routing;
-                        }
-                    }
-                    matrix
-                },
-            })
+            Some(bass_raw.into_data())
         } else {
             None
         },
@@ -774,6 +517,7 @@ struct BassRaw {
     oscillator_waveform: Option<String>,
     retrigger: Option<bool>,
     legato_voice_steal: Option<bool>,
+    keytrack_enabled: Option<bool>,
     note_length_ms: Option<f32>,
     pitch_hz: Option<f32>,
     cutoff_hz: Option<f32>,
@@ -808,19 +552,20 @@ struct BassRaw {
     sub_octave: Option<i32>,
     noise_enabled: Option<bool>,
     noise_level: Option<f32>,
-    /// (index, LFO) pairs from `bass2_lfo_<n>` keys.
+    /// (index, LFO) pairs from `bassN_lfo_<n>` keys.
     lfos: Vec<(usize, LfoParams)>,
-    /// (index, routing) pairs from `bass2_mod_<n>` keys.
+    /// (index, routing) pairs from `bassN_mod_<n>` keys.
     mod_matrix: Vec<(usize, ModRouting)>,
 }
 
 impl BassRaw {
-    /// Parses a single `bass2_<key>=value` suffix (e.g. `pitch_hz`).
+    /// Parses a single `bassN_<key>=value` suffix (e.g. `pitch_hz`).
     fn parse_key(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
             "oscillator_waveform" => self.oscillator_waveform = Some(value.to_owned()),
             "retrigger" => self.retrigger = value.parse::<bool>().ok(),
             "legato_voice_steal" => self.legato_voice_steal = value.parse::<bool>().ok(),
+            "keytrack_enabled" => self.keytrack_enabled = value.parse::<bool>().ok(),
             "note_length_ms" => self.note_length_ms = value.parse::<f32>().ok(),
             "pitch_hz" => self.pitch_hz = value.parse::<f32>().ok(),
             "cutoff_hz" => self.cutoff_hz = value.parse::<f32>().ok(),
@@ -831,22 +576,22 @@ impl BassRaw {
             "filter_2_enabled" => self.filter_2_enabled = value.parse::<bool>().ok(),
             "amp_points" => {
                 if !value.is_empty() {
-                    self.amp_points = Some(parse_points(value, "bass2_amp_points")?);
+                    self.amp_points = Some(parse_points(value, "amp_points")?);
                 }
             }
-            "amp_bends" => self.amp_bends = Some(parse_bends(value, "bass2_amp_bends")?),
+            "amp_bends" => self.amp_bends = Some(parse_bends(value, "amp_bends")?),
             "filter_points" => {
                 if !value.is_empty() {
-                    self.filter_points = Some(parse_points(value, "bass2_filter_points")?);
+                    self.filter_points = Some(parse_points(value, "filter_points")?);
                 }
             }
-            "filter_bends" => self.filter_bends = Some(parse_bends(value, "bass2_filter_bends")?),
+            "filter_bends" => self.filter_bends = Some(parse_bends(value, "filter_bends")?),
             "filter_2_points" => {
                 if !value.is_empty() {
-                    self.filter_2_points = Some(parse_points(value, "bass2_filter_2_points")?);
+                    self.filter_2_points = Some(parse_points(value, "filter_2_points")?);
                 }
             }
-            "filter_2_bends" => self.filter_2_bends = Some(parse_bends(value, "bass2_filter_2_bends")?),
+            "filter_2_bends" => self.filter_2_bends = Some(parse_bends(value, "filter_2_bends")?),
             "level" => self.level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0)),
             "phase_deg" => {
                 self.phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0))
@@ -920,6 +665,7 @@ impl BassRaw {
                 .unwrap_or_else(|| "saw".to_owned()),
             retrigger: self.retrigger.unwrap_or(true),
             legato_voice_steal: self.legato_voice_steal.unwrap_or(false),
+            keytrack_enabled: self.keytrack_enabled.unwrap_or(false),
             note_length_ms: self.note_length_ms.unwrap_or(220.0),
             pitch_hz: self.pitch_hz.unwrap_or(55.0),
             cutoff_hz: self.cutoff_hz.unwrap_or(120.0),
@@ -1149,6 +895,7 @@ fn serialize_patch(patch: &PatchData) -> String {
         lines.push(format!("bass_oscillator_waveform={}", bass.oscillator_waveform));
         lines.push(format!("bass_retrigger={}", bass.retrigger));
         lines.push(format!("bass_legato_voice_steal={}", bass.legato_voice_steal));
+        lines.push(format!("bass_keytrack_enabled={}", bass.keytrack_enabled));
         lines.push(format!("bass_note_length_ms={}", bass.note_length_ms));
         lines.push(format!("bass_pitch_hz={}", bass.pitch_hz));
         lines.push(format!("bass_cutoff_hz={}", bass.cutoff_hz));
@@ -1236,6 +983,7 @@ fn serialize_patch(patch: &PatchData) -> String {
             bass2.oscillator_waveform
         ));
         lines.push(format!("bass2_retrigger={}", bass2.retrigger));
+        lines.push(format!("bass2_keytrack_enabled={}", bass2.keytrack_enabled));
         lines.push(format!(
             "bass2_legato_voice_steal={}",
             bass2.legato_voice_steal
@@ -1525,5 +1273,235 @@ bass_filter_mode=lowpass
         assert_eq!(bass.sub_octave, -2);
         assert!(bass.noise_enabled);
         assert_eq!(bass.noise_level, 0.3);
+    }
+
+    // ---------------------------------------------------------------------
+    // Persistence coverage: every user-editable input on the Kick, Bass and
+    // Arrange pages must survive a save/load cycle.
+    //
+    // These tests compare whole structs with `assert_eq!` rather than listing
+    // fields, so any field added to `KickPatchData`, `BassPatchData`,
+    // `ArrangePatchData` or `PatchData` later is covered automatically: if the
+    // new field is not written by `serialize_patch` *and* read back by
+    // `parse_patch`, the round trip stops being an identity and these tests
+    // fail.
+    // ---------------------------------------------------------------------
+
+    /// All four LFOs set to distinct, non-default, in-range values.
+    fn filled_lfos(seed: usize) -> [LfoParams; BASS_LFO_COUNT] {
+        let mut lfos = [LfoParams::default(); BASS_LFO_COUNT];
+        for (index, lfo) in lfos.iter_mut().enumerate() {
+            let n = index + seed;
+            *lfo = LfoParams {
+                enabled: true,
+                shape: LfoShape::ALL[n % LfoShape::ALL.len()],
+                rate_hz: 2.5 + index as f32,
+                rate_beats: 0.5 + index as f32,
+                tempo_sync: n % 2 == 0,
+                depth: 0.5 + 0.1 * index as f32,
+                phase_deg: 30.0 + 15.0 * index as f32,
+                retrigger: n % 2 == 1,
+            };
+        }
+        lfos
+    }
+
+    /// Every mod matrix row assigned, so none is skipped as "default".
+    fn filled_mod_matrix(seed: usize) -> [ModRouting; BASS_MOD_SLOT_COUNT] {
+        let mut matrix = [ModRouting::default(); BASS_MOD_SLOT_COUNT];
+        for (index, row) in matrix.iter_mut().enumerate() {
+            let n = index + seed;
+            *row = ModRouting {
+                // Skip the `None` variant at index 0 so each row is active.
+                source: ModSource::ALL[1 + n % (ModSource::ALL.len() - 1)],
+                dest: ModDest::ALL[1 + n % (ModDest::ALL.len() - 1)],
+                amount: 0.875 - 0.125 * index as f32,
+            };
+        }
+        matrix
+    }
+
+    /// Every `BassPatchData` field set to a non-default, in-range value.
+    ///
+    /// `seed` shifts every value so the two note slots never compare equal,
+    /// which also proves `bass_*` and `bass2_*` keys do not bleed into each
+    /// other. Booleans are inverted between slots, so across the two slot
+    /// tests each flag is proven to persist both `true` and `false`.
+    fn filled_bass(seed: usize) -> BassPatchData {
+        let flip = seed % 2 == 0;
+        let f = seed as f32;
+        BassPatchData {
+            oscillator_waveform: if flip { "square" } else { "sine" }.to_owned(),
+            retrigger: !flip,
+            legato_voice_steal: flip,
+            keytrack_enabled: flip,
+            note_length_ms: 180.0 + f,
+            pitch_hz: 48.0 + f,
+            cutoff_hz: 320.0 + f,
+            filter_mode: if flip { "bandpass" } else { "highpass" }.to_owned(),
+            filter_slope: if flip { "24db" } else { "12db" }.to_owned(),
+            filter_drive: 0.3 + 0.125 * f,
+            filter_enabled: !flip,
+            filter_2_enabled: flip,
+            amp_points: vec![(0.0, 0.25), (0.5, 0.75), (1.0, 0.125)],
+            amp_bends: vec![0.25, -0.5, 0.75],
+            filter_points: vec![(0.0, 0.5), (0.25, 0.875), (1.0, 0.25)],
+            filter_bends: vec![-0.25, 0.5, 0.125],
+            filter_2_points: vec![(0.0, 0.75), (1.0, 0.5)],
+            filter_2_bends: vec![0.5, -0.75],
+            level: Some(0.6 - 0.125 * f),
+            phase_deg: Some(45.0 + 10.0 * f),
+            osc_a_level: 0.8 - 0.125 * f,
+            osc_a_unison: 4 + seed as i32,
+            osc_a_unison_detune: 22.0 + f,
+            osc_a_unison_blend: 0.4 + 0.125 * f,
+            osc_b_enabled: flip,
+            osc_b_waveform: if flip { "sine" } else { "square" }.to_owned(),
+            osc_b_level: 0.45 + 0.125 * f,
+            osc_b_octave: if flip { -1 } else { 2 },
+            osc_b_detune_cents: if flip { 12.0 } else { -24.0 },
+            osc_b_unison: 3 + seed as i32,
+            osc_b_unison_detune: 18.0 + f,
+            osc_b_unison_blend: 0.55 - 0.125 * f,
+            sub_enabled: flip,
+            sub_waveform: if flip { "sine" } else { "saw" }.to_owned(),
+            sub_level: 0.65 - 0.125 * f,
+            sub_octave: if flip { -2 } else { -3 },
+            noise_enabled: flip,
+            noise_level: 0.35 + 0.125 * f,
+            lfos: filled_lfos(seed),
+            mod_matrix: filled_mod_matrix(seed),
+        }
+    }
+
+    fn filled_kick() -> KickPatchData {
+        KickPatchData {
+            oscillator_waveform: "square".to_owned(),
+            retrigger: false,
+            legato_voice_steal: false,
+            pitch_hz: 57.5,
+            level: Some(0.625),
+            phase_deg: Some(135.0),
+        }
+    }
+
+    fn filled_arrange() -> ArrangePatchData {
+        ArrangePatchData {
+            num_bars: 4.0,
+            note_size: "1/8".to_owned(),
+            use_daw_tempo: false,
+            manual_tempo: 145.5,
+            override_daw_midi: Some(true),
+            notes: vec![(0, 0.0, 0), (2, 0.25, 1), (5, 1.75, 0), (7, 3.5, 1)],
+        }
+    }
+
+    /// A patch with every section populated and no field left at its default.
+    fn filled_patch() -> PatchData {
+        PatchData {
+            name: "coverage".to_owned(),
+            description: "every control saved".to_owned(),
+            tuning_a4_hz: 440.0,
+            keytrack_enabled: true,
+            note_end_ms: 175.0,
+            max_note_length_ms: 900.0,
+            waveform_zoom_percent: 150.0,
+            active_curve: "pitch".to_owned(),
+            amplitude_points: vec![(0.0, 1.0), (0.5, 0.25), (1.0, 0.0)],
+            amplitude_bends: vec![0.5, -0.25, 0.75],
+            pitch_points: vec![(0.0, 0.5), (0.75, 0.125), (1.0, 0.0)],
+            pitch_bends: vec![-0.5, 0.25, 0.125],
+            bass: Some(filled_bass(0)),
+            bass2: Some(filled_bass(1)),
+            kick: Some(filled_kick()),
+            arrange: Some(filled_arrange()),
+        }
+    }
+
+    fn round_trip(patch: &PatchData) -> PatchData {
+        let serialized = serialize_patch(patch);
+        parse_patch(&serialized, None).expect("serialized patch should parse")
+    }
+
+    /// Every Kick page control is written to the patch and read back.
+    #[test]
+    fn kick_page_inputs_persist() {
+        let patch = filled_patch();
+        let reparsed = round_trip(&patch);
+
+        assert_eq!(
+            reparsed.kick, patch.kick,
+            "a Kick page control is missing from the patch save/load path"
+        );
+    }
+
+    /// Every Bass page control persists for note slot 1.
+    #[test]
+    fn bass_slot_1_inputs_persist() {
+        let patch = filled_patch();
+        let reparsed = round_trip(&patch);
+
+        assert_eq!(
+            reparsed.bass, patch.bass,
+            "a Bass page control is missing from the patch save/load path (slot 1)"
+        );
+    }
+
+    /// Every Bass page control persists for note slot 2, independently of
+    /// slot 1. `filled_bass` gives the slots disjoint values, so this also
+    /// catches `bass_*` / `bass2_*` keys overwriting each other.
+    #[test]
+    fn bass_slot_2_inputs_persist() {
+        let patch = filled_patch();
+        let reparsed = round_trip(&patch);
+
+        assert_eq!(
+            reparsed.bass2, patch.bass2,
+            "a Bass page control is missing from the patch save/load path (slot 2)"
+        );
+        assert_ne!(
+            reparsed.bass, reparsed.bass2,
+            "the two bass slots must round trip independently"
+        );
+    }
+
+    /// Every Arrange page control, including the note grid, persists.
+    #[test]
+    fn arrange_page_inputs_persist() {
+        let patch = filled_patch();
+        let reparsed = round_trip(&patch);
+
+        assert_eq!(
+            reparsed.arrange, patch.arrange,
+            "an Arrange page control is missing from the patch save/load path"
+        );
+    }
+
+    /// Global controls (tuning, keytrack, note length, zoom, curves) persist,
+    /// and the patch as a whole is an identity under save/load.
+    #[test]
+    fn whole_patch_is_identity_under_round_trip() {
+        let patch = filled_patch();
+        let reparsed = round_trip(&patch);
+
+        assert_eq!(
+            reparsed, patch,
+            "a user-editable control is missing from the patch save/load path"
+        );
+    }
+
+    /// Guard against the round-trip tests silently passing because the
+    /// fixtures use default values: a fully-populated patch must differ from
+    /// one parsed with every optional key absent.
+    #[test]
+    fn filled_patch_fixture_is_not_all_defaults() {
+        let legacy = parse_patch(LEGACY_PATCH, None).expect("legacy patch should parse");
+        let filled = filled_patch();
+
+        assert_ne!(legacy.bass, filled.bass);
+        assert_eq!(legacy.kick, None);
+        assert_eq!(legacy.arrange, None);
+        assert!(filled.kick.is_some());
+        assert!(filled.arrange.is_some());
     }
 }

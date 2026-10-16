@@ -908,6 +908,7 @@ fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatch
         oscillator_waveform: waveform_to_patch(slot.oscillator_waveform).to_owned(),
         retrigger: slot.retrigger,
         legato_voice_steal: slot.legato_voice_steal,
+        keytrack_enabled: slot.keytrack_enabled,
         note_length_ms: slot.note_length_ms,
         pitch_hz: slot.pitch_hz,
         cutoff_hz: slot.cutoff_hz,
@@ -968,6 +969,7 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
     }
     slot.retrigger = bass.retrigger;
     slot.legato_voice_steal = bass.legato_voice_steal;
+    slot.keytrack_enabled = bass.keytrack_enabled;
     slot.note_length_ms = bass.note_length_ms.clamp(1.0, 1000.0);
     slot.pitch_hz = bass.pitch_hz.clamp(20.0, 2_000.0);
     slot.cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
