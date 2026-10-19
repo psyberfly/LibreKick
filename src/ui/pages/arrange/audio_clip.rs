@@ -1,10 +1,11 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use nih_plug_egui::egui::{self, Align2, Color32, Pos2, RichText, Sense, Stroke, Vec2};
+use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Sense, Stroke, Vec2};
 
 use crate::audio::{self, ArrangeNoteSpec};
 use crate::shared::SharedSnapshot;
+use crate::ui::components::{energy_heatmap, knob, section};
 use crate::ui::helpers::axis_x_label;
 use crate::ui::state::BezierUiState;
 use crate::ui::theme::{themed_font, APP_THEME};
@@ -23,139 +24,173 @@ pub(super) fn render(
     daw_tempo: Option<f64>,
     params: &LibreKickParams,
 ) {
-    ui.group(|ui| {
-        ui.label(RichText::new("Audio Clip").strong());
-        ui.add_space(4.0 * ui_scale);
+    section::render(
+        ui,
+        ui_scale,
+        section::SectionHeader {
+            title: "AUDIO CLIP",
+            enabled: None,
+            min_height: 0.0,
+        },
+        |ui| {
+            // Zoom dial — unified knob spec, no sliders.
+            let zoom_display = format!("{:.0}%", state.clip_zoom * 100.0);
+            knob::range_knob(
+                ui,
+                ui_scale,
+                "ZOOM",
+                &mut state.clip_zoom,
+                1.0,
+                4.0,
+                &zoom_display,
+                knob::KnobStyle {
+                    diameter: 30.0,
+                    ..knob::KnobStyle::panel()
+                },
+            );
 
-        // Zoom controls
-        ui.add(crate::ui::helpers::slider_fine_step(
-            ui,
-            egui::Slider::new(&mut state.clip_zoom, 1.0..=4.0)
-                .text("Zoom")
-                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
-                .custom_parser(|s| {
-                    s.trim_end_matches('%').parse::<f64>().ok().map(|v| v / 100.0)
-                }),
-            0.25,
-        ));
+            ui.add_space(4.0 * ui_scale);
 
-        ui.add_space(4.0 * ui_scale);
+            let clip_height = 400.0 * ui_scale;
+            let available_width = ui.available_width();
+            let axis_height = 18.0 * ui_scale;
 
-        let clip_height = 400.0 * ui_scale;
-        let available_width = ui.available_width();
-        let axis_height = 18.0 * ui_scale;
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::new(available_width, clip_height), Sense::drag());
 
-        let (rect, response) = ui.allocate_exact_size(
-            Vec2::new(available_width, clip_height),
-            Sense::drag(),
-        );
+            let painter = ui.painter_at(rect);
 
-        let painter = ui.painter_at(rect);
+            // Draw background and border
+            painter.rect_filled(rect, 4.0, colors::background());
+            painter.rect_stroke(
+                rect,
+                4.0,
+                Stroke::new(1.0, colors::border()),
+                egui::StrokeKind::Inside,
+            );
 
-        // Draw background and border
-        painter.rect_filled(rect, 4.0, colors::background());
-        painter.rect_stroke(
-            rect,
-            4.0,
-            Stroke::new(1.0, colors::border()),
-            egui::StrokeKind::Inside,
-        );
+            // Calculate total clip duration in ms from tempo and bars
+            // 4/4 time: bar_ms = 4 beats * (60000 / BPM)
+            let tempo = if state.use_daw_tempo {
+                daw_tempo.unwrap_or(state.manual_tempo as f64)
+            } else {
+                state.manual_tempo as f64
+            };
+            let beats_per_bar = 4.0;
+            let bar_ms = beats_per_bar * (60_000.0 / tempo.max(1.0));
+            let total_ms = bar_ms * state.num_bars as f64;
 
-        // Calculate total clip duration in ms from tempo and bars
-        // 4/4 time: bar_ms = 4 beats * (60000 / BPM)
-        let tempo = if state.use_daw_tempo {
-            daw_tempo.unwrap_or(state.manual_tempo as f64)
-        } else {
-            state.manual_tempo as f64
-        };
-        let beats_per_bar = 4.0;
-        let bar_ms = beats_per_bar * (60_000.0 / tempo.max(1.0));
-        let total_ms = bar_ms * state.num_bars as f64;
+            // Waveform area excludes the bottom axis strip
+            let wave_rect = egui::Rect::from_min_max(
+                rect.min,
+                Pos2::new(rect.right(), rect.bottom() - axis_height),
+            );
 
-        // Waveform area excludes the bottom axis strip
-        let wave_rect = egui::Rect::from_min_max(
-            rect.min,
-            Pos2::new(rect.right(), rect.bottom() - axis_height),
-        );
+            // Visible window in bars; drag scrolls horizontally
+            let visible_bars = (state.num_bars / state.clip_zoom)
+                .min(state.num_bars)
+                .max(0.0625);
+            let max_scroll = (state.num_bars - visible_bars).max(0.0);
+            if response.dragged() {
+                let bar_width = wave_rect.width() / visible_bars;
+                state.clip_scroll_offset = (state.clip_scroll_offset
+                    - response.drag_delta().x / bar_width)
+                    .clamp(0.0, max_scroll);
+            }
+            let scroll_offset = state.clip_scroll_offset.clamp(0.0, max_scroll);
 
-        // Visible window in bars; drag scrolls horizontally
-        let visible_bars = (state.num_bars / state.clip_zoom)
-            .min(state.num_bars)
-            .max(0.0625);
-        let max_scroll = (state.num_bars - visible_bars).max(0.0);
-        if response.dragged() {
-            let bar_width = wave_rect.width() / visible_bars;
-            state.clip_scroll_offset = (state.clip_scroll_offset
-                - response.drag_delta().x / bar_width)
-                .clamp(0.0, max_scroll);
-        }
-        let scroll_offset = state.clip_scroll_offset.clamp(0.0, max_scroll);
-
-        draw_grid(
-            &painter,
-            wave_rect,
-            state.num_bars,
-            visible_bars,
-            scroll_offset,
-            state.note_size.bars(),
-        );
-
-        update_preview(state, shared_snapshot, params, tempo, bar_ms, total_ms);
-
-        // Draw only the visible slice of the rendered clip
-        draw_waveform(
-            &painter,
-            wave_rect,
-            sample_window(
-                &state.clip_preview_bass,
-                scroll_offset,
-                visible_bars,
+            draw_grid(
+                &painter,
+                wave_rect,
                 state.num_bars,
-            ),
-            colors::bass_note(),
-        );
-        draw_waveform(
-            &painter,
-            wave_rect,
-            sample_window(
-                &state.clip_preview_kick,
-                scroll_offset,
                 visible_bars,
+                scroll_offset,
+                state.note_size.bars(),
+            );
+
+            update_preview(state, shared_snapshot, params, tempo, bar_ms, total_ms);
+
+            // Draw only the visible slice of the rendered clip
+            draw_waveform(
+                &painter,
+                wave_rect,
+                sample_window(
+                    &state.clip_preview_bass,
+                    scroll_offset,
+                    visible_bars,
+                    state.num_bars,
+                ),
+                colors::bass_note(),
+            );
+            draw_waveform(
+                &painter,
+                wave_rect,
+                sample_window(
+                    &state.clip_preview_kick,
+                    scroll_offset,
+                    visible_bars,
+                    state.num_bars,
+                ),
+                colors::kick_note(),
+            );
+
+            // Band energy of the arrangement, so it is visible where the bass
+            // and kick are stacking up energy in the same band at the same time.
+            // Both strips share the waveform's x axis and show the same bar
+            // window, so they line up with the notes above.
+            if state.num_bars > 0.0 {
+                let window = (
+                    scroll_offset / state.num_bars,
+                    (scroll_offset + visible_bars) / state.num_bars,
+                );
+                let strip_height = (wave_rect.height() * 0.2).min(58.0 * ui_scale);
+                draw_energy_strip(
+                    &painter,
+                    wave_rect,
+                    ui_scale,
+                    &state.clip_energy_bass,
+                    window,
+                    strip_height,
+                    1,
+                    "BASS",
+                );
+                draw_energy_strip(
+                    &painter,
+                    wave_rect,
+                    ui_scale,
+                    &state.clip_energy_kick,
+                    window,
+                    strip_height,
+                    0,
+                    "KICK",
+                );
+            }
+
+            draw_note_markers(
+                &painter,
+                rect,
+                wave_rect,
+                ui_scale,
+                state,
+                bar_ms,
+                visible_bars,
+                scroll_offset,
+            );
+
+            draw_time_axis(
+                &painter,
+                rect,
+                wave_rect,
+                ui_scale,
+                bar_ms,
                 state.num_bars,
-            ),
-            colors::kick_note(),
-        );
+                visible_bars,
+                scroll_offset,
+            );
 
-        draw_note_markers(
-            &painter,
-            rect,
-            wave_rect,
-            ui_scale,
-            state,
-            bar_ms,
-            visible_bars,
-            scroll_offset,
-        );
-
-        draw_time_axis(
-            &painter,
-            rect,
-            wave_rect,
-            ui_scale,
-            bar_ms,
-            state.num_bars,
-            visible_bars,
-            scroll_offset,
-        );
-
-        draw_scroll_indicator(
-            &painter,
-            rect,
-            state.num_bars,
-            visible_bars,
-            scroll_offset,
-        );
-    });
+            draw_scroll_indicator(&painter, rect, state.num_bars, visible_bars, scroll_offset);
+        },
+    );
 }
 
 /// Returns the slice of `samples` covering the visible bar window.
@@ -174,6 +209,58 @@ fn sample_window<'a>(
     &samples[start..end.min(samples.len()).max(start)]
 }
 
+/// Draws one instrument's band-energy heatmap as a strip along the bottom of
+/// the waveform area.
+///
+/// `stack_index` counts strips up from the bottom edge, so several
+/// instruments can sit side by side without overlapping. `window` is the
+/// visible span of the cached map, which keeps the strip aligned with the
+/// waveform as the view is zoomed and scrolled.
+#[allow(clippy::too_many_arguments)]
+fn draw_energy_strip(
+    painter: &egui::Painter,
+    wave_rect: egui::Rect,
+    ui_scale: f32,
+    map: &energy_heatmap::EnergyMap,
+    window: (f32, f32),
+    strip_height: f32,
+    stack_index: usize,
+    label: &str,
+) {
+    if map.is_empty() || strip_height <= 0.0 {
+        return;
+    }
+
+    let bottom = wave_rect.bottom() - strip_height * stack_index as f32;
+    let top = bottom - strip_height;
+    if top < wave_rect.top() {
+        return;
+    }
+    let strip_rect = egui::Rect::from_min_max(
+        Pos2::new(wave_rect.left(), top),
+        Pos2::new(wave_rect.right(), bottom),
+    );
+
+    // Dark backing so the heat colours read against the waveform behind.
+    painter.rect_filled(
+        strip_rect,
+        0.0,
+        Color32::from_rgba_unmultiplied(0, 0, 0, 170),
+    );
+    energy_heatmap::draw(painter, strip_rect, map, window, None, ui_scale);
+
+    painter.text(
+        Pos2::new(
+            strip_rect.right() - 4.0 * ui_scale,
+            strip_rect.top() + 1.0 * ui_scale,
+        ),
+        Align2::RIGHT_TOP,
+        label,
+        themed_font(8.0 * ui_scale),
+        Color32::from_rgba_unmultiplied(255, 240, 210, 170),
+    );
+}
+
 /// Draws bar boundary and beat subdivision lines across the visible window
 /// of the waveform area. For narrow windows (<= 1 bar), note-size slot lines
 /// are also drawn.
@@ -188,9 +275,8 @@ fn draw_grid(
     if num_bars <= 0.0 || visible_bars <= 0.0 {
         return;
     }
-    let bars_to_x = |bars: f32| {
-        wave_rect.left() + (bars - scroll_offset) / visible_bars * wave_rect.width()
-    };
+    let bars_to_x =
+        |bars: f32| wave_rect.left() + (bars - scroll_offset) / visible_bars * wave_rect.width();
 
     let first_beat = (scroll_offset * 4.0).floor().max(0.0) as i32;
     let last_beat = ((scroll_offset + visible_bars) * 4.0).ceil() as i32;
@@ -205,7 +291,10 @@ fn draw_grid(
         }
         let is_bar_line = beat % 4 == 0;
         painter.line_segment(
-            [Pos2::new(x, wave_rect.top()), Pos2::new(x, wave_rect.bottom())],
+            [
+                Pos2::new(x, wave_rect.top()),
+                Pos2::new(x, wave_rect.bottom()),
+            ],
             if is_bar_line {
                 Stroke::new(1.0, colors::bar_line())
             } else {
@@ -232,7 +321,10 @@ fn draw_grid(
             let x = bars_to_x(slot_bars);
             if x >= wave_rect.left() && x <= wave_rect.right() {
                 painter.line_segment(
-                    [Pos2::new(x, wave_rect.top()), Pos2::new(x, wave_rect.bottom())],
+                    [
+                        Pos2::new(x, wave_rect.top()),
+                        Pos2::new(x, wave_rect.bottom()),
+                    ],
                     Stroke::new(0.5, slot_color),
                 );
             }
@@ -303,6 +395,14 @@ fn update_preview(
         kick_level,
         bass_levels,
     );
+    // Analyse the clip once here rather than every frame: the buffers cover
+    // the whole arrangement, and they only change when this key changes.
+    // Columns are fixed and generous so the map stays detailed enough to
+    // zoom into without re-analysing.
+    const ENERGY_COLUMNS: usize = 2048;
+    state.clip_energy_bass = energy_heatmap::analyze(&bass, CLIP_PREVIEW_RATE, ENERGY_COLUMNS);
+    state.clip_energy_kick = energy_heatmap::analyze(&kick, CLIP_PREVIEW_RATE, ENERGY_COLUMNS);
+
     state.clip_preview_kick = kick;
     state.clip_preview_bass = bass;
     state.clip_preview_key = preview_key;
@@ -395,21 +495,12 @@ fn draw_waveform(
 
     // Column fills
     for px in 0..width {
-        painter.line_segment(
-            [tops[px], bottoms[px]],
-            Stroke::new(1.0, wave_color),
-        );
+        painter.line_segment([tops[px], bottoms[px]], Stroke::new(1.0, wave_color));
     }
     // Connect adjacent column edges so the envelope has no gaps
     for px in 0..width.saturating_sub(1) {
-        painter.line_segment(
-            [tops[px], tops[px + 1]],
-            Stroke::new(1.0, wave_color),
-        );
-        painter.line_segment(
-            [bottoms[px], bottoms[px + 1]],
-            Stroke::new(1.0, wave_color),
-        );
+        painter.line_segment([tops[px], tops[px + 1]], Stroke::new(1.0, wave_color));
+        painter.line_segment([bottoms[px], bottoms[px + 1]], Stroke::new(1.0, wave_color));
     }
 
     // Center line
@@ -462,12 +553,18 @@ fn draw_note_markers(
         let label = axis_x_label(time_ms as f32);
         let (label_pos, label_align) = if t <= 0.0 {
             (
-                Pos2::new(rect.left() + 2.0 * ui_scale, wave_rect.top() + 2.0 * ui_scale),
+                Pos2::new(
+                    rect.left() + 2.0 * ui_scale,
+                    wave_rect.top() + 2.0 * ui_scale,
+                ),
                 Align2::LEFT_TOP,
             )
         } else if t >= 1.0 {
             (
-                Pos2::new(rect.right() - 2.0 * ui_scale, wave_rect.top() + 2.0 * ui_scale),
+                Pos2::new(
+                    rect.right() - 2.0 * ui_scale,
+                    wave_rect.top() + 2.0 * ui_scale,
+                ),
                 Align2::RIGHT_TOP,
             )
         } else {
@@ -529,11 +626,17 @@ fn draw_time_axis(
             )
         } else if f >= 1.0 {
             (
-                Pos2::new(rect.right() - 2.0 * ui_scale, rect.bottom() - 2.0 * ui_scale),
+                Pos2::new(
+                    rect.right() - 2.0 * ui_scale,
+                    rect.bottom() - 2.0 * ui_scale,
+                ),
                 Align2::RIGHT_BOTTOM,
             )
         } else {
-            (Pos2::new(x, rect.bottom() - 2.0 * ui_scale), Align2::CENTER_BOTTOM)
+            (
+                Pos2::new(x, rect.bottom() - 2.0 * ui_scale),
+                Align2::CENTER_BOTTOM,
+            )
         };
         painter.text(
             label_pos,

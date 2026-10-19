@@ -29,8 +29,10 @@ pub(crate) fn render(
         }
         let desired_height = (180.0 * ui_scale).max(140.0);
         let desired_width = ui.available_width().max(180.0 * ui_scale);
-        let (outer_rect, response) =
-            ui.allocate_exact_size(Vec2::new(desired_width, desired_height), Sense::click_and_drag());
+        let (outer_rect, response) = ui.allocate_exact_size(
+            Vec2::new(desired_width, desired_height),
+            Sense::click_and_drag(),
+        );
 
         let graph_rect = outer_rect.shrink2(Vec2::new(12.0 * ui_scale, 16.0 * ui_scale));
         let painter = ui.painter_at(outer_rect);
@@ -88,16 +90,10 @@ pub(crate) fn render(
             Stroke::NONE,
         ));
         for line in sampled.windows(2) {
-            painter.line_segment(
-                [line[0], line[1]],
-                Stroke::new(5.0, APP_THEME.trace_glow()),
-            );
+            painter.line_segment([line[0], line[1]], Stroke::new(5.0, APP_THEME.trace_glow()));
         }
         for line in sampled.windows(2) {
-            painter.line_segment(
-                [line[0], line[1]],
-                Stroke::new(2.0, accent_color()),
-            );
+            painter.line_segment([line[0], line[1]], Stroke::new(2.0, accent_color()));
         }
 
         // Live playhead: vertical sweep line plus a glowing dot riding the
@@ -108,10 +104,7 @@ pub(crate) fn render(
             painter.vline(
                 x,
                 graph_rect.y_range(),
-                Stroke::new(
-                    1.0,
-                    Color32::from_rgba_unmultiplied(255, 170, 80, 90),
-                ),
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 170, 80, 90)),
             );
             let dot_y = envelope_value_linear(points, bends, phase);
             let dot = to_screen(Pos2::new(phase, dot_y));
@@ -120,7 +113,10 @@ pub(crate) fn render(
         }
 
         if response.double_clicked() {
-            if let Some(pointer) = response.interact_pointer_pos().filter(|p| graph_rect.contains(*p)) {
+            if let Some(pointer) = response
+                .interact_pointer_pos()
+                .filter(|p| graph_rect.contains(*p))
+            {
                 let new_point = to_normalized(pointer);
                 let insert_index = points
                     .iter()
@@ -183,7 +179,11 @@ pub(crate) fn render(
             }
             normalize_segment_bends(points, bends);
             constrain_curve_points(points);
-            *selected_point = Some(idx.saturating_sub(1).max(1).min(points.len().saturating_sub(2)));
+            *selected_point = Some(
+                idx.saturating_sub(1)
+                    .max(1)
+                    .min(points.len().saturating_sub(2)),
+            );
         }
 
         // --- Edge bending (Ctrl/Cmd + drag on a segment) ---
@@ -224,9 +224,8 @@ pub(crate) fn render(
                     let right_norm = points[seg_idx + 1];
                     let left_screen = to_screen(left_norm);
                     let right_screen = to_screen(right_norm);
-                    let sample_count = ((left_screen.distance(right_screen) / 10.0).ceil()
-                        as usize)
-                        .clamp(8, 48);
+                    let sample_count =
+                        ((left_screen.distance(right_screen) / 10.0).ceil() as usize).clamp(8, 48);
 
                     let mut curve_polyline = Vec::with_capacity(sample_count + 1);
                     let mut prev_point = to_screen(Pos2::new(
@@ -265,8 +264,7 @@ pub(crate) fn render(
                             .as_ref()
                             .is_none_or(|(_, best_distance, _, _)| distance < *best_distance);
                         if replace {
-                            best_segment =
-                                Some((seg_idx, distance, closest_point, curve_polyline));
+                            best_segment = Some((seg_idx, distance, closest_point, curve_polyline));
                         }
                     }
                 }
@@ -278,10 +276,7 @@ pub(crate) fn render(
                     bend_hover_polyline = hover_polyline;
                     ui.output_mut(|o| o.cursor_icon = egui::CursorIcon::ResizeHorizontal);
 
-                    if pointer_primary_down
-                        && !drag_active
-                        && drag_segment.is_none()
-                    {
+                    if pointer_primary_down && !drag_active && drag_segment.is_none() {
                         drag_segment = Some(seg_idx);
                         drag_start_y = Some(pointer_pos.y);
                         drag_start_value = bends.get(seg_idx).copied().unwrap_or(0.0);
@@ -295,8 +290,8 @@ pub(crate) fn render(
             if let (Some(seg_idx), Some(pointer_pos)) = (drag_segment, pointer_pos) {
                 if seg_idx < bends.len() {
                     let start_y = drag_start_y.unwrap_or(pointer_pos.y);
-                    let delta = (start_y - pointer_pos.y)
-                        / (graph_rect.height() * 0.45).max(f32::EPSILON);
+                    let delta =
+                        (start_y - pointer_pos.y) / (graph_rect.height() * 0.45).max(f32::EPSILON);
                     let bend = (drag_start_value + delta).clamp(-1.0, 1.0);
                     bends[seg_idx] = bend;
                     bend_hover_segment = Some(seg_idx);
@@ -307,9 +302,8 @@ pub(crate) fn render(
                     let right_norm = points[seg_idx + 1];
                     let left_screen = to_screen(left_norm);
                     let right_screen = to_screen(right_norm);
-                    let sample_count = ((left_screen.distance(right_screen) / 10.0).ceil()
-                        as usize)
-                        .clamp(8, 48);
+                    let sample_count =
+                        ((left_screen.distance(right_screen) / 10.0).ceil() as usize).clamp(8, 48);
                     let mut hover_polyline = Vec::with_capacity(sample_count + 1);
                     for step in 0..=sample_count {
                         let local_t = step as f32 / sample_count as f32;
@@ -342,8 +336,8 @@ pub(crate) fn render(
 
         if let (Some(point), Some(value)) = (bend_hover_point, bend_hover_value) {
             let label = format!("{:+.0}%", value * 100.0);
-            let bubble_width = (label.len() as f32 * 7.0 * ui_scale + 14.0 * ui_scale)
-                .max(52.0 * ui_scale);
+            let bubble_width =
+                (label.len() as f32 * 7.0 * ui_scale + 14.0 * ui_scale).max(52.0 * ui_scale);
             let bubble_height = 20.0 * ui_scale;
             let bubble_rect = Rect::from_min_size(
                 point + Vec2::new(10.0 * ui_scale, -bubble_height * 0.5),

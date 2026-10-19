@@ -259,9 +259,8 @@ impl BassFx {
         }
 
         if params.delay_enabled {
-            let delay_samples = params.delay_time_ms.clamp(1.0, MAX_DELAY_MS)
-                * 0.001
-                * self.sample_rate;
+            let delay_samples =
+                params.delay_time_ms.clamp(1.0, MAX_DELAY_MS) * 0.001 * self.sample_rate;
             let wet = self.delay.read(delay_samples);
             let feedback = params.delay_feedback.clamp(0.0, 0.95);
             self.delay.push(signal + wet * feedback);
@@ -318,7 +317,10 @@ mod tests {
             let input = if step < 64 { 1.0 } else { 0.0 };
             peak = peak.max(fx.process(input, &params).abs());
         }
-        assert!(peak.is_finite() && peak < 20.0, "delay tail blew up: {peak}");
+        assert!(
+            peak.is_finite() && peak < 20.0,
+            "delay tail blew up: {peak}"
+        );
     }
 
     /// Reverb must also settle rather than oscillate without bound.
@@ -337,6 +339,9 @@ mod tests {
             let input = if step < 64 { 1.0 } else { 0.0 };
             peak = peak.max(fx.process(input, &params).abs());
         }
-        assert!(peak.is_finite() && peak < 20.0, "reverb tail blew up: {peak}");
+        assert!(
+            peak.is_finite() && peak < 20.0,
+            "reverb tail blew up: {peak}"
+        );
     }
 }

@@ -57,6 +57,19 @@ impl Theme {
         Color32::from_rgb(66, 44, 22)
     }
 
+    /// Sketchy warm brown used sparingly along the right rim of knobs — a
+    /// hand-drawn shading hint that makes the dial read as raised. Bright
+    /// enough to show against the near-black knob face.
+    pub(crate) fn pencil_shade(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(156, 92, 38, 200)
+    }
+
+    /// Faint warm wash across the flat top of buttons — the lit face that
+    /// pairs with the knob's pencil shading to sell the raised look.
+    pub(crate) fn button_top_tint(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(255, 190, 120, 30)
+    }
+
     /// Faint amber grid line inside displays.
     pub(crate) fn grid_line(self) -> Color32 {
         Color32::from_rgb(38, 28, 18)
@@ -87,6 +100,12 @@ impl Theme {
     /// Phosphor trace for waveform displays.
     pub(crate) fn waveform_trace(self) -> Color32 {
         Color32::from_rgba_unmultiplied(255, 150, 40, 220)
+    }
+
+    /// Cool blue trace for waveform displays where the heat fill sits
+    /// underneath — the only non-amber element, so the wave always reads.
+    pub(crate) fn waveform_trace_cool(self) -> Color32 {
+        Color32::from_rgba_unmultiplied(110, 205, 255, 230)
     }
 
     /// Soft halo drawn behind phosphor traces and knob arcs.
@@ -179,10 +198,8 @@ pub(crate) fn apply_ui_text_scale(ui: &mut egui::Ui, scale: f32) {
 /// combo boxes and menus match the custom-drawn panels.
 pub(crate) fn apply_widget_style(ui: &mut egui::Ui, ui_scale: f32) {
     let style = ui.style_mut();
-    style.interaction.resize_grab_radius_corner =
-        (RESIZE_CORNER_HIT_RADIUS * ui_scale).max(24.0);
-    style.interaction.resize_grab_radius_side =
-        (RESIZE_SIDE_HIT_RADIUS * ui_scale).max(12.0);
+    style.interaction.resize_grab_radius_corner = (RESIZE_CORNER_HIT_RADIUS * ui_scale).max(24.0);
+    style.interaction.resize_grab_radius_side = (RESIZE_SIDE_HIT_RADIUS * ui_scale).max(12.0);
     style.visuals.resize_corner_size = (RESIZE_CORNER_VISUAL_SIZE * ui_scale).max(16.0);
 
     // Dark-mode chrome.
@@ -193,36 +210,73 @@ pub(crate) fn apply_widget_style(ui: &mut egui::Ui, ui_scale: f32) {
     style.visuals.extreme_bg_color = APP_THEME.screen_bg();
     style.visuals.code_bg_color = APP_THEME.graph_bg();
     style.visuals.window_stroke = Stroke::new(1.0, APP_THEME.graph_border());
-    style.visuals.widgets.noninteractive.bg_stroke =
-        Stroke::new(1.0, APP_THEME.grid_line());
+    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, APP_THEME.grid_line());
     style.visuals.widgets.noninteractive.fg_stroke.color = text_color();
     style.visuals.widgets.inactive.bg_fill = APP_THEME.screen_bg();
     style.visuals.widgets.inactive.weak_bg_fill = APP_THEME.screen_bg();
-    style.visuals.widgets.inactive.bg_stroke =
-        Stroke::new(1.0, APP_THEME.graph_border());
+    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, APP_THEME.graph_border());
     style.visuals.widgets.inactive.fg_stroke.color = APP_THEME.axis_tick();
 
     style.visuals.selection.bg_fill = APP_THEME.active_button_bg();
     style.visuals.selection.stroke = Stroke::new(1.0, phosphor_color());
     style.visuals.widgets.active.bg_fill = APP_THEME.active_button_bg();
     style.visuals.widgets.active.weak_bg_fill = APP_THEME.active_button_bg();
-    style.visuals.widgets.active.bg_stroke =
-        Stroke::new(1.0, APP_THEME.active_button_border());
+    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0, APP_THEME.active_button_border());
     style.visuals.widgets.active.fg_stroke.color = phosphor_color();
     style.visuals.widgets.hovered.bg_fill = APP_THEME.active_button_hover();
     style.visuals.widgets.hovered.weak_bg_fill = APP_THEME.active_button_hover();
-    style.visuals.widgets.hovered.bg_stroke =
-        Stroke::new(1.0, APP_THEME.active_button_border());
+    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, APP_THEME.active_button_border());
     style.visuals.widgets.hovered.fg_stroke.color = phosphor_color();
+}
+
+/// Velvet sheen across the top of a face: light catches the upper rim and
+/// diffuses downward — a three-stop gradient (dim edge, bright crest, fading
+/// to nothing) instead of a flat tint. `depth_frac` is how far the glow
+/// reaches down the rect, `peak_alpha` the crest's brightness.
+pub(crate) fn velvet_sheen(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    corner_radius: f32,
+    depth_frac: f32,
+    peak_alpha: u8,
+) {
+    if rect.height() <= 4.0 || rect.width() <= 4.0 {
+        return;
+    }
+    // Shrink horizontally past the corner radius so the sheen can't bleed
+    // outside the rounded border.
+    let sheen = rect.shrink2(Vec2::new(corner_radius.max(2.0), 0.0));
+    let (l, r) = (sheen.left(), sheen.right());
+    let top = sheen.top();
+    let crest_y = top + sheen.height() * 0.10;
+    let end_y = top + sheen.height() * depth_frac.clamp(0.15, 1.0);
+    if end_y <= crest_y {
+        return;
+    }
+
+    let hue = APP_THEME.button_top_tint();
+    let (hr, hg, hb) = (hue.r(), hue.g(), hue.b());
+    let edge = Color32::from_rgba_unmultiplied(hr, hg, hb, peak_alpha / 4);
+    let crest = Color32::from_rgba_unmultiplied(hr, hg, hb, peak_alpha);
+    let zero = Color32::from_rgba_unmultiplied(hr, hg, hb, 0);
+
+    let mut mesh = egui::epaint::Mesh::default();
+    mesh.colored_vertex(egui::Pos2::new(l, top), edge);
+    mesh.colored_vertex(egui::Pos2::new(r, top), edge);
+    mesh.colored_vertex(egui::Pos2::new(l, crest_y), crest);
+    mesh.colored_vertex(egui::Pos2::new(r, crest_y), crest);
+    mesh.colored_vertex(egui::Pos2::new(l, end_y), zero);
+    mesh.colored_vertex(egui::Pos2::new(r, end_y), zero);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 3, 2);
+    mesh.add_triangle(2, 3, 4);
+    mesh.add_triangle(3, 5, 4);
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 /// Draws the retro-CRT finish over a rect: faint scanlines plus a soft
 /// phosphor rim. Cheap enough to paint once per panel.
-pub(crate) fn crt_overlay(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    corner_radius: f32,
-) {
+pub(crate) fn crt_overlay(painter: &egui::Painter, rect: egui::Rect, corner_radius: f32) {
     const SCANLINE_GAP: f32 = 3.0;
     let clip = painter.with_clip_rect(rect);
     let scanline = Color32::from_rgba_unmultiplied(0, 0, 0, 26);
@@ -291,4 +345,3 @@ pub fn accent_color() -> Color32 {
 pub fn axis_title_color() -> Color32 {
     text_color()
 }
-

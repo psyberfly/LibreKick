@@ -5,8 +5,7 @@ use std::{
 
 use crate::config;
 use crate::shared::{
-    LfoParams, LfoShape, ModDest, ModRouting, ModSource, BASS_LFO_COUNT,
-    BASS_MOD_SLOT_COUNT,
+    LfoParams, LfoShape, ModDest, ModRouting, ModSource, BASS_LFO_COUNT, BASS_MOD_SLOT_COUNT,
 };
 
 pub const PATCH_FILE_EXTENSION: &str = ".librekick_patch";
@@ -79,6 +78,12 @@ pub struct KickPatchData {
     pub level: Option<f32>,
     /// Oscillator start phase in degrees. `None` for older patches.
     pub phase_deg: Option<f32>,
+    /// Tempo-synced kick length in arrange override. `None` for older patches.
+    pub length_override: Option<bool>,
+    /// AMP envelope power. `None` for older patches (envelope on).
+    pub amp_env_enabled: Option<bool>,
+    /// PITCH envelope power. `None` for older patches (envelope on).
+    pub pitch_env_enabled: Option<bool>,
 }
 
 /// Bass instrument settings stored inside a patch file.
@@ -90,6 +95,12 @@ pub struct BassPatchData {
     /// OSC A keytrack toggle. Defaults to `false` for older patches.
     pub keytrack_enabled: bool,
     pub note_length_ms: f32,
+    /// 1/16 tempo sync for note length. Defaults to false for older patches.
+    pub length_sync: bool,
+    /// Portamento time in ms. Defaults to 0 (instant) for older patches.
+    pub glide_ms: f32,
+    /// Glide only on overlapping notes. Defaults to false.
+    pub glide_auto: bool,
     pub pitch_hz: f32,
     pub cutoff_hz: f32,
     pub filter_mode: String,
@@ -97,6 +108,8 @@ pub struct BassPatchData {
     pub filter_slope: String,
     /// 0..1, amount of pre-filter saturation. Defaults to 0.0.
     pub filter_drive: f32,
+    /// 0..1, filter resonance. Defaults to 0.0 for older patches.
+    pub resonance: f32,
     pub filter_enabled: bool,
     pub filter_2_enabled: bool,
     pub amp_points: Vec<(f32, f32)>,
@@ -146,7 +159,9 @@ pub fn set_default_patch_name(name: &str) -> Result<(), String> {
 
     let patch_path = patch_file_path(&cleaned_name)?;
     if !patch_path.exists() {
-        return Err(format!("Patch '{cleaned_name}' does not exist. Save it first."));
+        return Err(format!(
+            "Patch '{cleaned_name}' does not exist. Save it first."
+        ));
     }
 
     let default_path = default_patch_name_path();
@@ -190,7 +205,14 @@ pub fn ensure_default_patch_setup() -> Result<(), String> {
             .strip_suffix(PATCH_FILE_EXTENSION)
             .map(sanitize_patch_name)
             .unwrap_or_default();
-        let patch = parse_patch(raw_patch, if fallback_name.is_empty() { None } else { Some(&fallback_name) })?;
+        let patch = parse_patch(
+            raw_patch,
+            if fallback_name.is_empty() {
+                None
+            } else {
+                Some(&fallback_name)
+            },
+        )?;
 
         if !patch_file_path(&patch.name)?.exists() {
             save_patch(&patch)?;
@@ -202,9 +224,11 @@ pub fn ensure_default_patch_setup() -> Result<(), String> {
     seeded_patch_names.sort();
     seeded_patch_names.dedup();
 
-    let default_exists = get_default_patch_name()?
-        .as_ref()
-        .is_some_and(|name| patch_file_path(name).map(|path| path.exists()).unwrap_or(false));
+    let default_exists = get_default_patch_name()?.as_ref().is_some_and(|name| {
+        patch_file_path(name)
+            .map(|path| path.exists())
+            .unwrap_or(false)
+    });
 
     if !default_exists {
         let selected_default = if seeded_patch_names
@@ -271,7 +295,11 @@ fn bends_to_string(bends: &[f32]) -> String {
 fn parse_points(raw: &str, label: &str) -> Result<Vec<(f32, f32)>, String> {
     let mut points = Vec::new();
 
-    for part in raw.split('|').map(str::trim).filter(|segment| !segment.is_empty()) {
+    for part in raw
+        .split('|')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+    {
         let Some((x_raw, y_raw)) = part.split_once(',') else {
             return Err(format!("Invalid point pair in {label}: '{part}'"));
         };
@@ -298,7 +326,11 @@ fn parse_points(raw: &str, label: &str) -> Result<Vec<(f32, f32)>, String> {
 fn parse_bends(raw: &str, label: &str) -> Result<Vec<f32>, String> {
     let mut bends = Vec::new();
 
-    for part in raw.split('|').map(str::trim).filter(|segment| !segment.is_empty()) {
+    for part in raw
+        .split('|')
+        .map(str::trim)
+        .filter(|segment| !segment.is_empty())
+    {
         let bend = part
             .parse::<f32>()
             .map_err(|_| format!("Invalid bend value in {label}: '{part}'"))?;
@@ -336,6 +368,9 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
     let mut kick_pitch_hz: Option<f32> = None;
     let mut kick_level: Option<f32> = None;
     let mut kick_phase_deg: Option<f32> = None;
+    let mut kick_length_override: Option<bool> = None;
+    let mut kick_amp_env_enabled: Option<bool> = None;
+    let mut kick_pitch_env_enabled: Option<bool> = None;
 
     let mut arrange_seen = false;
     let mut arrange_num_bars: Option<f32> = None;
@@ -362,15 +397,25 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
             "name" => patch_name = Some(value.to_owned()),
             "description" => description = Some(sanitize_patch_description(value)),
             "tuning_a4_hz" => {
-                tuning_a4_hz =
-                    Some(value.parse::<f32>().map_err(|_| "Invalid tuning_a4_hz".to_owned())?)
+                tuning_a4_hz = Some(
+                    value
+                        .parse::<f32>()
+                        .map_err(|_| "Invalid tuning_a4_hz".to_owned())?,
+                )
             }
             "keytrack_enabled" => {
-                keytrack_enabled =
-                    Some(value.parse::<bool>().map_err(|_| "Invalid keytrack_enabled".to_owned())?)
+                keytrack_enabled = Some(
+                    value
+                        .parse::<bool>()
+                        .map_err(|_| "Invalid keytrack_enabled".to_owned())?,
+                )
             }
             "note_end_ms" => {
-                note_end_ms = Some(value.parse::<f32>().map_err(|_| "Invalid note_end_ms".to_owned())?)
+                note_end_ms = Some(
+                    value
+                        .parse::<f32>()
+                        .map_err(|_| "Invalid note_end_ms".to_owned())?,
+                )
             }
             "max_note_length_ms" => {
                 max_note_length_ms = Some(
@@ -415,6 +460,18 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
                 kick_seen = true;
                 kick_phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0));
             }
+            "kick_length_override" => {
+                kick_seen = true;
+                kick_length_override = value.parse::<bool>().ok();
+            }
+            "kick_amp_env_enabled" => {
+                kick_seen = true;
+                kick_amp_env_enabled = value.parse::<bool>().ok();
+            }
+            "kick_pitch_env_enabled" => {
+                kick_seen = true;
+                kick_pitch_env_enabled = value.parse::<bool>().ok();
+            }
             "arrange_num_bars" => {
                 arrange_seen = true;
                 arrange_num_bars = value.parse::<f32>().ok();
@@ -458,7 +515,11 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
         name: patch_name
             .map(|name| sanitize_patch_name(&name))
             .filter(|name| !name.is_empty())
-            .or_else(|| fallback_name.map(sanitize_patch_name).filter(|name| !name.is_empty()))
+            .or_else(|| {
+                fallback_name
+                    .map(sanitize_patch_name)
+                    .filter(|name| !name.is_empty())
+            })
             .ok_or_else(|| "Missing patch name".to_owned())?,
         description: description.unwrap_or_default(),
         tuning_a4_hz: tuning_a4_hz.ok_or_else(|| "Missing tuning_a4_hz".to_owned())?,
@@ -485,13 +546,15 @@ fn parse_patch(raw: &str, fallback_name: Option<&str>) -> Result<PatchData, Stri
         },
         kick: if kick_seen {
             Some(KickPatchData {
-                oscillator_waveform: kick_oscillator_waveform
-                    .unwrap_or_else(|| "sine".to_owned()),
+                oscillator_waveform: kick_oscillator_waveform.unwrap_or_else(|| "sine".to_owned()),
                 retrigger: kick_retrigger.unwrap_or(true),
                 legato_voice_steal: kick_legato_voice_steal.unwrap_or(true),
                 pitch_hz: kick_pitch_hz.unwrap_or(55.0),
                 level: kick_level,
                 phase_deg: kick_phase_deg,
+                length_override: kick_length_override,
+                amp_env_enabled: kick_amp_env_enabled,
+                pitch_env_enabled: kick_pitch_env_enabled,
             })
         } else {
             None
@@ -519,11 +582,15 @@ struct BassRaw {
     legato_voice_steal: Option<bool>,
     keytrack_enabled: Option<bool>,
     note_length_ms: Option<f32>,
+    length_sync: Option<bool>,
+    glide_ms: Option<f32>,
+    glide_auto: Option<bool>,
     pitch_hz: Option<f32>,
     cutoff_hz: Option<f32>,
     filter_mode: Option<String>,
     filter_slope: Option<String>,
     filter_drive: Option<f32>,
+    resonance: Option<f32>,
     filter_enabled: Option<bool>,
     filter_2_enabled: Option<bool>,
     amp_points: Option<Vec<(f32, f32)>>,
@@ -567,11 +634,15 @@ impl BassRaw {
             "legato_voice_steal" => self.legato_voice_steal = value.parse::<bool>().ok(),
             "keytrack_enabled" => self.keytrack_enabled = value.parse::<bool>().ok(),
             "note_length_ms" => self.note_length_ms = value.parse::<f32>().ok(),
+            "length_sync" => self.length_sync = value.parse::<bool>().ok(),
+            "glide_ms" => self.glide_ms = value.parse::<f32>().ok(),
+            "glide_auto" => self.glide_auto = value.parse::<bool>().ok(),
             "pitch_hz" => self.pitch_hz = value.parse::<f32>().ok(),
             "cutoff_hz" => self.cutoff_hz = value.parse::<f32>().ok(),
             "filter_mode" => self.filter_mode = Some(value.to_owned()),
             "filter_slope" => self.filter_slope = Some(value.to_owned()),
             "filter_drive" => self.filter_drive = value.parse::<f32>().ok(),
+            "resonance" => self.resonance = value.parse::<f32>().ok(),
             "filter_enabled" => self.filter_enabled = value.parse::<bool>().ok(),
             "filter_2_enabled" => self.filter_2_enabled = value.parse::<bool>().ok(),
             "amp_points" => {
@@ -593,28 +664,20 @@ impl BassRaw {
             }
             "filter_2_bends" => self.filter_2_bends = Some(parse_bends(value, "filter_2_bends")?),
             "level" => self.level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0)),
-            "phase_deg" => {
-                self.phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0))
-            }
+            "phase_deg" => self.phase_deg = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 360.0)),
             "osc_a_level" => {
                 self.osc_a_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
             }
-            "osc_a_unison" => {
-                self.osc_a_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8))
-            }
+            "osc_a_unison" => self.osc_a_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8)),
             "osc_a_unison_detune" => {
-                self.osc_a_unison_detune =
-                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0))
+                self.osc_a_unison_detune = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0))
             }
             "osc_a_unison_blend" => {
                 self.osc_a_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
             }
-            "osc_b_unison" => {
-                self.osc_b_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8))
-            }
+            "osc_b_unison" => self.osc_b_unison = value.parse::<i32>().ok().map(|v| v.clamp(1, 8)),
             "osc_b_unison_detune" => {
-                self.osc_b_unison_detune =
-                    value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0))
+                self.osc_b_unison_detune = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 100.0))
             }
             "osc_b_unison_blend" => {
                 self.osc_b_unison_blend = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
@@ -624,18 +687,14 @@ impl BassRaw {
             "osc_b_level" => {
                 self.osc_b_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
             }
-            "osc_b_octave" => {
-                self.osc_b_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4))
-            }
+            "osc_b_octave" => self.osc_b_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4)),
             "osc_b_detune_cents" => {
                 self.osc_b_detune_cents =
                     value.parse::<f32>().ok().map(|v| v.clamp(-1200.0, 1200.0))
             }
             "sub_enabled" => self.sub_enabled = value.parse::<bool>().ok(),
             "sub_waveform" => self.sub_waveform = Some(value.to_owned()),
-            "sub_level" => {
-                self.sub_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
-            }
+            "sub_level" => self.sub_level = value.parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0)),
             "sub_octave" => self.sub_octave = value.parse::<i32>().ok().map(|v| v.clamp(-4, 4)),
             "noise_enabled" => self.noise_enabled = value.parse::<bool>().ok(),
             "noise_level" => {
@@ -646,9 +705,7 @@ impl BassRaw {
                     if let Some(lfo) = parse_lfo_params(value) {
                         self.lfos.push((index, lfo));
                     }
-                } else if let Some(index) =
-                    parse_indexed_key(key, "mod_", BASS_MOD_SLOT_COUNT)
-                {
+                } else if let Some(index) = parse_indexed_key(key, "mod_", BASS_MOD_SLOT_COUNT) {
                     if let Some(routing) = parse_mod_routing(value) {
                         self.mod_matrix.push((index, routing));
                     }
@@ -660,18 +717,20 @@ impl BassRaw {
 
     fn into_data(self) -> BassPatchData {
         BassPatchData {
-            oscillator_waveform: self
-                .oscillator_waveform
-                .unwrap_or_else(|| "saw".to_owned()),
+            oscillator_waveform: self.oscillator_waveform.unwrap_or_else(|| "saw".to_owned()),
             retrigger: self.retrigger.unwrap_or(true),
             legato_voice_steal: self.legato_voice_steal.unwrap_or(false),
             keytrack_enabled: self.keytrack_enabled.unwrap_or(false),
             note_length_ms: self.note_length_ms.unwrap_or(220.0),
+            length_sync: self.length_sync.unwrap_or(false),
+            glide_ms: self.glide_ms.unwrap_or(0.0),
+            glide_auto: self.glide_auto.unwrap_or(false),
             pitch_hz: self.pitch_hz.unwrap_or(55.0),
             cutoff_hz: self.cutoff_hz.unwrap_or(120.0),
             filter_mode: self.filter_mode.unwrap_or_else(|| "lowpass".to_owned()),
             filter_slope: self.filter_slope.unwrap_or_else(|| "6db".to_owned()),
             filter_drive: self.filter_drive.unwrap_or(0.0).clamp(0.0, 1.0),
+            resonance: self.resonance.unwrap_or(0.0).clamp(0.0, 1.0),
             filter_enabled: self.filter_enabled.unwrap_or(true),
             filter_2_enabled: self.filter_2_enabled.unwrap_or(false),
             amp_points: self.amp_points.unwrap_or_default(),
@@ -832,8 +891,12 @@ fn arrange_notes_to_string(notes: &[(usize, f32, u8)]) -> String {
 
 fn ensure_patches_dir() -> Result<(), String> {
     let dir = patches_dir_path();
-    fs::create_dir_all(&dir)
-        .map_err(|error| format!("Failed to create patches directory '{}': {error}", dir.display()))
+    fs::create_dir_all(&dir).map_err(|error| {
+        format!(
+            "Failed to create patches directory '{}': {error}",
+            dir.display()
+        )
+    })
 }
 
 fn patch_name_from_path(path: &Path) -> Option<String> {
@@ -849,8 +912,8 @@ pub fn list_patch_names() -> Result<Vec<String>, String> {
     let dir = patches_dir_path();
     let mut names = Vec::new();
 
-    let entries =
-        fs::read_dir(&dir).map_err(|error| format!("Failed to read '{}': {error}", dir.display()))?;
+    let entries = fs::read_dir(&dir)
+        .map_err(|error| format!("Failed to read '{}': {error}", dir.display()))?;
 
     for entry in entries {
         let entry = entry.map_err(|error| format!("Failed to read patch entry: {error}"))?;
@@ -878,34 +941,59 @@ pub fn save_patch(patch: &PatchData) -> Result<(), String> {
 fn serialize_patch(patch: &PatchData) -> String {
     let mut lines = vec![
         format!("name={}", patch.name),
-        format!("description={}", sanitize_patch_description(&patch.description)),
+        format!(
+            "description={}",
+            sanitize_patch_description(&patch.description)
+        ),
         format!("tuning_a4_hz={}", patch.tuning_a4_hz),
         format!("keytrack_enabled={}", patch.keytrack_enabled),
         format!("note_end_ms={}", patch.note_end_ms),
         format!("max_note_length_ms={}", patch.max_note_length_ms),
         format!("waveform_zoom_percent={}", patch.waveform_zoom_percent),
         format!("active_curve={}", patch.active_curve),
-        format!("amplitude_points={}", points_to_string(&patch.amplitude_points)),
-        format!("amplitude_bends={}", bends_to_string(&patch.amplitude_bends)),
+        format!(
+            "amplitude_points={}",
+            points_to_string(&patch.amplitude_points)
+        ),
+        format!(
+            "amplitude_bends={}",
+            bends_to_string(&patch.amplitude_bends)
+        ),
         format!("pitch_points={}", points_to_string(&patch.pitch_points)),
         format!("pitch_bends={}", bends_to_string(&patch.pitch_bends)),
     ];
 
     if let Some(bass) = &patch.bass {
-        lines.push(format!("bass_oscillator_waveform={}", bass.oscillator_waveform));
+        lines.push(format!(
+            "bass_oscillator_waveform={}",
+            bass.oscillator_waveform
+        ));
         lines.push(format!("bass_retrigger={}", bass.retrigger));
-        lines.push(format!("bass_legato_voice_steal={}", bass.legato_voice_steal));
+        lines.push(format!(
+            "bass_legato_voice_steal={}",
+            bass.legato_voice_steal
+        ));
         lines.push(format!("bass_keytrack_enabled={}", bass.keytrack_enabled));
         lines.push(format!("bass_note_length_ms={}", bass.note_length_ms));
+        lines.push(format!("bass_length_sync={}", bass.length_sync));
+        lines.push(format!("bass_glide_ms={}", bass.glide_ms));
+        lines.push(format!("bass_glide_auto={}", bass.glide_auto));
         lines.push(format!("bass_pitch_hz={}", bass.pitch_hz));
         lines.push(format!("bass_cutoff_hz={}", bass.cutoff_hz));
         lines.push(format!("bass_filter_mode={}", bass.filter_mode));
         lines.push(format!("bass_filter_slope={}", bass.filter_slope));
         lines.push(format!("bass_filter_drive={}", bass.filter_drive));
+        lines.push(format!("bass_resonance={}", bass.resonance));
         lines.push(format!("bass_filter_enabled={}", bass.filter_enabled));
         lines.push(format!("bass_filter_2_enabled={}", bass.filter_2_enabled));
-        lines.push(format!("bass_amp_points={}", points_to_string(&bass.amp_points)));
-        lines.push(format!("bass_amp_bends={}", bends_to_string(&bass.amp_bends)));
+        lines.push(format!(
+            "bass_amp_points={}",
+            points_to_string(&bass.amp_points)
+        ));
+        lines.push(format!(
+            "bass_amp_bends={}",
+            bends_to_string(&bass.amp_bends)
+        ));
         lines.push(format!(
             "bass_filter_points={}",
             points_to_string(&bass.filter_points)
@@ -989,11 +1077,15 @@ fn serialize_patch(patch: &PatchData) -> String {
             bass2.legato_voice_steal
         ));
         lines.push(format!("bass2_note_length_ms={}", bass2.note_length_ms));
+        lines.push(format!("bass2_length_sync={}", bass2.length_sync));
+        lines.push(format!("bass2_glide_ms={}", bass2.glide_ms));
+        lines.push(format!("bass2_glide_auto={}", bass2.glide_auto));
         lines.push(format!("bass2_pitch_hz={}", bass2.pitch_hz));
         lines.push(format!("bass2_cutoff_hz={}", bass2.cutoff_hz));
         lines.push(format!("bass2_filter_mode={}", bass2.filter_mode));
         lines.push(format!("bass2_filter_slope={}", bass2.filter_slope));
         lines.push(format!("bass2_filter_drive={}", bass2.filter_drive));
+        lines.push(format!("bass2_resonance={}", bass2.resonance));
         lines.push(format!("bass2_filter_enabled={}", bass2.filter_enabled));
         lines.push(format!("bass2_filter_2_enabled={}", bass2.filter_2_enabled));
         lines.push(format!(
@@ -1076,15 +1168,30 @@ fn serialize_patch(patch: &PatchData) -> String {
     }
 
     if let Some(kick) = &patch.kick {
-        lines.push(format!("kick_oscillator_waveform={}", kick.oscillator_waveform));
+        lines.push(format!(
+            "kick_oscillator_waveform={}",
+            kick.oscillator_waveform
+        ));
         lines.push(format!("kick_retrigger={}", kick.retrigger));
-        lines.push(format!("kick_legato_voice_steal={}", kick.legato_voice_steal));
+        lines.push(format!(
+            "kick_legato_voice_steal={}",
+            kick.legato_voice_steal
+        ));
         lines.push(format!("kick_pitch_hz={}", kick.pitch_hz));
         if let Some(level) = kick.level {
             lines.push(format!("kick_level={level}"));
         }
         if let Some(phase_deg) = kick.phase_deg {
             lines.push(format!("kick_phase_deg={phase_deg}"));
+        }
+        if let Some(length_override) = kick.length_override {
+            lines.push(format!("kick_length_override={length_override}"));
+        }
+        if let Some(amp_env_enabled) = kick.amp_env_enabled {
+            lines.push(format!("kick_amp_env_enabled={amp_env_enabled}"));
+        }
+        if let Some(pitch_env_enabled) = kick.pitch_env_enabled {
+            lines.push(format!("kick_pitch_env_enabled={pitch_env_enabled}"));
         }
     }
 
@@ -1096,7 +1203,10 @@ fn serialize_patch(patch: &PatchData) -> String {
         if let Some(override_daw_midi) = arrange.override_daw_midi {
             lines.push(format!("arrange_override_daw_midi={override_daw_midi}"));
         }
-        lines.push(format!("arrange_notes={}", arrange_notes_to_string(&arrange.notes)));
+        lines.push(format!(
+            "arrange_notes={}",
+            arrange_notes_to_string(&arrange.notes)
+        ));
     }
 
     lines.join("\n")
@@ -1117,6 +1227,10 @@ pub const SETTINGS_FILE_NAME: &str = "user.librekick_settings";
 pub struct UiSettingsData {
     pub tuning_a4_hz: f32,
     pub display_scale: f32,
+    /// PolyBLEP oscillator anti-aliasing. Defaults to true for older files.
+    pub anti_aliasing: bool,
+    /// 2x internal voice oversampling. Defaults to true for older files.
+    pub oversampling: bool,
 }
 
 fn settings_file_path() -> PathBuf {
@@ -1130,6 +1244,8 @@ pub fn save_settings(settings: &UiSettingsData) -> Result<(), String> {
     let serialized = [
         format!("tuning_a4_hz={}", settings.tuning_a4_hz),
         format!("display_scale={}", settings.display_scale),
+        format!("anti_aliasing={}", settings.anti_aliasing),
+        format!("oversampling={}", settings.oversampling),
     ]
     .join("\n");
 
@@ -1150,6 +1266,8 @@ pub fn load_settings() -> Result<Option<UiSettingsData>, String> {
 
     let mut tuning_a4_hz = None;
     let mut display_scale = None;
+    let mut anti_aliasing = None;
+    let mut oversampling = None;
 
     for raw_line in raw.lines() {
         let line = raw_line.trim();
@@ -1176,6 +1294,20 @@ pub fn load_settings() -> Result<Option<UiSettingsData>, String> {
                     .map_err(|_| "Invalid display_scale in settings".to_owned())
                     .ok()
             }
+            "anti_aliasing" => {
+                anti_aliasing = value
+                    .trim()
+                    .parse::<bool>()
+                    .map_err(|_| "Invalid anti_aliasing in settings".to_owned())
+                    .ok()
+            }
+            "oversampling" => {
+                oversampling = value
+                    .trim()
+                    .parse::<bool>()
+                    .map_err(|_| "Invalid oversampling in settings".to_owned())
+                    .ok()
+            }
             _ => {}
         }
     }
@@ -1183,6 +1315,8 @@ pub fn load_settings() -> Result<Option<UiSettingsData>, String> {
     Ok(Some(UiSettingsData {
         tuning_a4_hz: tuning_a4_hz.unwrap_or(432.0),
         display_scale: display_scale.unwrap_or(1.0).clamp(0.5, 2.0),
+        anti_aliasing: anti_aliasing.unwrap_or(true),
+        oversampling: oversampling.unwrap_or(true),
     }))
 }
 
@@ -1336,11 +1470,15 @@ bass_filter_mode=lowpass
             legato_voice_steal: flip,
             keytrack_enabled: flip,
             note_length_ms: 180.0 + f,
+            length_sync: flip,
+            glide_ms: 40.0 + 10.0 * f,
+            glide_auto: flip,
             pitch_hz: 48.0 + f,
             cutoff_hz: 320.0 + f,
             filter_mode: if flip { "bandpass" } else { "highpass" }.to_owned(),
             filter_slope: if flip { "24db" } else { "12db" }.to_owned(),
             filter_drive: 0.3 + 0.125 * f,
+            resonance: 0.15 + 0.1 * f,
             filter_enabled: !flip,
             filter_2_enabled: flip,
             amp_points: vec![(0.0, 0.25), (0.5, 0.75), (1.0, 0.125)],
@@ -1381,7 +1519,10 @@ bass_filter_mode=lowpass
             legato_voice_steal: false,
             pitch_hz: 57.5,
             level: Some(0.625),
+            length_override: Some(false),
             phase_deg: Some(135.0),
+            amp_env_enabled: Some(true),
+            pitch_env_enabled: Some(false),
         }
     }
 

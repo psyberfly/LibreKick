@@ -40,11 +40,7 @@ impl Default for LibreKickParams {
         let ui_cfg = config::ui_config();
         Self {
             trigger: BoolParam::new("Trigger", false).hide(),
-            kick_level: FloatParam::new(
-                "K Level",
-                0.8,
-                FloatRange::Linear { min: 0.0, max: 1.0 },
-            ),
+            kick_level: FloatParam::new("K Level", 0.8, FloatRange::Linear { min: 0.0, max: 1.0 }),
             bass1_level: FloatParam::new(
                 "B1 Level",
                 0.8,
@@ -66,7 +62,7 @@ impl Default for LibreKickParams {
 impl Default for LibreKick {
     fn default() -> Self {
         let shared = shared::new_shared_state();
-        
+
         // Initialize shared state from the default patch so DSP has correct
         // curves/settings before the editor opens.
         ui::init_shared_from_default(&shared);
@@ -122,12 +118,12 @@ impl Plugin for LibreKick {
         context: &mut impl InitContext<Self>,
     ) -> bool {
         self.engine.set_sample_rate(buffer_config.sample_rate);
-        
+
         // Explicitly report zero latency to the DAW. LibreKick processes MIDI events
         // sample-accurately with no inherent delay, so this ensures the DAW aligns
         // bounces/freezes to the exact note-on timing without adding pre-roll padding.
         context.set_latency_samples(0);
-        
+
         true
     }
 
@@ -140,7 +136,7 @@ impl Plugin for LibreKick {
         // Get tempo from DAW transport
         let transport = context.transport();
         shared::set_tempo(&self.shared, transport.tempo);
-        
+
         let midi_input = midi::collect_midi_input(context);
 
         for index in 0..midi_input.bass_event_count {
@@ -174,11 +170,10 @@ impl Plugin for LibreKick {
                 self.params.bass2_level.value(),
             ],
             trigger_active: self.params.trigger.value(),
-            midi_trigger: midi_input.trigger,
-            midi_velocity: midi_input.velocity,
-            midi_note_hz: midi_input.note_hz,
-            bass_events: midi_input.bass_events,
-            bass_event_count: midi_input.bass_event_count,
+            kick_events: midi_input.kick_events,
+            kick_event_count: midi_input.kick_event_count,
+            bass_events: midi_input.bass_voice_events,
+            bass_event_count: midi_input.bass_voice_event_count,
             gate_note_ons: midi_input.gate_note_ons,
             gate_note_offs: midi_input.gate_note_offs,
             gate_first_on_timing: midi_input.gate_first_on_timing,
@@ -200,8 +195,11 @@ impl ClapPlugin for LibreKick {
     const CLAP_DESCRIPTION: Option<&'static str> = Some("Kick drum synthesizer");
     const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
     const CLAP_SUPPORT_URL: Option<&'static str> = Some(Self::URL);
-    const CLAP_FEATURES: &'static [ClapFeature] =
-        &[ClapFeature::Instrument, ClapFeature::Synthesizer, ClapFeature::Drum];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::Instrument,
+        ClapFeature::Synthesizer,
+        ClapFeature::Drum,
+    ];
 }
 
 nih_export_clap!(LibreKick);

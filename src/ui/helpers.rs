@@ -1,4 +1,3 @@
-use nih_plug::prelude::{FloatParam, ParamSetter};
 use nih_plug_egui::egui::{self, Pos2, Rect};
 
 use crate::{config, shared};
@@ -37,34 +36,6 @@ pub(crate) fn slider_fine_step<'a>(
 }
 
 /// Renders a slider bound to a float parameter, sending proper
-/// begin/set/end parameter gestures so DAW automation stays in sync.
-/// Shift+drag adjusts in steps of 0.01.
-pub(crate) fn float_param_slider(
-    ui: &mut egui::Ui,
-    setter: &ParamSetter,
-    param: &FloatParam,
-    label: &str,
-) -> egui::Response {
-    let mut value = param.value();
-    let mut slider = egui::Slider::new(&mut value, 0.0..=1.0);
-    if !label.is_empty() {
-        slider = slider.text(label);
-    }
-    let slider = slider_fine_step(ui, slider, 0.01);
-    let response = ui.add(slider);
-    if response.drag_started() {
-        setter.begin_set_parameter(param);
-    }
-    if response.changed() {
-        setter.set_parameter(param, value);
-    }
-    if response.drag_stopped() {
-        setter.end_set_parameter(param);
-    }
-    response
-}
-
-/// Polls keyboard shortcuts for the curve editor.
 /// Returns (undo, redo, cut, delete).
 pub(super) fn poll_editor_shortcuts(ui: &egui::Ui) -> (bool, bool, bool, bool) {
     let (undo_shortcut, redo_shortcut) = ui.input(|i| {
@@ -142,7 +113,10 @@ pub(super) fn axis_x_label(time_ms: f32) -> String {
     }
 }
 
-pub(super) fn effective_waveform_zoom(waveform_zoom_percent: f32, adaptive_zoom_factor: f32) -> f32 {
+pub(super) fn effective_waveform_zoom(
+    waveform_zoom_percent: f32,
+    adaptive_zoom_factor: f32,
+) -> f32 {
     let app_cfg = config::app_config();
     let user_zoom = (waveform_zoom_percent / 100.0).clamp(
         app_cfg.waveform_zoom_min_percent / 100.0,
@@ -200,7 +174,11 @@ pub(super) fn to_screen_with_note_end(point: Pos2, rect: Rect, note_end_display_
     )
 }
 
-pub(super) fn to_normalized_with_note_end(point: Pos2, rect: Rect, note_end_display_t: f32) -> Pos2 {
+pub(super) fn to_normalized_with_note_end(
+    point: Pos2,
+    rect: Rect,
+    note_end_display_t: f32,
+) -> Pos2 {
     let note_end_display_t = note_end_display_t.clamp(0.0, 1.0).max(f32::EPSILON);
     let x = ((point.x - rect.left()) / (rect.width() * note_end_display_t)).clamp(0.0, 1.0);
     let y = ((rect.bottom() - point.y) / rect.height()).clamp(0.0, 1.0);

@@ -1,5 +1,5 @@
 use nih_plug::prelude::ParamSetter;
-use nih_plug_egui::egui::{self, Align, Layout, Vec2};
+use nih_plug_egui::egui::{self, Align, Layout, Pos2, Rect, Vec2};
 
 use super::{menu_bar, nav_menu};
 use crate::ui::state::BezierUiState;
@@ -28,34 +28,49 @@ pub(crate) fn render(
     // Page contents can grow their min_rect beyond the allocated width (egui
     // allocates what is actually used), which would otherwise push the nav
     // column off the right edge of the window.
-    let page_width = (1500.0 * ui_scale)
-        .min((available.x - menu_width - section_gap).max(320.0 * ui_scale));
+    let page_width =
+        (1500.0 * ui_scale).min((available.x - menu_width - section_gap).max(320.0 * ui_scale));
 
-    menu_bar::render(ui, ui_scale, state, params, setter, page_width, history_action_applied);
+    menu_bar::render(
+        ui,
+        ui_scale,
+        state,
+        params,
+        setter,
+        page_width,
+        history_action_applied,
+    );
 
-    ui.horizontal(|ui| {
-        // Page content on the left — fixed width.
-        ui.allocate_ui_with_layout(
-            Vec2::new(page_width, section_height),
-            Layout::top_down(Align::Min),
-            |ui| {
-                ui.set_max_width(page_width);
-                ui.set_clip_rect(ui.max_rect());
-                ui.group(|ui| {
-                    page_content(ui, state);
-                });
-            },
-        );
+    // Both columns are placed at explicit rects rather than flowing in a
+    // horizontal layout: page contents can report a min_rect wider than the
+    // width they were given, which in a flow layout would shove the nav
+    // column off the right edge of the window. With fixed rects the page can
+    // no longer displace the nav, and `page_width + gap + menu_width` always
+    // stays inside the width we were given.
+    let origin = ui.cursor().min;
+    let page_rect = Rect::from_min_size(origin, Vec2::new(page_width, section_height));
+    let menu_rect = Rect::from_min_size(
+        Pos2::new(page_rect.right() + section_gap, origin.y),
+        Vec2::new(menu_width, section_height),
+    );
 
-        ui.add_space(section_gap);
-
-        // Nav menu on the right — fixed width.
-        ui.allocate_ui_with_layout(
-            Vec2::new(menu_width, section_height),
-            Layout::top_down(Align::Min),
-            |ui| {
-                nav_menu::render(ui, ui_scale, &mut state.active_page);
-            },
-        );
+    let mut page_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(page_rect)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    page_ui.set_clip_rect(page_rect.intersect(ui.clip_rect()));
+    page_ui.group(|ui| {
+        page_content(ui, state);
     });
+
+    let mut menu_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(menu_rect)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    nav_menu::render(&mut menu_ui, ui_scale, &mut state.active_page);
+
+    // Claim the whole row so anything after the scaffold starts below it.
+    ui.allocate_rect(page_rect.union(menu_rect), egui::Sense::hover());
 }

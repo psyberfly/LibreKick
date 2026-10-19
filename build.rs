@@ -1,7 +1,8 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
-    let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("Missing CARGO_MANIFEST_DIR"));
+    let manifest_dir =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("Missing CARGO_MANIFEST_DIR"));
     let seed_dir = manifest_dir.join("src/assets/seed_patches");
 
     println!("cargo:rerun-if-changed={}", seed_dir.display());

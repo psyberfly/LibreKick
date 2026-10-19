@@ -101,14 +101,22 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, _state: &mut BezierUiStat
                             .monospace()
                             .color(Color32::from_rgb(245, 239, 214)),
                     );
-                    ui.label(RichText::new("|").monospace().color(Color32::from_rgb(165, 171, 178)));
+                    ui.label(
+                        RichText::new("|")
+                            .monospace()
+                            .color(Color32::from_rgb(165, 171, 178)),
+                    );
                     ui.label(
                         RichText::new(kind)
                             .monospace()
                             .strong()
                             .color(color_for_log_kind(kind)),
                     );
-                    ui.label(RichText::new("|").monospace().color(Color32::from_rgb(165, 171, 178)));
+                    ui.label(
+                        RichText::new("|")
+                            .monospace()
+                            .color(Color32::from_rgb(165, 171, 178)),
+                    );
                     ui.label(
                         RichText::new(message)
                             .monospace()

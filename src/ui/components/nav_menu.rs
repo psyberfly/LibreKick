@@ -3,15 +3,11 @@ use nih_plug_egui::egui::{self, RichText};
 use crate::ui::state::UiPage;
 use crate::ui::theme as ui_theme;
 
-pub(crate) fn render(
-    ui: &mut egui::Ui,
-    ui_scale: f32,
-    active_page: &mut UiPage,
-) {
+pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, active_page: &mut UiPage) {
     ui.group(|ui| {
         ui.add_space(8.0 * ui_scale);
         ui.label(
-            RichText::new("Sections")
+            RichText::new("Devices")
                 .strong()
                 .color(ui_theme::axis_title_color()),
         );

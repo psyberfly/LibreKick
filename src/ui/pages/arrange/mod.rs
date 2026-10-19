@@ -92,12 +92,5 @@ pub(crate) fn render(
 
     ui.add_space(16.0 * ui_scale);
 
-    audio_clip::render(
-        ui,
-        ui_scale,
-        state,
-        &shared_snapshot,
-        daw_tempo,
-        params,
-    );
+    audio_clip::render(ui, ui_scale, state, &shared_snapshot, daw_tempo, params);
 }

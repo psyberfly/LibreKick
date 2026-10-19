@@ -1,11 +1,17 @@
 use nih_plug_egui::egui::{self, RichText};
 
+use crate::shared::{self, SharedStateHandle};
 use crate::ui::state::BezierUiState;
 use crate::{config, patches};
 
 use super::super::state::TuningStandard;
 
-pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState) {
+pub(crate) fn render(
+    ui: &mut egui::Ui,
+    ui_scale: f32,
+    state: &mut BezierUiState,
+    shared: &SharedStateHandle,
+) {
     ui.add_space(8.0 * ui_scale);
     ui.heading("Settings");
     ui.separator();
@@ -16,7 +22,10 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState
             ui.selectable_value(&mut state.tuning_standard, TuningStandard::A440, "A=440");
             ui.selectable_value(&mut state.tuning_standard, TuningStandard::A432, "A=432");
         });
-        ui.label(format!("Current A4: {:.1} Hz", state.tuning_standard.a4_hz()));
+        ui.label(format!(
+            "Current A4: {:.1} Hz",
+            state.tuning_standard.a4_hz()
+        ));
         ui.label("Applies globally to kick and bass note display/frequency scaling.");
     });
 
@@ -30,7 +39,10 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState
                 egui::Slider::new(&mut state.display_scale, 0.5..=2.0)
                     .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
                     .custom_parser(|s| {
-                        s.trim_end_matches('%').parse::<f64>().ok().map(|v| v / 100.0)
+                        s.trim_end_matches('%')
+                            .parse::<f64>()
+                            .ok()
+                            .map(|v| v / 100.0)
                     }),
                 0.01,
             ));
@@ -40,19 +52,44 @@ pub(crate) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState
 
     ui.add_space(8.0 * ui_scale);
     ui.group(|ui| {
+        ui.label(RichText::new("Audio").strong());
+        ui.horizontal(|ui| {
+            ui.label("Anti-aliasing");
+            let response = ui.checkbox(&mut state.anti_aliasing, "");
+            if response.changed() {
+                // sync_to_shared only runs on the device pages, so apply the
+                // toggle to the audio thread immediately.
+                shared::set_anti_aliasing(shared, state.anti_aliasing);
+            }
+            ui.label(RichText::new(if state.anti_aliasing { "On" } else { "Off" }).small());
+        });
+        ui.label("PolyBLEP band-limiting on saw/square oscillators. Off is brighter but adds aliasing grit (a lo-fi flavour).");
+        ui.horizontal(|ui| {
+            ui.label("Oversampling (2x)");
+            let response = ui.checkbox(&mut state.oversampling, "");
+            if response.changed() {
+                shared::set_oversampling(shared, state.oversampling);
+            }
+            ui.label(RichText::new(if state.oversampling { "On" } else { "Off" }).small());
+        });
+        ui.label("Renders voices at double the host rate, then averages down. Cleaner drive/resonance harmonics; off halves voice CPU.");
+    });
+
+    ui.add_space(8.0 * ui_scale);
+    ui.group(|ui| {
         if ui.button("Save settings").clicked() {
             let settings = patches::UiSettingsData {
                 tuning_a4_hz: state.tuning_standard.a4_hz(),
                 display_scale: state.display_scale,
+                anti_aliasing: state.anti_aliasing,
+                oversampling: state.oversampling,
             };
             state.patch_status = Some(match patches::save_settings(&settings) {
                 Ok(()) => "Settings saved. They will be applied on next startup.".to_owned(),
                 Err(error) => format!("Failed to save settings: {error}"),
             });
         }
-        ui.label(
-            RichText::new(format!("Saved to {}", config::patches_dir())).small(),
-        );
+        ui.label(RichText::new(format!("Saved to {}", config::patches_dir())).small());
         if let Some(status) = &state.patch_status {
             ui.label(RichText::new(status).small().italics());
         }

@@ -9,11 +9,7 @@ mod voice;
 
 use nih_plug::prelude::*;
 
-use crate::{
-    common::logger::LOGGER,
-    midi::RoutedMidiEvent,
-    shared,
-};
+use crate::{common::logger::LOGGER, midi::RoutedMidiEvent, shared};
 
 use self::voice::{BassVoice, KickVoice};
 pub use self::voice::{BassVoiceParams, VoiceParams};
@@ -29,9 +25,14 @@ pub struct KickDspParams {
     /// Per-slot bass levels (index 0 = Note 1, 1 = Note 2).
     pub bass_levels: [f32; 2],
     pub trigger_active: bool,
-    pub midi_trigger: bool,
-    pub midi_velocity: f32,
-    pub midi_note_hz: Option<f32>,
+    /// Timed kick note-ons dispatched inside the sample loop so a hit lands
+    /// on its exact sample instead of the next block start.
+    pub kick_events: [Option<RoutedMidiEvent>; 4],
+    pub kick_event_count: usize,
+    /// One event per played note, carrying the original note number. The
+    /// host-bound fan-out copies must never reach the voice: three events on
+    /// the same sample would retrigger the mono voice three times, and their
+    /// transposed note numbers would re-pitch it.
     pub bass_events: [Option<RoutedMidiEvent>; 6],
     pub bass_event_count: usize,
     /// Note-on count this block across ALL notes (arrange-override gate).
@@ -74,6 +75,12 @@ pub struct KickEngine {
     arrange_bass_off_abs: f64,
     /// Bass slot of the currently sounding note (0 = Note 1, 1 = Note 2).
     bass_slot: usize,
+    /// MIDI note number that currently owns the bass voice. Note-offs for
+    /// other notes (overlapping keys) must not release it.
+    bass_active_note: Option<u8>,
+    /// Internal oversampling factor (1 = host rate, 2 = render at 2x and
+    /// average each pair — a decimation null at the host Nyquist).
+    oversample_factor: usize,
 }
 
 impl Default for KickEngine {
@@ -89,6 +96,8 @@ impl Default for KickEngine {
             arrange_abs_bars: 0.0,
             arrange_bass_off_abs: f64::MAX,
             bass_slot: 0,
+            bass_active_note: None,
+            oversample_factor: 1,
         }
     }
 }
@@ -96,8 +105,16 @@ impl Default for KickEngine {
 impl KickEngine {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate.max(1.0);
-        self.voice.set_sample_rate(sample_rate);
-        self.bass_voice.set_sample_rate(sample_rate);
+        self.apply_sample_rate();
+    }
+
+    /// Pushes host rate x oversample factor into both voices. Safe to call
+    /// from `process` when the flag changes — it only touches voices when
+    /// the factor actually moved.
+    fn apply_sample_rate(&mut self) {
+        let rate = self.sample_rate * self.oversample_factor as f32;
+        self.voice.set_sample_rate(rate);
+        self.bass_voice.set_sample_rate(rate);
     }
 
     pub fn process(
@@ -107,6 +124,15 @@ impl KickEngine {
         shared_handle: &shared::SharedStateHandle,
     ) -> ProcessStatus {
         let shared_snapshot = shared::snapshot(shared_handle);
+        self.voice.set_anti_aliasing(shared_snapshot.anti_aliasing);
+        self.bass_voice
+            .set_anti_aliasing(shared_snapshot.anti_aliasing);
+
+        let wanted_os = if shared_snapshot.oversampling { 2 } else { 1 };
+        if wanted_os != self.oversample_factor {
+            self.oversample_factor = wanted_os;
+            self.apply_sample_rate();
+        }
 
         let kick_phase_offset = shared_snapshot.kick_phase_deg / 360.0;
 
@@ -142,12 +168,12 @@ impl KickEngine {
         if seq_active && !self.arrange_active {
             // Align bar 0 to the gate note-on sample within this block.
             let offset_samples = params.gate_first_on_timing.unwrap_or(0) as f64;
-            self.arrange_abs_bars =
-                -(offset_samples / self.sample_rate as f64 / bar_seconds);
+            self.arrange_abs_bars = -(offset_samples / self.sample_rate as f64 / bar_seconds);
             self.arrange_bass_off_abs = f64::MAX;
         }
         if !seq_active && self.arrange_active {
             self.bass_voice.note_off();
+            self.bass_active_note = None;
         }
         self.arrange_active = seq_active;
 
@@ -175,8 +201,8 @@ impl KickEngine {
                     fire += num_bars;
                 }
                 if fire < abs_end && seq_count < MAX_SEQ_EVENTS {
-                    let timing = ((fire - abs_start) * bar_seconds
-                        * self.sample_rate as f64) as u32;
+                    let timing =
+                        ((fire - abs_start) * bar_seconds * self.sample_rate as f64) as u32;
                     seq_events[seq_count] = SeqEvent {
                         timing: timing.min(block_samples.saturating_sub(1) as u32),
                         abs_bar: fire,
@@ -189,8 +215,7 @@ impl KickEngine {
             }
             if self.arrange_bass_off_abs < abs_end && seq_count < MAX_SEQ_EVENTS {
                 let off = self.arrange_bass_off_abs.max(abs_start);
-                let timing =
-                    ((off - abs_start) * bar_seconds * self.sample_rate as f64) as u32;
+                let timing = ((off - abs_start) * bar_seconds * self.sample_rate as f64) as u32;
                 seq_events[seq_count] = SeqEvent {
                     timing: timing.min(block_samples.saturating_sub(1) as u32),
                     abs_bar: off,
@@ -205,29 +230,6 @@ impl KickEngine {
             // have the new note-on killed by the previous note's off.
             seq_events[..seq_count].sort_by_key(|e| (e.timing, e.is_on));
             self.arrange_abs_bars = abs_end;
-        }
-
-        if params.midi_trigger && !override_on {
-            LOGGER.debug(format!(
-                "kick trigger via MIDI velocity={:.3} note_hz={:?}",
-                params.midi_velocity, params.midi_note_hz
-            ));
-            if let Some(note_hz) = params.midi_note_hz {
-                self.voice.trigger_with_note_velocity(
-                    note_hz,
-                    params.midi_velocity.clamp(0.0, 1.0),
-                    kick_phase_offset,
-                    shared_snapshot.kick_retrigger,
-                    shared_snapshot.kick_legato_voice_steal,
-                );
-            } else {
-                self.voice.trigger_with_velocity(
-                    params.midi_velocity.clamp(0.0, 1.0),
-                    kick_phase_offset,
-                    shared_snapshot.kick_retrigger,
-                    shared_snapshot.kick_legato_voice_steal,
-                );
-            }
         }
 
         if shared_snapshot.trigger_counter != self.last_shared_trigger_counter {
@@ -246,9 +248,19 @@ impl KickEngine {
             level: params.kick_level,
             keytrack_enabled: shared_snapshot.keytrack_enabled,
             tuning_scale,
-            note_length_ms: shared_snapshot.note_length_ms,
+            // 1/16 Sync: gate the kick to a 16th at the active tempo (DAW
+            // tempo when synced, arrange manual otherwise) instead of the
+            // fixed LENGTH value. Applies in both direct-MIDI and arrange
+            // override modes.
+            note_length_ms: if shared_snapshot.kick_length_override {
+                (15_000.0 / tempo_bpm.max(1.0)) as f32
+            } else {
+                shared_snapshot.note_length_ms
+            },
             pitch_hz: shared_snapshot.kick_pitch_hz,
             waveform: shared_snapshot.kick_oscillator_waveform,
+            amp_env_enabled: shared_snapshot.amp_env_enabled,
+            pitch_env_enabled: shared_snapshot.pitch_env_enabled,
         };
 
         // Per-slot bass params; the active slot follows the last note played.
@@ -258,11 +270,19 @@ impl KickEngine {
                 BassVoiceParams {
                     level: params.bass_levels[index],
                     tuning_scale,
-                    note_length_ms: slot.note_length_ms,
+                    // A slot's self-gate follows one 16th at the active tempo
+                    // (DAW tempo when synced, manual otherwise) when the
+                    // arrange sequencer runs or the slot's 1/16 sync is on.
+                    note_length_ms: if seq_active || slot.length_sync {
+                        (15_000.0 / tempo_bpm.max(1.0)) as f32
+                    } else {
+                        slot.note_length_ms
+                    },
                     base_cutoff_hz: slot.cutoff_hz,
                     filter_mode: slot.filter_mode,
                     filter_slope: slot.filter_slope,
                     filter_drive: slot.filter_drive,
+                    resonance: slot.resonance,
                     filter_enabled: slot.filter_enabled,
                     filter_2_enabled: slot.filter_2_enabled,
                     waveform: slot.oscillator_waveform,
@@ -284,6 +304,7 @@ impl KickEngine {
                     sub_octave: slot.sub_octave,
                     noise_enabled: slot.noise_enabled,
                     noise_level: slot.noise_level,
+                    glide_ms: slot.glide_ms,
                     lfos: slot.lfos,
                     mod_matrix: slot.mod_matrix,
                     beats_per_second: (tempo_bpm / 60.0) as f32,
@@ -297,6 +318,14 @@ impl KickEngine {
             params.bass_event_count.min(params.bass_events.len())
         };
         let mut seq_index = 0usize;
+        let mut kick_event_index = 0usize;
+        // Arrange override swallows DAW MIDI — kick events are gated out
+        // just like the old block-level trigger flag was.
+        let kick_event_count = if override_on {
+            0
+        } else {
+            params.kick_event_count.min(params.kick_events.len())
+        };
         let gate_velocity = params.gate_velocity.clamp(0.0, 1.0);
         let note_len_bars = shared_snapshot.arrange_note_len_bars as f64;
         let mut osc_kick = [0.0_f32; shared::OSCILLOSCOPE_BUFFER_SIZE];
@@ -305,9 +334,7 @@ impl KickEngine {
         let mut osc_len = 0usize;
 
         for (sample_index, mut channel_samples) in buffer.iter_samples().enumerate() {
-            while seq_index < seq_count
-                && seq_events[seq_index].timing <= sample_index as u32
-            {
+            while seq_index < seq_count && seq_events[seq_index].timing <= sample_index as u32 {
                 let event = seq_events[seq_index];
                 seq_index += 1;
                 if event.row as usize == 12 {
@@ -336,10 +363,44 @@ impl KickEngine {
                         bass.retrigger,
                         true,
                         &bass.lfos,
+                        bass.glide_ms,
+                        bass.glide_auto,
                     );
                     self.arrange_bass_off_abs = event.abs_bar + note_len_bars;
+                    // The pattern owns the voice now; it isn't tied to a MIDI
+                    // note number, so clear the tracker.
+                    self.bass_active_note = None;
                 } else {
                     self.bass_voice.note_off();
+                    self.bass_active_note = None;
+                }
+            }
+
+            while kick_event_index < kick_event_count {
+                let Some(event) = params.kick_events[kick_event_index] else {
+                    kick_event_index += 1;
+                    continue;
+                };
+                if event.timing > sample_index as u32 {
+                    break;
+                }
+                kick_event_index += 1;
+                // Keytrack on: the played note sets the kick's pitch.
+                if shared_snapshot.keytrack_enabled {
+                    self.voice.trigger_with_note_velocity(
+                        crate::midi::midi_note_to_hz(event.note),
+                        event.velocity.clamp(0.0, 1.0),
+                        kick_phase_offset,
+                        shared_snapshot.kick_retrigger,
+                        shared_snapshot.kick_legato_voice_steal,
+                    );
+                } else {
+                    self.voice.trigger_with_velocity(
+                        event.velocity.clamp(0.0, 1.0),
+                        kick_phase_offset,
+                        shared_snapshot.kick_retrigger,
+                        shared_snapshot.kick_legato_voice_steal,
+                    );
                 }
             }
 
@@ -375,36 +436,64 @@ impl KickEngine {
                         bass.retrigger,
                         bass.legato_voice_steal,
                         &bass.lfos,
+                        bass.glide_ms,
+                        bass.glide_auto,
                     );
+                    self.bass_active_note = Some(event.note);
                 } else {
-                    self.bass_voice.note_off();
+                    // Only release if this off matches the sounding note. With
+                    // overlapping keys the host sends offs for notes that
+                    // already lost the voice; honouring those would chop the
+                    // current note mid-flight — the classic legato gap.
+                    if self
+                        .bass_active_note
+                        .map_or(true, |active| active == event.note)
+                    {
+                        self.bass_voice.note_off();
+                        self.bass_active_note = None;
+                    }
                 }
 
                 bass_event_index += 1;
             }
 
-            let kick_sample = self.voice.next_sample(
-                voice_params,
-                &shared_snapshot.amp_lut,
-                &shared_snapshot.pitch_lut,
-            );
-            let bass_sample = self.bass_voice.next_sample(
-                bass_voice_params[self.bass_slot],
-                &shared_snapshot.bass[self.bass_slot].amp_lut,
-                &shared_snapshot.bass[self.bass_slot].filter_lut,
-                &shared_snapshot.bass[self.bass_slot].filter_2_lut,
-            );
-            let limited_sample = (kick_sample + bass_sample).clamp(-1.0, 1.0);
+            // Oversampling: voices run at factor x the host rate; each output
+            // sample averages that many sub-samples. The moving average puts
+            // a decimation null exactly at the host Nyquist, where fold-back
+            // from the nonlinear stages (drive, output ceiling) would
+            // otherwise land.
+            let mut kick_sample = 0.0;
+            let mut bass_sample = 0.0;
+            for _ in 0..self.oversample_factor {
+                kick_sample += self.voice.next_sample(
+                    voice_params,
+                    &shared_snapshot.amp_lut,
+                    &shared_snapshot.pitch_lut,
+                );
+                bass_sample += self.bass_voice.next_sample(
+                    bass_voice_params[self.bass_slot],
+                    &shared_snapshot.bass[self.bass_slot].amp_lut,
+                    &shared_snapshot.bass[self.bass_slot].filter_lut,
+                    &shared_snapshot.bass[self.bass_slot].filter_2_lut,
+                );
+            }
+            kick_sample /= self.oversample_factor as f32;
+            bass_sample /= self.oversample_factor as f32;
+            // 0 dB ceiling only: the summed signal passes through raw and a
+            // hard ±1.0 clamp is the sole protection against over-full-scale
+            // output — no knee, no compression, so everything below the
+            // ceiling reaches the host untouched.
+            let output_sample = (kick_sample + bass_sample).clamp(-1.0, 1.0);
 
             if sample_index < shared::OSCILLOSCOPE_BUFFER_SIZE {
                 osc_kick[sample_index] = kick_sample;
                 osc_bass[sample_index] = bass_sample;
-                osc_sum[sample_index] = limited_sample;
+                osc_sum[sample_index] = output_sample;
                 osc_len = sample_index + 1;
             }
 
             for output in channel_samples.iter_mut() {
-                *output = limited_sample;
+                *output = output_sample;
             }
         }
 
@@ -516,6 +605,8 @@ pub fn render_bass_preview(
         retrigger,
         legato_voice_steal,
         &params.lfos,
+        params.glide_ms,
+        false,
     );
     for slot in buffer.iter_mut() {
         if !voice.is_active() {
@@ -549,44 +640,47 @@ pub fn render_arrangement_preview(
         note_length_ms: shared.note_length_ms,
         pitch_hz: shared.kick_pitch_hz,
         waveform: shared.kick_oscillator_waveform,
+        amp_env_enabled: shared.amp_env_enabled,
+        pitch_env_enabled: shared.pitch_env_enabled,
     };
-    let bass_params: [BassVoiceParams; shared::BASS_SLOT_COUNT] =
-        std::array::from_fn(|index| {
-            let slot = &shared.bass[index];
-            BassVoiceParams {
-                level: bass_levels[index],
-                tuning_scale,
-                note_length_ms: slot.note_length_ms,
-                base_cutoff_hz: slot.cutoff_hz,
-                filter_mode: slot.filter_mode,
-                filter_slope: slot.filter_slope,
-                filter_drive: slot.filter_drive,
-                filter_enabled: slot.filter_enabled,
-                filter_2_enabled: slot.filter_2_enabled,
-                waveform: slot.oscillator_waveform,
-                osc_a_level: slot.osc_a_level,
-                osc_a_unison: slot.osc_a_unison,
-                osc_a_unison_detune: slot.osc_a_unison_detune,
-                osc_a_unison_blend: slot.osc_a_unison_blend,
-                osc_b_enabled: slot.osc_b_enabled,
-                osc_b_waveform: slot.osc_b_waveform,
-                osc_b_level: slot.osc_b_level,
-                osc_b_octave: slot.osc_b_octave,
-                osc_b_detune_cents: slot.osc_b_detune_cents,
-                osc_b_unison: slot.osc_b_unison,
-                osc_b_unison_detune: slot.osc_b_unison_detune,
-                osc_b_unison_blend: slot.osc_b_unison_blend,
-                sub_enabled: slot.sub_enabled,
-                sub_waveform: slot.sub_waveform,
-                sub_level: slot.sub_level,
-                sub_octave: slot.sub_octave,
-                noise_enabled: slot.noise_enabled,
-                noise_level: slot.noise_level,
-                lfos: slot.lfos,
-                mod_matrix: slot.mod_matrix,
-                beats_per_second: (shared.arrange_manual_tempo / 60.0).max(0.0),
-            }
-        });
+    let bass_params: [BassVoiceParams; shared::BASS_SLOT_COUNT] = std::array::from_fn(|index| {
+        let slot = &shared.bass[index];
+        BassVoiceParams {
+            level: bass_levels[index],
+            tuning_scale,
+            note_length_ms: slot.note_length_ms,
+            base_cutoff_hz: slot.cutoff_hz,
+            filter_mode: slot.filter_mode,
+            filter_slope: slot.filter_slope,
+            filter_drive: slot.filter_drive,
+            resonance: slot.resonance,
+            filter_enabled: slot.filter_enabled,
+            filter_2_enabled: slot.filter_2_enabled,
+            waveform: slot.oscillator_waveform,
+            osc_a_level: slot.osc_a_level,
+            osc_a_unison: slot.osc_a_unison,
+            osc_a_unison_detune: slot.osc_a_unison_detune,
+            osc_a_unison_blend: slot.osc_a_unison_blend,
+            osc_b_enabled: slot.osc_b_enabled,
+            osc_b_waveform: slot.osc_b_waveform,
+            osc_b_level: slot.osc_b_level,
+            osc_b_octave: slot.osc_b_octave,
+            osc_b_detune_cents: slot.osc_b_detune_cents,
+            osc_b_unison: slot.osc_b_unison,
+            osc_b_unison_detune: slot.osc_b_unison_detune,
+            osc_b_unison_blend: slot.osc_b_unison_blend,
+            sub_enabled: slot.sub_enabled,
+            sub_waveform: slot.sub_waveform,
+            sub_level: slot.sub_level,
+            sub_octave: slot.sub_octave,
+            noise_enabled: slot.noise_enabled,
+            noise_level: slot.noise_level,
+            glide_ms: slot.glide_ms,
+            lfos: slot.lfos,
+            mod_matrix: slot.mod_matrix,
+            beats_per_second: (shared.arrange_manual_tempo / 60.0).max(0.0),
+        }
+    });
 
     for note in notes {
         let start = (note.start_seconds * preview_rate) as usize;
@@ -626,6 +720,8 @@ pub fn render_arrangement_preview(
                 bass.retrigger,
                 bass.legato_voice_steal,
                 &bass.lfos,
+                bass.glide_ms,
+                bass.glide_auto,
             );
             for buf_slot in bass_buffer.iter_mut().skip(start) {
                 if !voice.is_active() {
@@ -642,4 +738,262 @@ pub fn render_arrangement_preview(
     }
 
     (kick_buffer, bass_buffer)
+}
+
+/// Engine-level tests: drive `KickEngine::process` through a real nih-plug
+/// `Buffer` with `KickDspParams` events, exactly as `Plugin::process` does —
+/// event dispatch, voices, filter, oversampling, and limiter end to end.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::midi::RoutedMidiEvent;
+    use nih_plug::prelude::Buffer;
+
+    const SAMPLE_RATE: f32 = 44_100.0;
+    const BLOCK: usize = 512;
+
+    /// Neutral per-block parameters: nothing held, no events.
+    fn dsp_params() -> KickDspParams {
+        KickDspParams {
+            kick_level: 0.8,
+            bass_levels: [0.8, 0.8],
+            trigger_active: false,
+            kick_events: [None; 4],
+            kick_event_count: 0,
+            bass_events: [None; 6],
+            bass_event_count: 0,
+            gate_note_ons: 0,
+            gate_note_offs: 0,
+            gate_first_on_timing: None,
+            gate_velocity: 1.0,
+        }
+    }
+
+    fn note_on(timing: u32, note: u8) -> RoutedMidiEvent {
+        RoutedMidiEvent {
+            timing,
+            voice_id: None,
+            channel: 0,
+            note,
+            velocity: 1.0,
+            is_note_on: true,
+        }
+    }
+
+    fn note_off(timing: u32, note: u8) -> RoutedMidiEvent {
+        RoutedMidiEvent {
+            is_note_on: false,
+            ..note_on(timing, note)
+        }
+    }
+
+    /// Renders one stereo block and returns the left channel.
+    fn run_block(
+        engine: &mut KickEngine,
+        shared: &shared::SharedStateHandle,
+        params: KickDspParams,
+    ) -> Vec<f32> {
+        let mut left = vec![0.0f32; BLOCK];
+        let mut right = vec![0.0f32; BLOCK];
+        let mut buffer = Buffer::default();
+        // Safe: both slices outlive `buffer` and have equal length.
+        unsafe {
+            buffer.set_slices(BLOCK, |slices| {
+                *slices = vec![left.as_mut_slice(), right.as_mut_slice()];
+            });
+        }
+        engine.process(&mut buffer, params, shared);
+        drop(buffer);
+        left
+    }
+
+    fn rms(samples: &[f32]) -> f32 {
+        (samples.iter().map(|s| s * s).sum::<f32>() / samples.len().max(1) as f32).sqrt()
+    }
+
+    /// A bass slot that holds level until released: flat amp envelope, long
+    /// note, fully open filter. Sustained enough to observe gate behavior.
+    fn sustaining_slot() -> shared::BassSlotParams {
+        let mut slot = shared::BassSlotParams::default();
+        for v in slot.amp_lut.iter_mut() {
+            *v = 0.8;
+        }
+        slot.note_length_ms = 1_000.0;
+        slot.cutoff_hz = 4_000.0;
+        slot.filter_enabled = false;
+        slot.filter_2_enabled = false;
+        slot
+    }
+
+    /// Sends `events` in a single block, then renders `extra_blocks` more
+    /// with no events, returning every rendered sample in order.
+    fn render_with_events(
+        engine: &mut KickEngine,
+        shared: &shared::SharedStateHandle,
+        events: &[RoutedMidiEvent],
+        extra_blocks: usize,
+    ) -> Vec<f32> {
+        let mut params = dsp_params();
+        for (index, event) in events.iter().enumerate() {
+            params.bass_events[index] = Some(*event);
+        }
+        params.bass_event_count = events.len();
+
+        let mut rendered = run_block(engine, shared, params);
+        params.bass_event_count = 0;
+        for _ in 0..extra_blocks {
+            rendered.extend(run_block(engine, shared, params));
+        }
+        rendered
+    }
+
+    /// The full DSP path end to end: a triggered kick and a bass note-on
+    /// must produce finite, limiter-bounded, non-silent audio.
+    #[test]
+    fn engine_renders_bounded_audio() {
+        let shared = shared::new_shared_state();
+        let mut engine = KickEngine::default();
+        engine.set_sample_rate(SAMPLE_RATE);
+
+        let mut params = dsp_params();
+        params.trigger_active = true;
+        let mut rendered = run_block(&mut engine, &shared, params);
+        rendered.extend(render_with_events(
+            &mut engine,
+            &shared,
+            &[note_on(0, 48)],
+            3,
+        ));
+
+        assert!(
+            rendered.iter().all(|s| s.is_finite()),
+            "engine produced non-finite samples"
+        );
+        let peak = rendered.iter().fold(0.0f32, |a, s| a.max(s.abs()));
+        assert!(peak <= 1.001, "output escaped the limiter: peak={peak}");
+        assert!(rms(&rendered) > 0.05, "engine rendered silence");
+    }
+
+    /// With no triggers and no notes the engine must output exact silence —
+    /// free-running LFOs must not bleed into the mix.
+    #[test]
+    fn idle_engine_is_silent() {
+        let shared = shared::new_shared_state();
+        let mut engine = KickEngine::default();
+        engine.set_sample_rate(SAMPLE_RATE);
+
+        for _ in 0..3 {
+            let block = run_block(&mut engine, &shared, dsp_params());
+            assert!(
+                block.iter().all(|s| s.abs() < 1e-7),
+                "idle engine leaked signal"
+            );
+        }
+    }
+
+    /// A note-off for a note that does not own the voice must not release
+    /// the sounding note — the legato-gap fix. Only the matching off
+    /// releases.
+    #[test]
+    fn overlapping_note_off_does_not_chop_active_note() {
+        let shared = shared::new_shared_state();
+        shared::set_bass_slot(&shared, 0, sustaining_slot());
+        let mut engine = KickEngine::default();
+        engine.set_sample_rate(SAMPLE_RATE);
+
+        // Note 48 down, then note 50 down (takes the voice), then the off
+        // for note 48 — which no longer owns the voice and is ignored.
+        let rendered = render_with_events(
+            &mut engine,
+            &shared,
+            &[note_on(0, 48), note_on(64, 50), note_off(128, 48)],
+            1,
+        );
+        assert!(
+            rms(&rendered[BLOCK..]) > 0.05,
+            "unrelated note-off chopped the active note"
+        );
+
+        // The matching off releases for real (≈8 ms ramp).
+        let released = render_with_events(&mut engine, &shared, &[note_off(0, 50)], 1);
+        assert!(
+            rms(&released[BLOCK..]) < 0.005,
+            "matching note-off did not release"
+        );
+    }
+
+    /// With `length_sync` on, the bass note self-gates to one 16th of the
+    /// live tempo: at 100 BPM that is 150 ms, so the note sounds through
+    /// the gate and is silent just past it plus the release ramp.
+    #[test]
+    fn bass_sync_gates_to_sixteenth_of_tempo() {
+        const BPM: f64 = 100.0;
+        let shared = shared::new_shared_state();
+        shared::set_tempo(&shared, Some(BPM));
+        let mut slot = sustaining_slot();
+        slot.length_sync = true;
+        shared::set_bass_slot(&shared, 0, slot);
+
+        let mut engine = KickEngine::default();
+        engine.set_sample_rate(SAMPLE_RATE);
+
+        let rendered = render_with_events(&mut engine, &shared, &[note_on(0, 48)], 15);
+
+        let gate_samples = (15_000.0 / BPM as f32 / 1_000.0 * SAMPLE_RATE) as usize;
+        let during = rms(&rendered[..gate_samples * 8 / 10]);
+        assert!(during > 0.05, "synced note was silent inside the gate");
+        let tail_start = gate_samples + (0.020 * SAMPLE_RATE) as usize;
+        let after = rms(&rendered[tail_start..]);
+        assert!(after < 0.005, "synced note overran the 16th gate");
+    }
+
+    /// Toggling 2x oversampling must keep the rendered level in the same
+    /// ballpark — it changes harmonic cleanliness, not loudness.
+    #[test]
+    fn oversampling_toggle_preserves_level() {
+        let mut levels = [0.0f32; 2];
+        for (i, enabled) in [true, false].iter().enumerate() {
+            let shared = shared::new_shared_state();
+            shared::set_oversampling(&shared, *enabled);
+            shared::set_bass_slot(&shared, 0, sustaining_slot());
+            let mut engine = KickEngine::default();
+            engine.set_sample_rate(SAMPLE_RATE);
+
+            let rendered = render_with_events(&mut engine, &shared, &[note_on(0, 48)], 4);
+            levels[i] = rms(&rendered);
+        }
+
+        assert!(
+            levels.iter().all(|l| *l > 0.05),
+            "render silent: {levels:?}"
+        );
+        let ratio = levels[0] / levels[1];
+        assert!(
+            (0.7..=1.4).contains(&ratio),
+            "oversampling changed level too much: on={} off={}",
+            levels[0],
+            levels[1]
+        );
+    }
+
+    /// A host sample-rate change mid-run must not produce garbage: the
+    /// engine re-rates the voices and keeps output bounded and finite.
+    #[test]
+    fn sample_rate_change_stays_bounded() {
+        let shared = shared::new_shared_state();
+        shared::set_bass_slot(&shared, 0, sustaining_slot());
+        let mut engine = KickEngine::default();
+        engine.set_sample_rate(SAMPLE_RATE);
+
+        let mut rendered = render_with_events(&mut engine, &shared, &[note_on(0, 48)], 2);
+        engine.set_sample_rate(48_000.0);
+        rendered.extend(run_block(&mut engine, &shared, dsp_params()));
+        engine.set_sample_rate(SAMPLE_RATE);
+        rendered.extend(run_block(&mut engine, &shared, dsp_params()));
+
+        assert!(
+            rendered.iter().all(|s| s.is_finite() && s.abs() <= 1.001),
+            "sample-rate change broke the output"
+        );
+    }
 }

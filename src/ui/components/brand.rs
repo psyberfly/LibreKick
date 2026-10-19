@@ -13,11 +13,7 @@ pub(crate) fn brand_logo_texture(ctx: &egui::Context) -> Option<TextureHandle> {
     let pixels = image.into_raw();
     let color_image = ColorImage::from_rgba_unmultiplied([width, height], &pixels);
 
-    Some(ctx.load_texture(
-        "librekick-brand-logo",
-        color_image,
-        TextureOptions::LINEAR,
-    ))
+    Some(ctx.load_texture("librekick-brand-logo", color_image, TextureOptions::LINEAR))
 }
 
 fn title_logo_size(ui: &egui::Ui, scale: f32) -> Vec2 {
@@ -55,7 +51,10 @@ fn glowing_brand_label(ui: &mut egui::Ui, text: &str, scale: f32) {
     });
     let padding = Vec2::new(10.0 * scale, 6.0 * scale);
     let (rect, _) = ui.allocate_exact_size(text_size + padding, Sense::hover());
-    let text_pos = Pos2::new(rect.left() + 4.0 * scale, rect.center().y - text_size.y * 0.5);
+    let text_pos = Pos2::new(
+        rect.left() + 4.0 * scale,
+        rect.center().y - text_size.y * 0.5,
+    );
     let painter = ui.painter();
 
     let outer_offsets = [

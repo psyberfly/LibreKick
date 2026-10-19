@@ -1,7 +1,6 @@
-use nih_plug_egui::egui::{
-    self, Align2, Color32, Pos2, RichText, Sense, Stroke, Vec2,
-};
+use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Sense, Stroke, Vec2};
 
+use crate::ui::components::{knob, section};
 use crate::ui::state::{ArrangeNote, BezierUiState};
 use crate::ui::theme::{accent_color, APP_THEME};
 
@@ -17,143 +16,153 @@ use super::{colors, BASS_NOTES, TOTAL_ROWS};
 /// - Drag a note: move it (snapped to beat slots, no overlap)
 /// - Drag empty space: horizontal scroll
 pub(super) fn render(ui: &mut egui::Ui, ui_scale: f32, state: &mut BezierUiState) {
-    ui.group(|ui| {
-        ui.label(RichText::new("MIDI Channel").strong());
-        ui.add_space(4.0 * ui_scale);
+    section::render(
+        ui,
+        ui_scale,
+        section::SectionHeader {
+            title: "PATTERN",
+            enabled: None,
+            min_height: 0.0,
+        },
+        |ui| {
+            // Zoom dial — unified knob spec, no sliders.
+            let zoom_display = format!("{:.0}%", state.midi_channel_zoom * 100.0);
+            knob::range_knob(
+                ui,
+                ui_scale,
+                "ZOOM",
+                &mut state.midi_channel_zoom,
+                0.25,
+                4.0,
+                &zoom_display,
+                knob::KnobStyle {
+                    diameter: 30.0,
+                    ..knob::KnobStyle::panel()
+                },
+            );
 
-        // Zoom controls
-        ui.add(crate::ui::helpers::slider_fine_step(
-            ui,
-            egui::Slider::new(&mut state.midi_channel_zoom, 0.25..=4.0)
-                .text("Zoom")
-                .custom_formatter(|v, _| format!("{:.0}%", v * 100.0))
-                .custom_parser(|s| {
-                    s.trim_end_matches('%').parse::<f64>().ok().map(|v| v / 100.0)
-                }),
-            0.25,
-        ));
+            ui.add_space(8.0 * ui_scale);
 
-        ui.add_space(8.0 * ui_scale);
+            // MIDI channel visualization area
+            let channel_height = 200.0 * ui_scale;
+            let available_width = ui.available_width();
+            let keyboard_width = 56.0 * ui_scale;
 
-        // MIDI channel visualization area
-        let channel_height = 200.0 * ui_scale;
-        let available_width = ui.available_width();
-        let keyboard_width = 56.0 * ui_scale;
+            let row_height = channel_height / TOTAL_ROWS as f32;
 
-        let row_height = channel_height / TOTAL_ROWS as f32;
+            // Note names for bass octave (top to bottom: B to C)
+            const NOTE_NAMES: [&str; 12] = [
+                "B", "A#", "A", "G#", "G", "F#", "F", "E", "D#", "D", "C#", "C",
+            ];
+            // Black keys in an octave (top-to-bottom order matches NOTE_NAMES)
+            const BLACK_KEYS: [bool; 12] = [
+                false, true, false, true, false, true, false, false, true, false, true, false,
+            ];
 
-        // Note names for bass octave (top to bottom: B to C)
-        const NOTE_NAMES: [&str; 12] = [
-            "B", "A#", "A", "G#", "G", "F#", "F", "E", "D#", "D", "C#", "C",
-        ];
-        // Black keys in an octave (top-to-bottom order matches NOTE_NAMES)
-        const BLACK_KEYS: [bool; 12] = [
-            false, true, false, true, false, true, false, false, true, false, true, false,
-        ];
+            let (rect, response) = ui.allocate_exact_size(
+                Vec2::new(available_width, channel_height),
+                Sense::click_and_drag(),
+            );
 
-        let (rect, response) = ui.allocate_exact_size(
-            Vec2::new(available_width, channel_height),
-            Sense::click_and_drag(),
-        );
+            let painter = ui.painter_at(rect);
 
-        let painter = ui.painter_at(rect);
+            // Draw outer background and border
+            painter.rect_filled(rect, 4.0, colors::background());
+            painter.rect_stroke(
+                rect,
+                4.0,
+                Stroke::new(1.0, colors::border()),
+                egui::StrokeKind::Inside,
+            );
 
-        // Draw outer background and border
-        painter.rect_filled(rect, 4.0, colors::background());
-        painter.rect_stroke(
-            rect,
-            4.0,
-            Stroke::new(1.0, colors::border()),
-            egui::StrokeKind::Inside,
-        );
+            draw_keyboard_strip(
+                &painter,
+                rect,
+                keyboard_width,
+                row_height,
+                ui_scale,
+                &NOTE_NAMES,
+                &BLACK_KEYS,
+            );
 
-        draw_keyboard_strip(
-            &painter,
-            rect,
-            keyboard_width,
-            row_height,
-            ui_scale,
-            &NOTE_NAMES,
-            &BLACK_KEYS,
-        );
+            // === Right bar grid ===
+            let grid_rect = egui::Rect::from_min_max(
+                Pos2::new(rect.left() + keyboard_width, rect.top()),
+                rect.max,
+            );
+            let grid_width = grid_rect.width();
 
-        // === Right bar grid ===
-        let grid_rect = egui::Rect::from_min_max(
-            Pos2::new(rect.left() + keyboard_width, rect.top()),
-            rect.max,
-        );
-        let grid_width = grid_rect.width();
+            // Calculate visible bars based on zoom
+            let total_bars = state.num_bars;
+            let visible_bars = (total_bars / state.midi_channel_zoom).max(1.0);
+            let bar_width = grid_width / visible_bars;
+            let scroll_offset = state.midi_channel_scroll_offset;
+            let note_len_bars = state.note_size.bars();
 
-        // Calculate visible bars based on zoom
-        let total_bars = state.num_bars;
-        let visible_bars = (total_bars / state.midi_channel_zoom).max(1.0);
-        let bar_width = grid_width / visible_bars;
-        let scroll_offset = state.midi_channel_scroll_offset;
-        let note_len_bars = state.note_size.bars();
+            draw_row_separators(&painter, rect, grid_rect, row_height);
+            draw_bar_grid(
+                &painter,
+                grid_rect,
+                ui_scale,
+                total_bars,
+                visible_bars,
+                bar_width,
+                scroll_offset,
+                note_len_bars,
+            );
 
-        draw_row_separators(&painter, rect, grid_rect, row_height);
-        draw_bar_grid(
-            &painter,
-            grid_rect,
-            ui_scale,
-            total_bars,
-            visible_bars,
-            bar_width,
-            scroll_offset,
-            note_len_bars,
-        );
+            // Helper: find note index at a pointer position.
+            let note_at = |pos: Pos2, notes: &[ArrangeNote]| -> Option<usize> {
+                if !grid_rect.contains(pos) {
+                    return None;
+                }
+                let row = ((pos.y - rect.top()) / row_height) as usize;
+                if row >= TOTAL_ROWS {
+                    return None;
+                }
+                let bar_pos = scroll_offset + (pos.x - grid_rect.left()) / bar_width;
+                notes.iter().position(|n| {
+                    n.row == row && bar_pos >= n.bar_pos && bar_pos < n.bar_pos + note_len_bars
+                })
+            };
 
-        // Helper: find note index at a pointer position.
-        let note_at = |pos: Pos2, notes: &[ArrangeNote]| -> Option<usize> {
-            if !grid_rect.contains(pos) {
-                return None;
-            }
-            let row = ((pos.y - rect.top()) / row_height) as usize;
-            if row >= TOTAL_ROWS {
-                return None;
-            }
-            let bar_pos = scroll_offset + (pos.x - grid_rect.left()) / bar_width;
-            notes.iter().position(|n| {
-                n.row == row && bar_pos >= n.bar_pos && bar_pos < n.bar_pos + note_len_bars
-            })
-        };
+            handle_interactions(
+                ui,
+                &response,
+                state,
+                grid_rect,
+                rect,
+                row_height,
+                bar_width,
+                scroll_offset,
+                total_bars,
+                visible_bars,
+                note_len_bars,
+                &note_at,
+            );
 
-        handle_interactions(
-            ui,
-            &response,
-            state,
-            grid_rect,
-            rect,
-            row_height,
-            bar_width,
-            scroll_offset,
-            total_bars,
-            visible_bars,
-            note_len_bars,
-            &note_at,
-        );
+            draw_notes(
+                &painter,
+                state,
+                grid_rect,
+                rect,
+                row_height,
+                bar_width,
+                scroll_offset,
+                note_len_bars,
+            );
 
-        draw_notes(
-            &painter,
-            state,
-            grid_rect,
-            rect,
-            row_height,
-            bar_width,
-            scroll_offset,
-            note_len_bars,
-        );
-
-        draw_scroll_indicator(
-            &painter,
-            rect,
-            grid_rect,
-            grid_width,
-            total_bars,
-            visible_bars,
-            scroll_offset,
-        );
-    });
+            draw_scroll_indicator(
+                &painter,
+                rect,
+                grid_rect,
+                grid_width,
+                total_bars,
+                visible_bars,
+                scroll_offset,
+            );
+        },
+    );
 }
 
 /// Draws the left keyboard strip: bass octave rows + kick lane.
@@ -249,7 +258,10 @@ fn draw_row_separators(
         let y = rect.top() + i as f32 * row_height;
         let is_kick_separator = i == BASS_NOTES;
         painter.line_segment(
-            [Pos2::new(grid_rect.left(), y), Pos2::new(grid_rect.right(), y)],
+            [
+                Pos2::new(grid_rect.left(), y),
+                Pos2::new(grid_rect.right(), y),
+            ],
             if is_kick_separator {
                 Stroke::new(1.0, accent_color())
             } else {
@@ -282,7 +294,10 @@ fn draw_bar_grid(
         let x = grid_rect.left() + ((bar as f32 - scroll_offset) * bar_width);
         if x >= grid_rect.left() && x <= grid_rect.right() {
             painter.line_segment(
-                [Pos2::new(x, grid_rect.top()), Pos2::new(x, grid_rect.bottom())],
+                [
+                    Pos2::new(x, grid_rect.top()),
+                    Pos2::new(x, grid_rect.bottom()),
+                ],
                 Stroke::new(1.0, colors::bar_line()),
             );
 
@@ -310,7 +325,10 @@ fn draw_bar_grid(
                 + (beat as f32 * bar_width / beats_per_bar as f32);
             if x >= grid_rect.left() && x <= grid_rect.right() {
                 painter.line_segment(
-                    [Pos2::new(x, grid_rect.top()), Pos2::new(x, grid_rect.bottom())],
+                    [
+                        Pos2::new(x, grid_rect.top()),
+                        Pos2::new(x, grid_rect.bottom()),
+                    ],
                     Stroke::new(0.5, colors::beat_line()),
                 );
             }
@@ -336,7 +354,10 @@ fn draw_bar_grid(
             let x = grid_rect.left() + (slot_bars - scroll_offset) * bar_width;
             if x >= grid_rect.left() && x <= grid_rect.right() {
                 painter.line_segment(
-                    [Pos2::new(x, grid_rect.top()), Pos2::new(x, grid_rect.bottom())],
+                    [
+                        Pos2::new(x, grid_rect.top()),
+                        Pos2::new(x, grid_rect.bottom()),
+                    ],
                     Stroke::new(0.5, slot_color),
                 );
             }
@@ -402,9 +423,10 @@ fn handle_interactions(
                         state.midi_notes[index].row
                     };
                     // Don't drop onto a slot occupied by another note
-                    let occupied = state.midi_notes.iter().enumerate().any(|(i, n)| {
-                        i != index && n.row == target_row && n.bar_pos == snapped
-                    });
+                    let occupied =
+                        state.midi_notes.iter().enumerate().any(|(i, n)| {
+                            i != index && n.row == target_row && n.bar_pos == snapped
+                        });
                     if !occupied {
                         state.midi_notes[index].row = target_row;
                         state.midi_notes[index].bar_pos = snapped;

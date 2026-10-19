@@ -19,6 +19,10 @@ pub(crate) struct KnobStyle {
     /// Signed normalized modulation offset (-1..1). When Some, a Serum-style
     /// ring arc is drawn from the set value toward the modulated value.
     pub(crate) mod_arc: Option<f32>,
+    /// Font size (unscaled points) for the label above and readout below.
+    pub(crate) font: f32,
+    /// Label colour override; `None` keeps the dimmed tick colour.
+    pub(crate) label_color: Option<Color32>,
 }
 
 impl Default for KnobStyle {
@@ -27,8 +31,33 @@ impl Default for KnobStyle {
             diameter: 38.0,
             arc_color: accent_color(),
             mod_arc: None,
+            font: 10.0,
+            label_color: None,
         }
     }
+}
+
+impl KnobStyle {
+    /// The unified front-panel spec: bigger, brighter captions so dense
+    /// module panels stay readable. All instrument pages use this.
+    pub(crate) fn panel() -> Self {
+        Self {
+            font: 12.5,
+            label_color: Some(APP_THEME.axis_title()),
+            ..Self::default()
+        }
+    }
+}
+
+/// Knob diameter (unscaled points) that spreads `count` knobs evenly across
+/// the row's available width so module panels do not sit half-empty. The
+/// knob widget cell is `diameter` wide; the cap keeps sparse panels (one or
+/// two knobs) from inflating into oversized dials that read as dead space.
+pub(crate) fn fit_knob_diameter(ui: &egui::Ui, count: usize, ui_scale: f32) -> f32 {
+    let count = count.max(1) as f32;
+    let gap = ui.spacing().item_spacing.x;
+    let cell = (ui.available_width() - gap * (count - 1.0)).max(0.0) / count;
+    (cell / ui_scale).clamp(38.0, 52.0)
 }
 
 /// Draws a Serum-style rotary knob bound to a normalized `0.0..=1.0` value.
@@ -44,8 +73,10 @@ pub(crate) fn render(
     style: KnobStyle,
 ) -> bool {
     let diameter = style.diameter * ui_scale;
-    let label_height = 13.0 * ui_scale;
-    let value_height = 13.0 * ui_scale;
+    // Text rows track the configured font so bigger labels keep their
+    // breathing room instead of clipping into the dial.
+    let label_height = (style.font + 3.0) * ui_scale;
+    let value_height = (style.font + 3.0) * ui_scale;
     let total = Vec2::new(
         diameter.max(44.0 * ui_scale),
         label_height + diameter + value_height + 4.0 * ui_scale,
@@ -73,10 +104,7 @@ pub(crate) fn render(
         changed = true;
     }
 
-    let center = Pos2::new(
-        rect.center().x,
-        rect.top() + label_height + diameter * 0.5,
-    );
+    let center = Pos2::new(rect.center().x, rect.top() + label_height + diameter * 0.5);
     let radius = diameter * 0.5;
     let track_radius = radius - 2.0 * ui_scale;
 
@@ -84,16 +112,49 @@ pub(crate) fn render(
         Pos2::new(rect.center().x, rect.top()),
         Align2::CENTER_TOP,
         label,
-        themed_font(10.0 * ui_scale),
-        APP_THEME.axis_tick(),
+        themed_font(style.font * ui_scale),
+        style.label_color.unwrap_or_else(|| APP_THEME.axis_tick()),
     );
 
     painter.circle_filled(center, radius, APP_THEME.screen_bg());
-    painter.circle_stroke(
-        center,
-        radius,
-        Stroke::new(1.0, APP_THEME.graph_border()),
-    );
+    painter.circle_stroke(center, radius, Stroke::new(1.0, APP_THEME.graph_border()));
+
+    // Hand-drawn pencil shading, sparingly along the right rim: a few short
+    // sketch arcs plus sparse radial hatch ticks read as pencil work rather
+    // than a clean gradient, and make the dial look raised.
+    let pencil = APP_THEME.pencil_shade();
+    let rim = radius - 1.0 * ui_scale;
+    for &(from, to, dr, w) in &[
+        (-36.0f32, 4.0f32, 0.0, 1.4),
+        (12.0f32, 46.0f32, -1.6, 1.1),
+        (24.0f32, 42.0f32, -3.0, 0.9),
+    ] {
+        draw_arc_degrees(
+            &painter,
+            center + Vec2::new(0.5, 0.4) * ui_scale,
+            rim + dr * ui_scale,
+            from,
+            to,
+            Stroke::new(w * ui_scale, pencil),
+        );
+    }
+    for &(deg, inner) in &[
+        (-28.0f32, -5.5f32),
+        (-10.0f32, -6.5),
+        (10.0f32, -4.5),
+        (28.0f32, -5.5),
+        (43.0f32, -4.0),
+    ] {
+        let a = deg.to_radians();
+        let dir = Vec2::new(a.cos(), a.sin());
+        painter.line_segment(
+            [
+                center + dir * (radius + inner * ui_scale),
+                center + dir * (radius - 0.5 * ui_scale),
+            ],
+            Stroke::new(1.0 * ui_scale, pencil),
+        );
+    }
 
     let normalized = value.clamp(0.0, 1.0);
     draw_arc(
@@ -157,7 +218,7 @@ pub(crate) fn render(
         Pos2::new(rect.center().x, rect.bottom()),
         Align2::CENTER_BOTTOM,
         display,
-        themed_font(10.0 * ui_scale),
+        themed_font(style.font * ui_scale),
         APP_THEME.axis_title(),
     );
 
@@ -290,6 +351,26 @@ fn draw_arc(
     for i in 0..=SEGMENTS {
         let t = from + (to - from) * (i as f32 / SEGMENTS as f32);
         let angle = (START_DEGREES + t * SWEEP_DEGREES).to_radians();
+        points.push(center + Vec2::new(angle.cos(), angle.sin()) * radius);
+    }
+    painter.add(egui::Shape::line(points, stroke));
+}
+
+/// Arc between absolute angles in degrees (0 = right, 90 = down), used for
+/// decorative strokes that are placed by position rather than knob value.
+fn draw_arc_degrees(
+    painter: &egui::Painter,
+    center: Pos2,
+    radius: f32,
+    from_deg: f32,
+    to_deg: f32,
+    stroke: Stroke,
+) {
+    const SEGMENTS: usize = 24;
+    let mut points = Vec::with_capacity(SEGMENTS + 1);
+    for i in 0..=SEGMENTS {
+        let t = i as f32 / SEGMENTS as f32;
+        let angle = (from_deg + (to_deg - from_deg) * t).to_radians();
         points.push(center + Vec2::new(angle.cos(), angle.sin()) * radius);
     }
     painter.add(egui::Shape::line(points, stroke));

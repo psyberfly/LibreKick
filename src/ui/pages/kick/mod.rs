@@ -12,19 +12,18 @@
 
 mod controls;
 
-use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 use nih_plug::prelude::ParamSetter;
+use nih_plug_egui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Stroke, Vec2};
 
-use crate::{audio, config, shared, LibreKickParams};
-use crate::ui::components::{waveform_preview as shared_waveform_preview};
+use crate::ui::components::{energy_heatmap, waveform_preview as shared_waveform_preview};
 use crate::ui::helpers::{
-    axis_x_label, axis_y_label, constrain_curve_points, curve_lut,
-    effective_waveform_zoom, envelope_value_linear, normalize_segment_bends,
-    point_value_label, to_normalized_with_note_end, to_screen_with_note_end,
-    waveform_preview_points,
+    axis_x_label, axis_y_label, constrain_curve_points, curve_lut, effective_waveform_zoom,
+    envelope_value_linear, normalize_segment_bends, point_value_label, to_normalized_with_note_end,
+    to_screen_with_note_end, waveform_preview_points,
 };
 use crate::ui::state::{BezierUiState, CurveKind, EditorSnapshot};
 use crate::ui::theme::{self as ui_theme, apply_ui_text_scale, themed_font, APP_THEME};
+use crate::{audio, config, shared, LibreKickParams};
 
 // Constants used across kick page modules
 const AXIS_SUBDIVISIONS: usize = 10;
@@ -49,7 +48,7 @@ pub(crate) fn render_controls(
 }
 
 /// Renders the kick envelope curve editor graph.
-/// 
+///
 /// This function is still monolithic and will be refactored into sub-modules in future iterations.
 /// The complexity of the editor (600+ lines) makes it a candidate for further breakdown into:
 /// - Graph rendering (axes, grid, backgrounds)
@@ -69,7 +68,7 @@ pub(crate) fn render_editor(
 ) {
     // This is the original monolithic editor implementation
     // It will be gradually extracted into sub-modules
-    
+
     let mut point_dragging_this_frame = false;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -668,6 +667,8 @@ pub(crate) fn render_editor(
                 note_length_ms: state.note_length_ms,
                 pitch_hz: state.kick_pitch_hz,
                 waveform: state.kick_oscillator_waveform,
+                amp_env_enabled: state.amp_env_enabled,
+                pitch_env_enabled: state.pitch_env_enabled,
             },
             &amp_lut,
             &pitch_lut,
@@ -683,6 +684,31 @@ pub(crate) fn render_editor(
             max_note_length_ms,
             state.waveform_zoom_percent,
             adaptive_zoom_factor,
+        );
+
+        // Band energy of the rendered kick, measured from the same samples
+        // the trace is drawn from. Overlaid as a strip along the bottom of
+        // the graph rather than splitting it, because `graph_rect` is also
+        // the envelope editor's coordinate space and shrinking it would move
+        // every curve point and hit target.
+        let heat_height = (graph_rect.height() * 0.22).min(56.0 * ui_scale);
+        let heat_rect = Rect::from_min_max(
+            Pos2::new(graph_rect.left(), graph_rect.bottom() - heat_height),
+            Pos2::new(
+                graph_rect.left() + graph_rect.width() * note_end_display_t,
+                graph_rect.bottom(),
+            ),
+        );
+        let heat_columns = (heat_rect.width() / (1.5 * ui_scale)).ceil().max(1.0) as usize;
+        let kick_energy =
+            energy_heatmap::analyze(&preview_samples, preview_rate, heat_columns);
+        energy_heatmap::draw(
+            &painter,
+            heat_rect,
+            &kick_energy,
+            (0.0, 1.0),
+            None,
+            ui_scale,
         );
 
         shared_waveform_preview::draw(

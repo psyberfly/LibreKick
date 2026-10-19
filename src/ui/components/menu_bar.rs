@@ -1,10 +1,10 @@
 use nih_plug::prelude::ParamSetter;
 use nih_plug_egui::egui;
 
-use crate::{config, patches, LibreKickParams};
 use crate::ui::components::brand;
 use crate::ui::state::BezierUiState;
 use crate::ui::theme::{apply_ui_text_scale, APP_THEME};
+use crate::{config, patches, LibreKickParams};
 
 /// Renders the top menu bar shown on every page: brand logo, version,
 /// help button, undo/redo, and the patch selector.
@@ -36,135 +36,133 @@ pub(crate) fn render(
 
         // Patches button + name + description (left-aligned).
         ui.menu_button("Patches", |ui| {
-                    apply_ui_text_scale(ui, ui_scale);
-                    ui.set_min_width(300.0 * ui_scale);
-                    ui.label(format!("Dir: {}", config::patches_dir()));
-                    ui.label(format!("Current: {}", state.selected_patch_indicator_text()));
-                    ui.separator();
-                    ui.label("Load Patch");
+            apply_ui_text_scale(ui, ui_scale);
+            ui.set_min_width(300.0 * ui_scale);
+            ui.label(format!("Dir: {}", config::patches_dir()));
+            ui.label(format!(
+                "Current: {}",
+                state.selected_patch_indicator_text()
+            ));
+            ui.separator();
+            ui.label("Load Patch");
 
-                    let patch_names = state.available_patches.clone();
-                    if patch_names.is_empty() {
-                        ui.label("No patches found.");
-                    } else {
-                        for patch_name in patch_names {
-                            if ui.button(&patch_name).clicked() {
-                                let before = state.snapshot();
-                                match patches::load_patch(&patch_name) {
-                                    Ok(patch) => {
-                                        let (kick_level, bass_levels) =
-                                            state.apply_patch_data(patch);
-                                        if let Some(level) = kick_level {
-                                            setter.set_parameter(&params.kick_level, level);
-                                            state.kick_level = level;
-                                        }
-                                        for (index, level) in
-                                            bass_levels.iter().enumerate()
-                                        {
-                                            if let Some(level) = level {
-                                                let param = if index == 0 {
-                                                    &params.bass1_level
-                                                } else {
-                                                    &params.bass2_level
-                                                };
-                                                setter.set_parameter(param, *level);
-                                                state.bass_levels[index] = *level;
-                                            }
-                                        }
-                                        state.mark_patch_clean(patch_name.clone());
-                                        state.commit_history_if_changed(&before);
-                                        *history_action_applied = true;
-                                        state.patch_status = Some(format!("Loaded patch: {patch_name}"));
-                                        ui.close_menu();
-                                    }
-                                    Err(error) => {
-                                        state.patch_status =
-                                            Some(format!("Failed to load patch: {error}"));
-                                        ui.close_menu();
+            let patch_names = state.available_patches.clone();
+            if patch_names.is_empty() {
+                ui.label("No patches found.");
+            } else {
+                for patch_name in patch_names {
+                    if ui.button(&patch_name).clicked() {
+                        let before = state.snapshot();
+                        match patches::load_patch(&patch_name) {
+                            Ok(patch) => {
+                                let (kick_level, bass_levels) = state.apply_patch_data(patch);
+                                if let Some(level) = kick_level {
+                                    setter.set_parameter(&params.kick_level, level);
+                                    state.kick_level = level;
+                                }
+                                for (index, level) in bass_levels.iter().enumerate() {
+                                    if let Some(level) = level {
+                                        let param = if index == 0 {
+                                            &params.bass1_level
+                                        } else {
+                                            &params.bass2_level
+                                        };
+                                        setter.set_parameter(param, *level);
+                                        state.bass_levels[index] = *level;
                                     }
                                 }
-                            }
-                        }
-                    }
-
-                    ui.separator();
-                    ui.label("Description");
-                    let desc_response = ui.add(
-                        egui::TextEdit::singleline(&mut state.patch_description)
-                            .desired_width(280.0 * ui_scale)
-                            .hint_text("Patch description…"),
-                    );
-                    if desc_response.changed() {
-                        state.patch_description =
-                            patches::sanitize_patch_description(&state.patch_description);
-                    }
-
-                    ui.separator();
-                    ui.label("Save Patch");
-                    ui.text_edit_singleline(&mut state.new_patch_name);
-                    let can_save_patch = !state.new_patch_name.trim().is_empty();
-                    if ui
-                        .add_enabled(can_save_patch, egui::Button::new("Save"))
-                        .clicked()
-                    {
-                        let patch_name = state.new_patch_name.trim().to_owned();
-                        let patch_data = state.to_patch_data(patch_name.clone());
-                        match patches::save_patch(&patch_data) {
-                            Ok(()) => {
                                 state.mark_patch_clean(patch_name.clone());
-                                state.patch_status = Some(format!("Saved patch: {patch_name}"));
-                                state.refresh_patch_list();
-                                
-                                // Set the newly saved patch as the default
-                                match patches::set_default_patch_name(&patch_name) {
-                                    Ok(()) => {
-                                        state.default_patch_name = Some(patch_name.clone());
-                                    }
-                                    Err(error) => {
-                                        state.patch_status = Some(format!(
-                                            "Saved patch but failed to set as default: {error}"
-                                        ));
-                                    }
-                                }
+                                state.commit_history_if_changed(&before);
+                                *history_action_applied = true;
+                                state.patch_status = Some(format!("Loaded patch: {patch_name}"));
+                                ui.close_menu();
                             }
                             Err(error) => {
-                                state.patch_status = Some(format!("Failed to save patch: {error}"));
+                                state.patch_status = Some(format!("Failed to load patch: {error}"));
+                                ui.close_menu();
                             }
                         }
                     }
+                }
+            }
 
-                    if ui.button("Set current as default").clicked() {
-                        let selected_name = state.selected_patch_name.clone();
-                        match selected_name {
-                            Some(name) if !state.is_selected_patch_dirty() => {
-                                match patches::set_default_patch_name(&name) {
-                                    Ok(()) => {
-                                        state.default_patch_name = Some(name.clone());
-                                        state.patch_status = Some(format!("Default patch set: {name}"));
-                                    }
-                                    Err(error) => {
-                                        state.patch_status = Some(format!(
-                                            "Failed to set default patch: {error}"
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => {
-                                state.patch_status =
-                                    Some("Save this patch first, then set it as default.".to_owned());
-                            }
-                        }
-                    }
+            ui.separator();
+            ui.label("Description");
+            let desc_response = ui.add(
+                egui::TextEdit::singleline(&mut state.patch_description)
+                    .desired_width(280.0 * ui_scale)
+                    .hint_text("Patch description…"),
+            );
+            if desc_response.changed() {
+                state.patch_description =
+                    patches::sanitize_patch_description(&state.patch_description);
+            }
 
-                    if ui.button("Refresh List").clicked() {
+            ui.separator();
+            ui.label("Save Patch");
+            ui.text_edit_singleline(&mut state.new_patch_name);
+            let can_save_patch = !state.new_patch_name.trim().is_empty();
+            if ui
+                .add_enabled(can_save_patch, egui::Button::new("Save"))
+                .clicked()
+            {
+                let patch_name = state.new_patch_name.trim().to_owned();
+                let patch_data = state.to_patch_data(patch_name.clone());
+                match patches::save_patch(&patch_data) {
+                    Ok(()) => {
+                        state.mark_patch_clean(patch_name.clone());
+                        state.patch_status = Some(format!("Saved patch: {patch_name}"));
                         state.refresh_patch_list();
-                    }
 
-                    if let Some(status) = &state.patch_status {
-                        ui.separator();
-                        ui.label(status);
+                        // Set the newly saved patch as the default
+                        match patches::set_default_patch_name(&patch_name) {
+                            Ok(()) => {
+                                state.default_patch_name = Some(patch_name.clone());
+                            }
+                            Err(error) => {
+                                state.patch_status = Some(format!(
+                                    "Saved patch but failed to set as default: {error}"
+                                ));
+                            }
+                        }
                     }
-                });
+                    Err(error) => {
+                        state.patch_status = Some(format!("Failed to save patch: {error}"));
+                    }
+                }
+            }
+
+            if ui.button("Set current as default").clicked() {
+                let selected_name = state.selected_patch_name.clone();
+                match selected_name {
+                    Some(name) if !state.is_selected_patch_dirty() => {
+                        match patches::set_default_patch_name(&name) {
+                            Ok(()) => {
+                                state.default_patch_name = Some(name.clone());
+                                state.patch_status = Some(format!("Default patch set: {name}"));
+                            }
+                            Err(error) => {
+                                state.patch_status =
+                                    Some(format!("Failed to set default patch: {error}"));
+                            }
+                        }
+                    }
+                    _ => {
+                        state.patch_status =
+                            Some("Save this patch first, then set it as default.".to_owned());
+                    }
+                }
+            }
+
+            if ui.button("Refresh List").clicked() {
+                state.refresh_patch_list();
+            }
+
+            if let Some(status) = &state.patch_status {
+                ui.separator();
+                ui.label(status);
+            }
+        });
 
         ui.label(
             egui::RichText::new(state.selected_patch_indicator_text())
@@ -207,14 +205,20 @@ pub(crate) fn render(
             ui.add_space(10.0 * ui_scale);
 
             let redo_clicked = ui
-                .add_enabled(!state.redo_stack.is_empty(), egui::Button::new(">").min_size(button_size))
+                .add_enabled(
+                    !state.redo_stack.is_empty(),
+                    egui::Button::new(">").min_size(button_size),
+                )
                 .on_hover_ui(|ui| {
                     apply_ui_text_scale(ui, ui_scale);
                     ui.label("Redo (Ctrl/Cmd + Y)");
                 })
                 .clicked();
             let undo_clicked = ui
-                .add_enabled(!state.undo_stack.is_empty(), egui::Button::new("<").min_size(button_size))
+                .add_enabled(
+                    !state.undo_stack.is_empty(),
+                    egui::Button::new("<").min_size(button_size),
+                )
                 .on_hover_ui(|ui| {
                     apply_ui_text_scale(ui, ui_scale);
                     ui.label("Undo (Ctrl/Cmd + Z)");
@@ -231,7 +235,10 @@ pub(crate) fn render(
 
     if state.show_help_popup {
         egui::Window::new("Help")
-            .anchor(egui::Align2::RIGHT_TOP, egui::Vec2::new(-10.0 * ui_scale, 10.0 * ui_scale))
+            .anchor(
+                egui::Align2::RIGHT_TOP,
+                egui::Vec2::new(-10.0 * ui_scale, 10.0 * ui_scale),
+            )
             .collapsible(false)
             .resizable(false)
             .open(&mut state.show_help_popup)

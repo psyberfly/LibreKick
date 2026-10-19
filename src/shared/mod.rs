@@ -24,10 +24,7 @@ pub fn set_kick_retrigger(shared: &SharedStateHandle, kick_retrigger: bool) {
     }
 }
 
-pub fn set_kick_legato_voice_steal(
-    shared: &SharedStateHandle,
-    kick_legato_voice_steal: bool,
-) {
+pub fn set_kick_legato_voice_steal(shared: &SharedStateHandle, kick_legato_voice_steal: bool) {
     if let Ok(mut state) = shared.lock() {
         state.kick_legato_voice_steal = kick_legato_voice_steal;
     }
@@ -45,6 +42,13 @@ pub fn set_kick_phase_deg(shared: &SharedStateHandle, phase_deg: f32) {
     }
 }
 
+/// When enabled, the kick's note length follows a 16th note at the arrange
+/// tempo while arrange override is playing.
+pub fn set_kick_length_override(shared: &SharedStateHandle, enabled: bool) {
+    if let Ok(mut state) = shared.lock() {
+        state.kick_length_override = enabled;
+    }
+}
 
 /// Maximum number of arrange notes synced to the audio thread.
 pub const ARRANGE_MAX_NOTES: usize = 256;
@@ -63,6 +67,20 @@ pub struct ArrangeNoteData {
 pub fn set_arrange_override(shared: &SharedStateHandle, enabled: bool) {
     if let Ok(mut state) = shared.lock() {
         state.arrange_override = enabled;
+    }
+}
+
+/// Enables or disables PolyBLEP anti-aliasing on the oscillators.
+pub fn set_anti_aliasing(shared: &SharedStateHandle, enabled: bool) {
+    if let Ok(mut state) = shared.lock() {
+        state.anti_aliasing = enabled;
+    }
+}
+
+/// Enables or disables 2x internal oversampling of the voices.
+pub fn set_oversampling(shared: &SharedStateHandle, enabled: bool) {
+    if let Ok(mut state) = shared.lock() {
+        state.oversampling = enabled;
     }
 }
 
@@ -296,10 +314,12 @@ pub enum ModDest {
     /// Unison detune spread, in cents.
     UnisonDetune,
     FilterDrive,
+    /// Filter resonance, additive on the 0..1 knob value.
+    Resonance,
 }
 
 impl ModDest {
-    pub const ALL: [ModDest; 11] = [
+    pub const ALL: [ModDest; 12] = [
         Self::None,
         Self::Cutoff,
         Self::Pitch,
@@ -311,6 +331,7 @@ impl ModDest {
         Self::OscBDetune,
         Self::UnisonDetune,
         Self::FilterDrive,
+        Self::Resonance,
     ];
 
     pub const fn label(&self) -> &'static str {
@@ -326,6 +347,7 @@ impl ModDest {
             Self::OscBDetune => "OSC B DETUNE",
             Self::UnisonDetune => "UNISON DETUNE",
             Self::FilterDrive => "DRIVE",
+            Self::Resonance => "RESONANCE",
         }
     }
 
@@ -342,6 +364,7 @@ impl ModDest {
             Self::OscBDetune => "osc_b_detune",
             Self::UnisonDetune => "unison_detune",
             Self::FilterDrive => "filter_drive",
+            Self::Resonance => "resonance",
         }
     }
 
@@ -457,10 +480,7 @@ impl Default for BassModTelemetry {
 }
 
 /// Publishes one frame of modulation telemetry from the audio thread.
-pub fn publish_bass_mod_telemetry(
-    shared: &SharedStateHandle,
-    mut telemetry: BassModTelemetry,
-) {
+pub fn publish_bass_mod_telemetry(shared: &SharedStateHandle, mut telemetry: BassModTelemetry) {
     if let Ok(mut state) = shared.lock() {
         telemetry.sequence = state.bass_mod_telemetry.sequence.wrapping_add(1);
         state.bass_mod_telemetry = telemetry;
@@ -502,10 +522,16 @@ pub struct BassSlotParams {
     pub filter_enabled: bool,
     pub filter_2_enabled: bool,
     pub note_length_ms: f32,
+    /// When true, the note length follows one 16th at the active tempo
+    /// (DAW tempo when known, arrange manual tempo otherwise) instead of
+    /// `note_length_ms`.
+    pub length_sync: bool,
     pub cutoff_hz: f32,
     pub filter_mode: BassFilterMode,
     pub filter_slope: BassFilterSlope,
     pub filter_drive: f32,
+    /// Filter resonance, 0..1. Needs a 12 dB or steeper slope to be audible.
+    pub resonance: f32,
     pub pitch_hz: f32,
     pub retrigger: bool,
     pub legato_voice_steal: bool,
@@ -535,6 +561,12 @@ pub struct BassSlotParams {
     pub sub_octave: i32,
     pub noise_enabled: bool,
     pub noise_level: f32,
+    /// Portamento time in ms; 0 snaps pitch instantly. Constant-time
+    /// exponential slew — the 303-style glide.
+    pub glide_ms: f32,
+    /// When true, glide only fires on overlapping notes (legato steals);
+    /// notes that retrigger the envelope snap to pitch.
+    pub glide_auto: bool,
     pub keytrack_enabled: bool,
     /// Oscillator start phase in degrees (0-360), applied on retrigger.
     pub phase_deg: f32,
@@ -554,10 +586,12 @@ impl Default for BassSlotParams {
             filter_enabled: true,
             filter_2_enabled: false,
             note_length_ms: app_cfg.note_length_max_ms,
+            length_sync: false,
             cutoff_hz: 120.0,
             filter_mode: BassFilterMode::LowPass,
             filter_slope: BassFilterSlope::S6dB,
             filter_drive: 0.0,
+            resonance: 0.0,
             pitch_hz: 55.0,
             retrigger: true,
             legato_voice_steal: false,
@@ -580,6 +614,8 @@ impl Default for BassSlotParams {
             sub_octave: -1,
             noise_enabled: false,
             noise_level: 0.25,
+            glide_ms: 0.0,
+            glide_auto: false,
             keytrack_enabled: false,
             phase_deg: 0.0,
             lfos: [LfoParams::default(); BASS_LFO_COUNT],
@@ -601,6 +637,10 @@ pub fn set_bass_slot(shared: &SharedStateHandle, index: usize, params: BassSlotP
 pub struct SharedSnapshot {
     pub amp_lut: [f32; CURVE_LUT_SIZE],
     pub pitch_lut: [f32; CURVE_LUT_SIZE],
+    /// Kick AMP envelope power — off means a constant-1 amplitude.
+    pub amp_env_enabled: bool,
+    /// Kick PITCH envelope power — off means a flat base pitch.
+    pub pitch_env_enabled: bool,
     /// Bass settings per note slot (index 0 = Note 1, 1 = Note 2).
     pub bass: [BassSlotParams; BASS_SLOT_COUNT],
     pub keytrack_enabled: bool,
@@ -611,9 +651,18 @@ pub struct SharedSnapshot {
     pub kick_pitch_hz: f32,
     /// Oscillator start phase in degrees (0-360), applied on retrigger.
     pub kick_phase_deg: f32,
+    /// When true (and arrange override is active), the kick's note length
+    /// follows a 16th note at the current tempo instead of the fixed value.
+    pub kick_length_override: bool,
     /// When true, the internal arrange pattern plays while any DAW note is
     /// held, instead of routing DAW MIDI directly to the voices.
     pub arrange_override: bool,
+    /// PolyBLEP edge correction on saw/square oscillators. Default on; turning
+    /// it off trades aliasing artifacts for the brightest possible top end.
+    pub anti_aliasing: bool,
+    /// Render voices at 2x the host rate and decimate — cleaner harmonics
+    /// from the nonlinear stages (drive, resonance clip, limiter).
+    pub oversampling: bool,
     pub arrange_notes: [ArrangeNoteData; ARRANGE_MAX_NOTES],
     pub arrange_note_count: usize,
     pub arrange_num_bars: f32,
@@ -628,6 +677,8 @@ pub struct SharedSnapshot {
 pub(crate) struct SharedState {
     amp_lut: [f32; CURVE_LUT_SIZE],
     pitch_lut: [f32; CURVE_LUT_SIZE],
+    amp_env_enabled: bool,
+    pitch_env_enabled: bool,
     bass: [BassSlotParams; BASS_SLOT_COUNT],
     keytrack_enabled: bool,
     note_length_ms: f32,
@@ -636,7 +687,10 @@ pub(crate) struct SharedState {
     kick_legato_voice_steal: bool,
     kick_pitch_hz: f32,
     kick_phase_deg: f32,
+    kick_length_override: bool,
     arrange_override: bool,
+    anti_aliasing: bool,
+    oversampling: bool,
     arrange_notes: [ArrangeNoteData; ARRANGE_MAX_NOTES],
     arrange_note_count: usize,
     arrange_num_bars: f32,
@@ -659,6 +713,8 @@ impl Default for SharedState {
         Self {
             amp_lut: [0.0; CURVE_LUT_SIZE],
             pitch_lut: [0.0; CURVE_LUT_SIZE],
+            amp_env_enabled: true,
+            pitch_env_enabled: true,
             bass: [BassSlotParams::default(), BassSlotParams::default()],
             keytrack_enabled: false,
             note_length_ms: app_cfg.note_length_max_ms,
@@ -667,7 +723,10 @@ impl Default for SharedState {
             kick_legato_voice_steal: true,
             kick_pitch_hz: 55.0,
             kick_phase_deg: 0.0,
+            kick_length_override: false,
             arrange_override: false,
+            anti_aliasing: true,
+            oversampling: true,
             arrange_notes: [ArrangeNoteData::default(); ARRANGE_MAX_NOTES],
             arrange_note_count: 0,
             arrange_num_bars: 1.0,
@@ -709,6 +768,17 @@ pub fn set_curve_lut(shared: &SharedStateHandle, kind: CurveKind, lut: [f32; CUR
         match kind {
             CurveKind::Amplitude => state.amp_lut = lut,
             CurveKind::Pitch => state.pitch_lut = lut,
+        }
+    }
+}
+
+/// Power for each kick envelope — a powered-off envelope leaves the signal
+/// untouched (AMP => flat level, PITCH => flat pitch).
+pub fn set_curve_enabled(shared: &SharedStateHandle, kind: CurveKind, enabled: bool) {
+    if let Ok(mut state) = shared.lock() {
+        match kind {
+            CurveKind::Amplitude => state.amp_env_enabled = enabled,
+            CurveKind::Pitch => state.pitch_env_enabled = enabled,
         }
     }
 }
@@ -793,6 +863,8 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         return SharedSnapshot {
             amp_lut: state.amp_lut,
             pitch_lut: state.pitch_lut,
+            amp_env_enabled: state.amp_env_enabled,
+            pitch_env_enabled: state.pitch_env_enabled,
             bass: state.bass.clone(),
             keytrack_enabled: state.keytrack_enabled,
             note_length_ms: state.note_length_ms,
@@ -801,7 +873,10 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
             kick_legato_voice_steal: state.kick_legato_voice_steal,
             kick_pitch_hz: state.kick_pitch_hz,
             kick_phase_deg: state.kick_phase_deg,
+            kick_length_override: state.kick_length_override,
             arrange_override: state.arrange_override,
+            anti_aliasing: state.anti_aliasing,
+            oversampling: state.oversampling,
             arrange_notes: state.arrange_notes,
             arrange_note_count: state.arrange_note_count,
             arrange_num_bars: state.arrange_num_bars,
@@ -829,6 +904,8 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
     SharedSnapshot {
         amp_lut,
         pitch_lut,
+        amp_env_enabled: true,
+        pitch_env_enabled: true,
         bass,
         keytrack_enabled: false,
         note_length_ms: app_cfg.note_length_max_ms,
@@ -837,7 +914,10 @@ pub fn snapshot(shared: &SharedStateHandle) -> SharedSnapshot {
         kick_legato_voice_steal: true,
         kick_pitch_hz: 55.0,
         kick_phase_deg: 0.0,
+        kick_length_override: false,
         arrange_override: false,
+        anti_aliasing: true,
+        oversampling: true,
         arrange_notes: [ArrangeNoteData::default(); ARRANGE_MAX_NOTES],
         arrange_note_count: 0,
         arrange_num_bars: 1.0,

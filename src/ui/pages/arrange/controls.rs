@@ -1,115 +1,123 @@
 use nih_plug_egui::egui::{self, RichText};
 
-use crate::ui::helpers::slider_fine_step;
+use crate::ui::components::{knob, section};
 use crate::ui::state::{BezierUiState, NoteSize};
+use crate::ui::theme::{text_color, themed_font};
 
-/// Renders the transport controls row: Tempo, Time Signature, and Bars.
+/// Renders the transport controls row as module panels: tempo, bars, note
+/// size, and playback — same section/knob spec as the instrument pages.
 pub(super) fn render(
     ui: &mut egui::Ui,
     ui_scale: f32,
     state: &mut BezierUiState,
     daw_tempo: Option<f64>,
 ) {
-    ui.horizontal(|ui| {
-        // Tempo section
-        ui.group(|ui| {
-            ui.label(RichText::new("Tempo").strong());
-            ui.add_space(4.0 * ui_scale);
+    let arr_knob = knob::KnobStyle::panel();
 
-            // Determine which tempo to display
-            let display_tempo = if state.use_daw_tempo {
-                if let Some(tempo) = daw_tempo {
-                    state.manual_tempo = tempo as f32;
-                    tempo as f32
-                } else {
-                    state.manual_tempo
+    section::weighted_columns(ui, ui_scale, [0.30, 0.20, 0.28, 0.22], |columns| {
+        section::render(
+            &mut columns[0],
+            ui_scale,
+            section::SectionHeader {
+                title: "TEMPO",
+                enabled: None,
+                min_height: 0.0,
+            },
+            |ui| {
+                // When DAW tempo sync is on and a tempo is reported, it wins —
+                // the dial mirrors it and stays disabled.
+                let synced = state.use_daw_tempo && daw_tempo.is_some();
+                if synced {
+                    state.manual_tempo = daw_tempo.unwrap() as f32;
                 }
-            } else {
-                state.manual_tempo
-            };
+                let bpm_display = format!("{:.1} BPM", state.manual_tempo);
+                ui.add_enabled_ui(!synced, |ui| {
+                    knob::range_knob(
+                        ui,
+                        ui_scale,
+                        "BPM",
+                        &mut state.manual_tempo,
+                        20.0,
+                        300.0,
+                        &bpm_display,
+                        arr_knob,
+                    );
+                });
+                ui.add_space(4.0 * ui_scale);
+                ui.horizontal(|ui| {
+                    if daw_tempo.is_some() {
+                        ui.checkbox(&mut state.use_daw_tempo, "DAW");
+                    }
+                    // Fixed 4/4 signature for now.
+                    ui.label(
+                        RichText::new("4/4")
+                            .font(themed_font(11.0 * ui_scale))
+                            .color(text_color()),
+                    );
+                });
+            },
+        );
 
-            // Editable tempo slider
-            let mut tempo_value = display_tempo;
-            let slider_enabled = !state.use_daw_tempo || daw_tempo.is_none();
-
-            ui.add_enabled(
-                slider_enabled,
-                slider_fine_step(
+        section::render(
+            &mut columns[1],
+            ui_scale,
+            section::SectionHeader {
+                title: "LOOP",
+                enabled: None,
+                min_height: 0.0,
+            },
+            |ui| {
+                // Quarter-bar steps: the backing value is bars, the dial
+                // counts quarter bars so each detent is one step.
+                let mut quarter_bars = (state.num_bars * 4.0).round() as i32;
+                let bars_display = format!("{:.2} bars", quarter_bars as f32 / 4.0);
+                if knob::int_range_knob(
                     ui,
-                    egui::Slider::new(&mut tempo_value, 20.0..=300.0)
-                        .text("BPM"),
-                    1.0,
-                ),
-            );
+                    ui_scale,
+                    "arrange-num-bars",
+                    "BARS",
+                    &mut quarter_bars,
+                    1,
+                    32,
+                    &bars_display,
+                    arr_knob,
+                ) {
+                    state.num_bars = (quarter_bars as f32 / 4.0).clamp(0.25, 8.0);
+                }
+            },
+        );
 
-            if tempo_value != display_tempo {
-                state.manual_tempo = tempo_value;
-            }
+        section::render(
+            &mut columns[2],
+            ui_scale,
+            section::SectionHeader {
+                title: "GRID",
+                enabled: None,
+                min_height: 0.0,
+            },
+            |ui| {
+                let options: [(NoteSize, &str); NoteSize::ALL.len()] =
+                    std::array::from_fn(|i| (NoteSize::ALL[i], NoteSize::ALL[i].label()));
+                section::segmented(ui, ui_scale, &mut state.note_size, &options);
+            },
+        );
 
-            ui.add_space(4.0 * ui_scale);
-
-            // Toggle button for DAW tempo lock
-            if daw_tempo.is_some() {
-                ui.checkbox(&mut state.use_daw_tempo, "Use from DAW");
-            }
-        });
-
-        // Time Signature section
-        ui.group(|ui| {
-            ui.label(RichText::new("Time Signature").strong());
-            ui.add_space(4.0 * ui_scale);
-
-            // Hard-coded 4/4 time signature (not editable for now)
-            ui.label(RichText::new("4/4").size(24.0));
-        });
-
-        // Bars section
-        ui.group(|ui| {
-            ui.label(RichText::new("Bars").strong());
-            ui.add_space(4.0 * ui_scale);
-
-            // Editable bars slider (0.25-8 in quarter-bar steps; shift = 1 bar)
-            ui.add(slider_fine_step(
-                ui,
-                egui::Slider::new(&mut state.num_bars, 0.25..=8.0)
-                    .step_by(0.25)
-                    .text("bars"),
-                1.0,
-            ));
-        });
-
-        // Note Size section
-        ui.group(|ui| {
-            ui.label(RichText::new("Note Size").strong());
-            ui.add_space(4.0 * ui_scale);
-
-            // Slider over the note-size options (1/16 .. 1)
-            let mut index = NoteSize::ALL
-                .iter()
-                .position(|s| *s == state.note_size)
-                .unwrap_or(2);
-            let response = ui.add(
-                egui::Slider::new(&mut index, 0..=(NoteSize::ALL.len() - 1))
-                    .show_value(false),
-            );
-            ui.label(RichText::new(state.note_size.label()).size(16.0));
-
-            if response.changed() {
-                state.note_size = NoteSize::ALL[index];
-            }
-        });
-
-        // Playback section
-        ui.group(|ui| {
-            ui.label(RichText::new("Playback").strong());
-            ui.add_space(4.0 * ui_scale);
-
-            ui.checkbox(&mut state.arrange_override, "Override DAW MIDI");
-            ui.label(
-                RichText::new("Hold any note to play this pattern")
-                    .small()
-                    .italics(),
-            );
-        });
+        section::render(
+            &mut columns[3],
+            ui_scale,
+            section::SectionHeader {
+                title: "PLAYBACK",
+                enabled: None,
+                min_height: 0.0,
+            },
+            |ui| {
+                ui.checkbox(&mut state.arrange_override, "Override DAW MIDI");
+                ui.label(
+                    RichText::new("Hold any note to play this pattern")
+                        .small()
+                        .italics(),
+                );
+            },
+        );
     });
 }

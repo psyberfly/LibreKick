@@ -4,6 +4,7 @@ use nih_plug_egui::egui::{Pos2, TextureHandle};
 
 use crate::{config, patches, shared};
 
+use super::components::energy_heatmap;
 use super::helpers::{constrain_curve_points, normalize_segment_bends};
 
 pub(super) const HISTORY_STACK_CAP: usize = 200;
@@ -86,9 +87,17 @@ pub(super) struct BassSlot {
     pub(super) filter_mode: shared::BassFilterMode,
     pub(super) filter_slope: shared::BassFilterSlope,
     pub(super) filter_drive: f32,
+    /// Filter resonance, 0..1. Audible from the 12 dB slope upward.
+    pub(super) resonance: f32,
     pub(super) filter_enabled: bool,
     pub(super) filter_2_enabled: bool,
     pub(super) filter_selected: usize,
+    /// 1/16 tempo sync for the slot's note length (overrides LENGTH).
+    pub(super) length_sync: bool,
+    /// Portamento time in ms; 0 = instant pitch. Exponential slew.
+    pub(super) glide_ms: f32,
+    /// When true, glide only on overlapping (legato) notes.
+    pub(super) glide_auto: bool,
     pub(super) keytrack_enabled: bool,
     pub(super) phase_deg: f32,
     /// Per-slot LFOs usable as modulation sources.
@@ -132,9 +141,13 @@ impl Default for BassSlot {
             filter_mode: shared::BassFilterMode::LowPass,
             filter_slope: shared::BassFilterSlope::S6dB,
             filter_drive: 0.0,
+            resonance: 0.0,
             filter_enabled: true,
             filter_2_enabled: false,
+            length_sync: false,
             filter_selected: 0,
+            glide_ms: 0.0,
+            glide_auto: false,
             keytrack_enabled: false,
             phase_deg: 0.0,
             lfos: [shared::LfoParams::default(); shared::BASS_LFO_COUNT],
@@ -150,6 +163,10 @@ impl Default for BassSlot {
 pub(super) struct CorePatchData {
     pub(super) amplitude_curve: Curve,
     pub(super) pitch_curve: Curve,
+    /// Power for the kick AMP envelope; off means constant level.
+    pub(super) amp_env_enabled: bool,
+    /// Power for the kick PITCH envelope; off means flat base pitch.
+    pub(super) pitch_env_enabled: bool,
     pub(super) active_curve: CurveKind,
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
@@ -158,6 +175,8 @@ pub(super) struct CorePatchData {
     pub(super) kick_legato_voice_steal: bool,
     pub(super) kick_pitch_hz: f32,
     pub(super) kick_phase_deg: f32,
+    /// Arrange override: gate the kick to a 16th of the active tempo.
+    pub(super) kick_length_override: bool,
     pub(super) note_length_ms: f32,
     pub(super) note_length_max_ms: f32,
     pub(super) waveform_zoom_percent: f32,
@@ -295,6 +314,10 @@ pub(super) struct BezierUiState {
     pub(super) active_page: UiPage,
     pub(super) amplitude_curve: Curve,
     pub(super) pitch_curve: Curve,
+    /// Power for the kick AMP envelope; off means constant level.
+    pub(super) amp_env_enabled: bool,
+    /// Power for the kick PITCH envelope; off means flat base pitch.
+    pub(super) pitch_env_enabled: bool,
     pub(super) active_curve: CurveKind,
     pub(super) tuning_standard: TuningStandard,
     pub(super) keytrack_enabled: bool,
@@ -304,6 +327,8 @@ pub(super) struct BezierUiState {
     pub(super) kick_pitch_hz: f32,
     /// Kick oscillator start phase in degrees (0-360), applied on retrigger.
     pub(super) kick_phase_deg: f32,
+    /// When true, arrange override gates the kick to a 16th of the tempo.
+    pub(super) kick_length_override: bool,
     /// Mirror of the `kick_level` plugin parameter, synced each frame so
     /// patch dirty-tracking and saving can see it.
     pub(super) kick_level: f32,
@@ -336,6 +361,10 @@ pub(super) struct BezierUiState {
     pub(super) clip_preview_bass: Vec<f32>,
     /// Hash of the inputs used to render `clip_preview_samples`.
     pub(super) clip_preview_key: u64,
+    /// Band-energy analysis of the rendered clip, cached against
+    /// `clip_preview_key` so the clip is only analysed when it changes.
+    pub(super) clip_energy_bass: energy_heatmap::EnergyMap,
+    pub(super) clip_energy_kick: energy_heatmap::EnergyMap,
     pub(super) osc_hold: bool,
     pub(super) osc_zoom_x: f32,
     pub(super) osc_zoom_y: f32,
@@ -371,6 +400,12 @@ pub(super) struct BezierUiState {
     pub(super) patch_description: String,
     /// User-adjustable display scale multiplier (1.0 = automatic from window size).
     pub(super) display_scale: f32,
+    /// PolyBLEP oscillator anti-aliasing toggle (Settings page). On by default;
+    /// off gives a raw, deliberately aliased top end.
+    pub(super) anti_aliasing: bool,
+    /// 2x internal oversampling toggle (Settings page). On by default; off
+    /// saves CPU at the cost of fold-back grit from the nonlinear stages.
+    pub(super) oversampling: bool,
 }
 
 impl Default for BezierUiState {
@@ -380,6 +415,8 @@ impl Default for BezierUiState {
             active_page: UiPage::Kick,
             amplitude_curve: Curve::default_amplitude(),
             pitch_curve: Curve::default_pitch(),
+            amp_env_enabled: true,
+            pitch_env_enabled: true,
             active_curve: CurveKind::Amplitude,
             tuning_standard: TuningStandard::A432,
             keytrack_enabled: false,
@@ -388,6 +425,7 @@ impl Default for BezierUiState {
             kick_legato_voice_steal: true,
             kick_pitch_hz: 55.0,
             kick_phase_deg: 0.0,
+            kick_length_override: false,
             kick_level: 0.8,
             note_length_ms: note_length_max_ms,
             note_length_max_ms,
@@ -408,6 +446,8 @@ impl Default for BezierUiState {
             clip_preview_kick: Vec::new(),
             clip_preview_bass: Vec::new(),
             clip_preview_key: 0,
+            clip_energy_bass: energy_heatmap::EnergyMap::default(),
+            clip_energy_kick: energy_heatmap::EnergyMap::default(),
             osc_hold: false,
             osc_zoom_x: 1.0,
             osc_zoom_y: 1.0,
@@ -446,6 +486,8 @@ impl Default for BezierUiState {
             patch_status: None,
             patch_description: String::new(),
             display_scale: 1.0,
+            anti_aliasing: true,
+            oversampling: true,
         };
 
         if let Err(error) = patches::ensure_default_patch_setup() {
@@ -477,6 +519,8 @@ impl Default for BezierUiState {
             Ok(Some(settings)) => {
                 state.tuning_standard = tuning_standard_from_a4_hz(settings.tuning_a4_hz);
                 state.display_scale = settings.display_scale;
+                state.anti_aliasing = settings.anti_aliasing;
+                state.oversampling = settings.oversampling;
             }
             Ok(None) => {}
             Err(error) => {
@@ -509,6 +553,8 @@ impl BezierUiState {
             core: CorePatchData {
                 amplitude_curve: self.amplitude_curve.clone(),
                 pitch_curve: self.pitch_curve.clone(),
+                amp_env_enabled: self.amp_env_enabled,
+                pitch_env_enabled: self.pitch_env_enabled,
                 active_curve: self.active_curve,
                 tuning_standard: self.tuning_standard,
                 keytrack_enabled: self.keytrack_enabled,
@@ -517,6 +563,7 @@ impl BezierUiState {
                 kick_legato_voice_steal: self.kick_legato_voice_steal,
                 kick_pitch_hz: self.kick_pitch_hz,
                 kick_phase_deg: self.kick_phase_deg,
+                kick_length_override: self.kick_length_override,
                 note_length_ms: self.note_length_ms,
                 note_length_max_ms: self.note_length_max_ms,
                 waveform_zoom_percent: self.waveform_zoom_percent,
@@ -538,6 +585,8 @@ impl BezierUiState {
     fn apply_snapshot(&mut self, snapshot: EditorSnapshot) {
         self.amplitude_curve = snapshot.core.amplitude_curve;
         self.pitch_curve = snapshot.core.pitch_curve;
+        self.amp_env_enabled = snapshot.core.amp_env_enabled;
+        self.pitch_env_enabled = snapshot.core.pitch_env_enabled;
         self.active_curve = snapshot.core.active_curve;
         self.tuning_standard = snapshot.core.tuning_standard;
         self.keytrack_enabled = snapshot.core.keytrack_enabled;
@@ -546,6 +595,7 @@ impl BezierUiState {
         self.kick_legato_voice_steal = snapshot.core.kick_legato_voice_steal;
         self.kick_pitch_hz = snapshot.core.kick_pitch_hz;
         self.kick_phase_deg = snapshot.core.kick_phase_deg;
+        self.kick_length_override = snapshot.core.kick_length_override;
         self.note_length_ms = snapshot.core.note_length_ms;
         self.note_length_max_ms = snapshot.core.note_length_max_ms;
         self.waveform_zoom_percent = snapshot.core.waveform_zoom_percent;
@@ -617,6 +667,8 @@ impl BezierUiState {
             core: CorePatchData {
                 amplitude_curve: self.amplitude_curve.clone(),
                 pitch_curve: self.pitch_curve.clone(),
+                amp_env_enabled: self.amp_env_enabled,
+                pitch_env_enabled: self.pitch_env_enabled,
                 active_curve: self.active_curve,
                 tuning_standard: self.tuning_standard,
                 keytrack_enabled: self.keytrack_enabled,
@@ -625,6 +677,7 @@ impl BezierUiState {
                 kick_legato_voice_steal: self.kick_legato_voice_steal,
                 kick_pitch_hz: self.kick_pitch_hz,
                 kick_phase_deg: self.kick_phase_deg,
+                kick_length_override: self.kick_length_override,
                 note_length_ms: self.note_length_ms,
                 note_length_max_ms: self.note_length_max_ms,
                 waveform_zoom_percent: self.waveform_zoom_percent,
@@ -681,19 +734,23 @@ impl BezierUiState {
         let pitch_lut = curve_lut(&self.pitch_curve.points, &self.pitch_curve.bends);
         shared::set_curve_lut(shared, shared::CurveKind::Amplitude, amp_lut);
         shared::set_curve_lut(shared, shared::CurveKind::Pitch, pitch_lut);
+        shared::set_curve_enabled(shared, shared::CurveKind::Amplitude, self.amp_env_enabled);
+        shared::set_curve_enabled(shared, shared::CurveKind::Pitch, self.pitch_env_enabled);
         shared::set_keytrack_enabled(shared, self.keytrack_enabled);
         shared::set_note_length_ms(shared, self.note_length_ms);
         shared::set_kick_oscillator_waveform(shared, self.kick_oscillator_waveform);
         shared::set_kick_retrigger(shared, self.kick_retrigger);
         shared::set_kick_legato_voice_steal(shared, self.kick_legato_voice_steal);
+        shared::set_anti_aliasing(shared, self.anti_aliasing);
+        shared::set_oversampling(shared, self.oversampling);
         shared::set_kick_pitch_hz(shared, self.kick_pitch_hz);
         shared::set_kick_phase_deg(shared, self.kick_phase_deg);
+        shared::set_kick_length_override(shared, self.kick_length_override);
 
         // Bass curves and settings — both note slots
         for (index, slot) in self.bass.iter().enumerate() {
             let bass_amp_lut = curve_lut(&slot.amp_curve.points, &slot.amp_curve.bends);
-            let bass_filter_lut =
-                curve_lut(&slot.filter_curve.points, &slot.filter_curve.bends);
+            let bass_filter_lut = curve_lut(&slot.filter_curve.points, &slot.filter_curve.bends);
             let bass_filter_2_lut =
                 curve_lut(&slot.filter_curve_2.points, &slot.filter_curve_2.bends);
             shared::set_bass_slot(
@@ -706,10 +763,12 @@ impl BezierUiState {
                     filter_enabled: slot.filter_enabled,
                     filter_2_enabled: slot.filter_2_enabled,
                     note_length_ms: slot.note_length_ms,
+                    length_sync: slot.length_sync,
                     cutoff_hz: slot.cutoff_hz,
                     filter_mode: slot.filter_mode,
                     filter_slope: slot.filter_slope,
                     filter_drive: slot.filter_drive,
+                    resonance: slot.resonance,
                     pitch_hz: slot.pitch_hz,
                     retrigger: slot.retrigger,
                     legato_voice_steal: slot.legato_voice_steal,
@@ -732,6 +791,8 @@ impl BezierUiState {
                     sub_octave: slot.sub_octave,
                     noise_enabled: slot.noise_enabled,
                     noise_level: slot.noise_level,
+                    glide_ms: slot.glide_ms,
+                    glide_auto: slot.glide_auto,
                     keytrack_enabled: slot.keytrack_enabled,
                     phase_deg: slot.phase_deg,
                     lfos: slot.lfos,
@@ -785,13 +846,15 @@ impl BezierUiState {
             bass: Some(bass_slot_to_patch(&self.bass[0], Some(self.bass_levels[0]))),
             bass2: Some(bass_slot_to_patch(&self.bass[1], Some(self.bass_levels[1]))),
             kick: Some(patches::KickPatchData {
-                oscillator_waveform: waveform_to_patch(self.kick_oscillator_waveform)
-                    .to_owned(),
+                oscillator_waveform: waveform_to_patch(self.kick_oscillator_waveform).to_owned(),
                 retrigger: self.kick_retrigger,
                 legato_voice_steal: self.kick_legato_voice_steal,
                 pitch_hz: self.kick_pitch_hz,
                 level: Some(self.kick_level),
                 phase_deg: Some(self.kick_phase_deg),
+                length_override: Some(self.kick_length_override),
+                amp_env_enabled: Some(self.amp_env_enabled),
+                pitch_env_enabled: Some(self.pitch_env_enabled),
             }),
             arrange: Some(patches::ArrangePatchData {
                 num_bars: self.num_bars,
@@ -818,9 +881,12 @@ impl BezierUiState {
         self.patch_description = patch.description;
         self.amplitude_curve.points =
             points_from_patch(&patch.amplitude_points, &Curve::default_amplitude().points);
-        self.amplitude_curve.bends = bends_from_patch(&patch.amplitude_bends, self.amplitude_curve.points.len());
-        self.pitch_curve.points = points_from_patch(&patch.pitch_points, &Curve::default_pitch().points);
-        self.pitch_curve.bends = bends_from_patch(&patch.pitch_bends, self.pitch_curve.points.len());
+        self.amplitude_curve.bends =
+            bends_from_patch(&patch.amplitude_bends, self.amplitude_curve.points.len());
+        self.pitch_curve.points =
+            points_from_patch(&patch.pitch_points, &Curve::default_pitch().points);
+        self.pitch_curve.bends =
+            bends_from_patch(&patch.pitch_bends, self.pitch_curve.points.len());
         self.active_curve = if patch.active_curve.eq_ignore_ascii_case("pitch") {
             CurveKind::Pitch
         } else {
@@ -867,6 +933,11 @@ impl BezierUiState {
             if let Some(phase_deg) = kick.phase_deg {
                 self.kick_phase_deg = phase_deg.clamp(0.0, 360.0);
             }
+            self.kick_length_override = kick.length_override.unwrap_or(false);
+            // Envelopes power on by default for patches saved before the
+            // switches existed.
+            self.amp_env_enabled = kick.amp_env_enabled.unwrap_or(true);
+            self.pitch_env_enabled = kick.pitch_env_enabled.unwrap_or(true);
         }
 
         if let Some(arrange) = patch.arrange {
@@ -910,11 +981,15 @@ fn bass_slot_to_patch(slot: &BassSlot, level: Option<f32>) -> patches::BassPatch
         legato_voice_steal: slot.legato_voice_steal,
         keytrack_enabled: slot.keytrack_enabled,
         note_length_ms: slot.note_length_ms,
+        length_sync: slot.length_sync,
+        glide_ms: slot.glide_ms,
+        glide_auto: slot.glide_auto,
         pitch_hz: slot.pitch_hz,
         cutoff_hz: slot.cutoff_hz,
         filter_mode: bass_filter_mode_to_patch(slot.filter_mode).to_owned(),
         filter_slope: bass_filter_slope_to_patch(slot.filter_slope).to_owned(),
         filter_drive: slot.filter_drive,
+        resonance: slot.resonance,
         filter_enabled: slot.filter_enabled,
         filter_2_enabled: slot.filter_2_enabled,
         amp_points: slot
@@ -971,9 +1046,13 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
     slot.legato_voice_steal = bass.legato_voice_steal;
     slot.keytrack_enabled = bass.keytrack_enabled;
     slot.note_length_ms = bass.note_length_ms.clamp(1.0, 1000.0);
+    slot.length_sync = bass.length_sync;
+    slot.glide_ms = bass.glide_ms.clamp(0.0, 2_000.0);
+    slot.glide_auto = bass.glide_auto;
     slot.pitch_hz = bass.pitch_hz.clamp(20.0, 2_000.0);
     slot.cutoff_hz = bass.cutoff_hz.clamp(20.0, 8_000.0);
     slot.filter_drive = bass.filter_drive.clamp(0.0, 1.0);
+    slot.resonance = bass.resonance.clamp(0.0, 1.0);
     slot.filter_enabled = bass.filter_enabled;
     slot.filter_2_enabled = bass.filter_2_enabled;
     if let Some(mode) = bass_filter_mode_from_patch(&bass.filter_mode) {
@@ -982,13 +1061,11 @@ fn apply_bass_patch(slot: &mut BassSlot, bass: &patches::BassPatchData) {
     if let Some(slope) = bass_filter_slope_from_patch(&bass.filter_slope) {
         slot.filter_slope = slope;
     }
-    slot.amp_curve.points =
-        points_from_patch(&bass.amp_points, &Curve::default_amplitude().points);
+    slot.amp_curve.points = points_from_patch(&bass.amp_points, &Curve::default_amplitude().points);
     slot.amp_curve.bends = bends_from_patch(&bass.amp_bends, slot.amp_curve.points.len());
     slot.filter_curve.points =
         points_from_patch(&bass.filter_points, &Curve::default_pitch().points);
-    slot.filter_curve.bends =
-        bends_from_patch(&bass.filter_bends, slot.filter_curve.points.len());
+    slot.filter_curve.bends = bends_from_patch(&bass.filter_bends, slot.filter_curve.points.len());
     slot.filter_curve_2.points =
         points_from_patch(&bass.filter_2_points, &Curve::default_pitch().points);
     slot.filter_curve_2.bends =
